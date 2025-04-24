@@ -1,0 +1,8 @@
+name,unit_type,url,location,university_qid,university_label,status
+College of Engineering,college,https://www.bu.edu/eng/,"Boston, MA",Q49110,Boston University,missing
+College of General Studies,college,https://www.bu.edu/cgs/,"Boston, MA",Q49110,Boston University,missing
+College of Health & Rehabilitation Sciences: Sargent College,college,https://www.bu.edu/sargent/,"Boston, MA",Q49110,Boston University,missing
+Graduate School of Arts & Sciences,school,https://www.bu.edu/grad/,"Boston, MA",Q49110,Boston University,missing
+School of Public Health,school,https://www.bu.edu/sph/,"Boston, MA",Q49110,Boston University,missing
+School of Theology,school,https://www.bu.edu/sth/,"Boston, MA",Q49110,Boston University,missing
+Wheelock College of Education & Human Development,college,https://www.bu.edu/wheelock/,"Boston, MA",Q49110,Boston University,missing

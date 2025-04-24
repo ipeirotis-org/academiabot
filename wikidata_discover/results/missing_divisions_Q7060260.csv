@@ -1,0 +1,8 @@
+name,unit_type,url,location,university_qid,university_label,status
+College of Arts and Sciences,college,https://www.northwestu.edu/arts-sciences,"Kirkland, WA",Q7060260,Northwest University,missing
+College of Business,college,https://www.northwestu.edu/business,"Kirkland, WA",Q7060260,Northwest University,missing
+College of Education,college,https://www.northwestu.edu/education,"Kirkland, WA",Q7060260,Northwest University,missing
+College of Ministry,college,https://www.northwestu.edu/ministry,"Kirkland, WA",Q7060260,Northwest University,missing
+College of Social and Behavioral Sciences,college,https://www.northwestu.edu/social-behavioral-sciences,"Kirkland, WA",Q7060260,Northwest University,missing
+Northwest University Salem Campus,campus,https://www.northwestu.edu/salem,"Salem, OR",Q7060260,Northwest University,missing
+Northwest University Sacramento Campus,campus,https://www.northwestu.edu/sacramento,"Sacramento, CA",Q7060260,Northwest University,missing

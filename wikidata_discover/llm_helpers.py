@@ -9,11 +9,12 @@ console = Console()
 
 # ─────────────────────────  LLM PROMPTS  ─────────────────────────
 SYSTEM_EXTRACT = (
-    "You are an education‑data analyst. Given the name of a university, return a JSON "
+    "You are an education‑data analyst. Given the name of a university and (optionally) its website URL, return a JSON "
     "key `units` whose value is an *array* of objects, each describing a *top‑level* "
     "academic or administrative unit (school, college, faculty, division, or campus). "
     "Each object *must* include: name, unit_type, city, state, website. Use null if a "
     "value is unknown. Do not list departments or research centers."
+    "Provide also a URL as a reference so that someone can validate the information."
 )
 
 MATCH_TEMPLATE = (
@@ -33,14 +34,14 @@ MATCH_TEMPLATE = (
 class LLMHelper:
     
     @staticmethod
-    def extract_divisions(univ_label: str) -> List[Dict[str, Any]]:
+    def extract_divisions(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Call GPT to get a list of divisions; returns a list even on malformed JSON."""
         resp = client.chat.completions.create(
             model=LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": SYSTEM_EXTRACT},
-                {"role": "user", "content": univ_label},
+                {"role": "user", "content": f"{univ_label} -- {website}"},
             ],
             temperature=0.0,
         )

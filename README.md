@@ -8,43 +8,20 @@ It provides two core commands:
 
 ---
 
-## Features
+## Details
 
-- **Modular design** with clear separation of concerns:
-  - SPARQL helper functions (`sparql_helpers.py`)
-  - Wikidata API lookups (`wikidata_api.py`)
-  - OpenAI LLM prompts and parsing (`llm_helpers.py`)
-  - Core discovery logic (`discovery.py`)
-  - University harvester logic (`harvester.py`)
-  - Unified CLI entrypoint (`cli.py`)
-- **Configurable** via environment variables (`.env`):
-  - `OPENAI_API_KEY` – Your OpenAI API key  
-  - `WD_BOT_USERAGENT` – Custom `User-Agent` for Wikidata/SPARQL requests (defaults to `DivisionDiscoverBot/3.0`)
-- **Rich** console output and tables for easy debugging.
 - **CSV export** of missing divisions ready for batch Wikidata edits.
 - **JSON export** of U.S. universities for offline reuse.
+- **Configurable** via environment variables (`.env`):
+  - `OPENAI_API_KEY` – Your OpenAI API key  
+  - `WD_BOT_USERAGENT` – Custom `User-Agent` for Wikidata/SPARQL requests (defaults to `AcademiaBot/1.0`)
+- **Rich** console output and tables for easy debugging.
 
 ---
-
-## Prerequisites
-
-- Python 3.8 or newer  
-- [pip](https://pip.pypa.io/)  
-- An OpenAI API key (for `discover`)
-
----
-
-## Installation
-
-1. Clone this repo:
-
-   ```bash
-   git clone https://github.com/your-org/wikidata_discover.git
-   cd wikidata_discover
 
 ## Usage
 
-All commands share a single entrypoint script. Run them as Python modules from the project root:
+The commands share a single entrypoint script. Run them as Python modules from the project root:
 
 ```
 python3 -m scripts.wikidata_division_discover <command> [options]
