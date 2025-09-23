@@ -3,8 +3,8 @@
 A lightweight Python CLI suite for querying and synchronizing Wikidata entities.  
 It provides two core commands:
 
-1. **`discover`** – Identify missing top-level academic or administrative units (“divisions”) of a university by combining SPARQL queries, OpenAI LLM prompts, and Wikidata API lookups, then output a CSV of items to add.  
-2. **`harvest`** – Fetch and persist a full list of all U.S. universities (Q-IDs, labels, and websites) from Wikidata to JSON for downstream analysis.
+1. **`harvest`** – Fetch and persist a full list of all U.S. universities (Q-IDs, labels, and websites) from Wikidata to JSON for downstream analysis.
+2. **`discover`** – Identify missing top-level academic or administrative units (“divisions”) of a university by combining SPARQL queries, OpenAI LLM prompts, and Wikidata API lookups, then output a CSV of items to add.  
 
 ---
 
@@ -27,7 +27,17 @@ The commands share a single entrypoint script. Run them as Python modules from t
 python3 -m scripts.wikidata_division_discover <command> [options]
 ```
 
-### 1. Discover missing divisions
+### 1. Harvest all U.S. universities
+
+```
+python3 -m scripts.wikidata_division_discover harvest
+```
+
+* Queries Wikidata for every U.S. university (P31/P279 → Q3918 & P17 → Q30).
+* Saves raw JSON to universities_us.json.
+* Prints a summary table of Q-IDs, labels, and websites.
+
+### 2. Discover missing divisions
 
 ```
 python3 -m scripts.wikidata_division_discover discover Q49210
@@ -41,12 +51,3 @@ python3 -m scripts.wikidata_division_discover discover Q49210
 
 * --llm MODEL – Override the default OpenAI model (default: gpt-4o).
 
-### 2. Harvest all U.S. universities
-
-```
-python3 -m scripts.wikidata_division_discover harvest
-```
-
-* Queries Wikidata for every U.S. university (P31/P279 → Q3918 & P17 → Q30).
-* Saves raw JSON to universities_us.json.
-* Prints a summary table of Q-IDs, labels, and websites.
