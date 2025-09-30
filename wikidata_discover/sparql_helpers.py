@@ -1,5 +1,5 @@
 from SPARQLWrapper import SPARQLWrapper, JSON
-from config import SPARQL_ENDPOINT, USER_AGENT
+from wikidata_discover.config import SPARQL_ENDPOINT, USER_AGENT
 
 def execute_sparql_bindings(query: str) -> list[dict]:
     """
@@ -12,19 +12,20 @@ def execute_sparql_bindings(query: str) -> list[dict]:
     resp = wrapper.query().convert()
     return resp["results"]["bindings"]
 
-def run_sparql(query: str) -> list[tuple[str,str]]:
+def run_sparql(query: str, as_tuples: bool = False,
+               main_key: str = "univ", label_key: str = "univLabel"):
     """
-    Existing helper that returns only (qid,label) tuples by picking out
-    'child'/'childLabel' or 'label' fields from the bindings.
+    Run a SPARQL query. By default return raw dicts.
+    If as_tuples=True, convert to (qid, label) pairs.
     """
     bindings = execute_sparql_bindings(query)
-    out: list[tuple[str,str]] = []
-    for b in bindings:
-        if "child" in b:
-            qid   = b["child"]["value"].rsplit("/",1)[-1]
-            label = b["childLabel"]["value"]
-        else:
-            qid   = ""
-            label = b["label"]["value"]
-        out.append((qid, label))
-    return out
+
+    if as_tuples:
+        rows = []
+        for b in bindings:
+            qid = b.get(main_key, {}).get("value", "").rsplit("/", 1)[-1]
+            label = b.get(label_key, {}).get("value")
+            rows.append((qid, label))
+        return rows
+
+    return bindings
