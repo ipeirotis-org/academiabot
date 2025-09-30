@@ -19,13 +19,15 @@ SELECT DISTINCT ?child ?childLabel ?propLabel ?childTypeLabel WHERE {{
 
 # predicates for downward/upward traversal
 PREDICATES_DOWN = ["P527", "P355", "P199"]  # has part, subsidiary, division
-PREDICATES_UP = ["P361", "P749"]             # part of, parent org
+PREDICATES_UP = ["P361", "P749"]  # part of, parent org
 
 # polite pause between SPARQL requests
 time_sleep = 0.3
 
 
-def all_descendants(root_qid: str) -> Tuple[List[Tuple[str, str, str, str]], Dict[str, str]]:
+def all_descendants(
+    root_qid: str,
+) -> Tuple[List[Tuple[str, str, str, str]], Dict[str, str]]:
     """
     Crawl all parts and parent relations under a root entity via BFS.
     Returns:
@@ -48,7 +50,7 @@ def all_descendants(root_qid: str) -> Tuple[List[Tuple[str, str, str, str]], Dic
             query = SPARQL_TEMPLATE.format(parent=parent, down=down, up=up)
             rows = execute_sparql_bindings(query)
             for b in rows:
-                child = b["child"]["value"].rsplit('/', 1)[-1]
+                child = b["child"]["value"].rsplit("/", 1)[-1]
                 prop = b["propLabel"]["value"]
                 ctype = b.get("childTypeLabel", {}).get("value", "—")
                 if child not in seen:

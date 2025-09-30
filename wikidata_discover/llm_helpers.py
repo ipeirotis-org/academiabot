@@ -14,7 +14,8 @@ SYSTEM_EXTRACT = (
     "academic or administrative unit (school, college, faculty, division, or campus). "
     "Each object *must* include: name, unit_type, city, state, website. Use null if a "
     "value is unknown. Do not list departments or research centers."
-    "Provide also a URL as a reference so that someone can validate the information."
+    "Provide also a URL as a reference so that someone can validate the information. The key for the reference URL should be 'reference'."
+    "You should double check that reference URL exists and contains the supporting information for the existence of the units."
 )
 
 MATCH_TEMPLATE = (
@@ -29,68 +30,75 @@ MATCH_TEMPLATE = (
     "*Return that single token only — no explanation.*"
 )
 
-
+UNIVERSITY_UNITS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "units": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name":      {"type": "string"},
+                    "unit_type": {"type": "string"},
+                    "city":      {"type": "string"},
+                    "state":     {"type": "string"},
+                    "website":   {"type": ["string", "null"]}
+                },
+                "required": ["name", "unit_type", "city", "state", "website"],
+                "additionalProperties": False
+            }
+        },
+        "reference": {"type": "string"}
+    },
+    "required": ["units", "reference"],
+    "additionalProperties": False
+}
 
 class LLMHelper:
-    
     @staticmethod
     def extract_divisions(univ_label: str, website: str) -> List[Dict[str, Any]]:
-        """Call GPT to get a list of divisions; returns a list even on malformed JSON."""
-        resp = client.chat.completions.create(
+        """Extract top-level academic/administrative units for a university."""
+        messages = [
+            {"role": "developer", "content": [{"type": "input_text", "text": SYSTEM_EXTRACT}]},
+            {"role": "user",      "content": [{"type": "input_text", "text": f"{univ_label} -- {website}"}]}
+        ]
+
+        resp = client.responses.create(
             model=LLM_MODEL,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": SYSTEM_EXTRACT},
-                {"role": "user", "content": f"{univ_label} -- {website}"},
-            ],
-            temperature=0.0,
+            input=messages,
+            text={"format": {"type": "json_schema", "name": "university_units", "strict": True, "schema": UNIVERSITY_UNITS_SCHEMA}},
+            reasoning={"effort": "high"},
+            tools=[],
+            store=False
         )
-        raw = resp.choices[0].message.content
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as e:
-            console.print(f"[red]LLM JSON parse error: {e}\nRaw content:{raw}[/red]")
+
+        payload = resp.choices[0].message.content or {}
+        units = payload.get("units")
+        if not isinstance(units, list):
+            console.print("[red]LLM JSON did not contain expected `units` list.[/red]")
             return []
-    
-        # Accept both bare list or wrapped under common keys
-        if isinstance(payload, list):
-            units = payload
-        elif isinstance(payload, dict):
-            for key in ("units", "divisions", "schools"):
-                if key in payload and isinstance(payload[key], list):
-                    units = payload[key]
-                    break
-            else:
-                console.print("[red]LLM JSON did not contain expected `units` list.[/red]")
-                return []
-        else:
-            return []
-    
-        # Ensure list of dicts
-        clean: List[Dict[str, Any]] = []
-        for itm in units:
-            if isinstance(itm, str):
-                clean.append({"name": itm})
-            elif isinstance(itm, dict):
-                clean.append(itm)
-        return clean
-    
+
+        # Normalize entries: wrap bare strings into dicts
+        return [ {"name": itm} if isinstance(itm, str) else itm for itm in units ]
+
     @staticmethod
     def choose_match(candidate: str, univ_label: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:
         """Return (qid,label) if GPT says the candidate matches one of the children, else None."""
-    
+
         # Compose numbered list for prompt
-        listing_lines = [f"[{i+1}] {qid} — {label}" for i, (qid, label) in enumerate(children)]
+        listing_lines = [
+            f"[{i+1}] {qid} — {label}" for i, (qid, label) in enumerate(children)
+        ]
         listing = "\n".join(listing_lines)
-    
+
         prompt = (
-            MATCH_TEMPLATE
-            .replace("CANDIDATE", candidate)
-            .replace("UNIVERSITY", univ_label)
+            MATCH_TEMPLATE.replace("CANDIDATE", candidate).replace(
+                "UNIVERSITY", univ_label
+            )
             + "\n\nExisting units:\n"
             + listing
         )
-    
+
         resp = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[

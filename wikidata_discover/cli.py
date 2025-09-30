@@ -3,6 +3,7 @@ from discovery import Discovery
 from harvester import fetch_us_universities
 from config import LLM_MODEL
 
+
 def run_cli():
     parser = argparse.ArgumentParser(
         description="Wikidata tools: discover divisions or harvest universities"
@@ -22,9 +23,11 @@ def run_cli():
     if args.command == "discover":
         from config import LLM_MODEL as DEFAULT_MODEL
         from config import console
+
         # override model if requested
         if args.llm_model != DEFAULT_MODEL:
             import config
+
             config.LLM_MODEL = args.llm_model
         Discovery(args.university_qid).discover_missing()
 

@@ -17,6 +17,7 @@ SELECT DISTINCT ?univ ?univLabel ?website WHERE {
 ORDER BY ?univLabel
 """
 
+
 def fetch_us_universities() -> None:
     console.print("[bold]Querying Wikidata for U.S. universities...[/bold]")
     rows = run_sparql(_US_UNIV_SPARQL)
@@ -26,6 +27,7 @@ def fetch_us_universities() -> None:
 
     # also print a summary table
     from rich.table import Table
+
     table = Table("QID", "Name", "Website", header_style="magenta")
     for b in rows:
         qid = b["univ"]["value"].rsplit("/", 1)[-1]
