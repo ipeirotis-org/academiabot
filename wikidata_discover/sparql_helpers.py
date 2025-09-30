@@ -1,5 +1,5 @@
 from SPARQLWrapper import SPARQLWrapper, JSON
-from config import SPARQL_ENDPOINT, USER_AGENT
+from wikidata_discover.config import SPARQL_ENDPOINT, USER_AGENT
 
 
 def execute_sparql_bindings(query: str) -> list[dict]:
@@ -15,31 +15,20 @@ def execute_sparql_bindings(query: str) -> list[dict]:
     return resp["results"]["bindings"]
 
 
-def run_sparql(query: str) -> list[tuple[str, str]]:
+def run_sparql(query: str, as_tuples: bool = False,
+               main_key: str = "univ", label_key: str = "univLabel"):
     """
-    Helper that returns (qid,label) tuples by picking out fields
-    from the bindings. It now handles multiple expected key names.
+    Run a SPARQL query. By default return raw dicts.
+    If as_tuples=True, convert to (qid, label) pairs.
     """
     bindings = execute_sparql_bindings(query)
-    out: list[tuple[str, str]] = []
 
-    for b in bindings:
-        # Case 1: Handles 'child'/'childLabel' format
-        if "child" in b and "childLabel" in b:
-            qid = b["child"]["value"].rsplit("/", 1)[-1]
-            label = b["childLabel"]["value"]
-            out.append((qid, label))
+    if as_tuples:
+        rows = []
+        for b in bindings:
+            qid = b.get(main_key, {}).get("value", "").rsplit("/", 1)[-1]
+            label = b.get(label_key, {}).get("value")
+            rows.append((qid, label))
+        return rows
 
-        # Case 2 (FIX): Handles 'univ'/'univLabel' format from your data
-        elif "univ" in b and "univLabel" in b:
-            qid = b["univ"]["value"].rsplit("/", 1)[-1]
-            label = b["univLabel"]["value"]
-            out.append((qid, label))
-
-        # Case 3 (Original else): Handles a simple 'label' format
-        elif "label" in b:
-            qid = ""
-            label = b["label"]["value"]
-            out.append((qid, label))
-            
-    return out
+    return bindings

@@ -1,7 +1,7 @@
 import argparse
-from discovery import Discovery
-from harvester import fetch_us_universities
-from config import LLM_MODEL
+from wikidata_discover.discovery import Discovery
+from wikidata_discover.harvester import fetch_us_universities
+from wikidata_discover.config import LLM_MODEL
 
 
 def run_cli():

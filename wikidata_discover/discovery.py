@@ -1,10 +1,11 @@
 from typing import List, Dict, Any, Tuple
-from sparql_helpers import run_sparql
-from sparql_helpers import execute_sparql_bindings
-from wikidata_api import quick_wd_search
-from hierarchy import all_descendants
-from llm_helpers import LLMHelper
-from config import console
+from wikidata_discover.sparql_helpers import run_sparql
+from wikidata_discover.sparql_helpers import execute_sparql_bindings
+from wikidata_discover.wikidata_api import quick_wd_search
+from wikidata_discover.hierarchy       import all_descendants
+from wikidata_discover.llm_helpers import LLMHelper
+from wikidata_discover.config import console
+
 from rich.table import Table
 from pathlib import Path
 import pandas as pd
