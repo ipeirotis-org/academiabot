@@ -1,6 +1,6 @@
 import requests
 from typing import List, Tuple
-from config import USER_AGENT
+from .config import USER_AGENT
 
 
 def quick_wd_search(label: str) -> List[Tuple[str, str]]:

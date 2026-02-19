@@ -2,8 +2,8 @@ from collections import deque, defaultdict
 from time import sleep
 from typing import Dict, List, Tuple
 
-from sparql_helpers import execute_sparql_bindings
-from config import USER_AGENT  # for logging or future use
+from .sparql_helpers import execute_sparql_bindings
+from .config import USER_AGENT  
 
 # SPARQL template for crawling hierarchy
 SPARQL_TEMPLATE = """

@@ -1,7 +1,7 @@
 import json
 from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
-from config import OPENAI_API_KEY, LLM_MODEL
+from wikidata_discover.config import OPENAI_API_KEY, LLM_MODEL
 from rich.console import Console
 
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -65,14 +65,25 @@ class LLMHelper:
 
         resp = client.responses.create(
             model=LLM_MODEL,
-            input=messages,
-            text={"format": {"type": "json_schema", "name": "university_units", "strict": True, "schema": UNIVERSITY_UNITS_SCHEMA}},
+            input=[
+                {"role": "system", "content": SYSTEM_EXTRACT},
+                {"role": "user", "content": f"{univ_label} -- {website}"}
+            ],
+            tools=[{"type": "web_search_preview"}],
             reasoning={"effort": "high"},
-            tools=[],
+            text= {"format":{"type": "output_text","type": "json_schema", "name": "university_units", "schema": UNIVERSITY_UNITS_SCHEMA}},
             store=False
         )
 
-        payload = resp.choices[0].message.content or {}
+        
+        if resp.output and len(resp.output) > 0:
+            payload = resp.output_text
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                payload = {}
+        else:
+            payload = {}
         units = payload.get("units")
         if not isinstance(units, list):
             console.print("[red]LLM JSON did not contain expected `units` list.[/red]")
@@ -99,15 +110,17 @@ class LLMHelper:
             + listing
         )
 
-        resp = client.chat.completions.create(
+        resp = client.responses.create(
             model=LLM_MODEL,
-            messages=[
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0,
-            max_tokens=6,
+            input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+            max_output_tokens=16,
         )
-        answer = resp.choices[0].message.content.strip()
+
+        answer = (resp.output_text or "").strip()
+
+        if not answer:
+            return None
+        
         if answer.upper() == "NONE":
             return None
         # look up answer among children

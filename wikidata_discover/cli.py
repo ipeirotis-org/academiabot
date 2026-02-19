@@ -10,9 +10,13 @@ def run_cli():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # discover subcommand
+    # Can call discover for many QIDs at the same time
     d = sub.add_parser("discover", help="Find missing divisions for a university")
-    d.add_argument("university_qid", help="Wikidata Q-ID (e.g. Q49210)")
+    d.add_argument(
+    "university_qids",
+    nargs="+",
+    help="One or more Wikidata Q-IDs (e.g. Q49210 Q49115 ...)",
+    )  
     d.add_argument("--llm", dest="llm_model", default=LLM_MODEL)
 
     # harvest subcommand
@@ -21,15 +25,16 @@ def run_cli():
     args = parser.parse_args()
 
     if args.command == "discover":
-        from config import LLM_MODEL as DEFAULT_MODEL
-        from config import console
+        from .config import LLM_MODEL as DEFAULT_MODEL
+        from .config import console
 
         # override model if requested
         if args.llm_model != DEFAULT_MODEL:
             import config
 
             config.LLM_MODEL = args.llm_model
-        Discovery(args.university_qid).discover_missing()
+        for qid in args.university_qids:
+            Discovery(qid).discover_missing()
 
     elif args.command == "harvest":
         fetch_us_universities()
