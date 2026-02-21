@@ -1,75 +1,117 @@
-# CLAUDE.md — ipeirotis-org/academiabot
+# CLAUDE.md
 
-## Purpose
+## Project
 
-Wikidata Discovery Toolkit — a Python CLI that identifies missing organizational units (schools, colleges, faculties, divisions) within universities on Wikidata. Combines SPARQL queries, OpenAI LLM extraction, and Wikidata API search to produce actionable CSVs of missing entities ready for batch Wikidata edits.
+**AcademiaBot** populates Wikidata with the full organizational hierarchy of universities worldwide (university > college/school > department > program) and connects faculty/researcher entities to their departments. We use LLMs for entity discovery, disambiguation, and matching, and the Wikidata API + SPARQL for reads/writes.
 
-## Architecture
+## Repository layout
 
 ```
 academiabot/
-├── wikidata_discover/          # Main application package
-│   ├── cli.py                  # CLI entry point (argparse: "harvest" and "discover")
-│   ├── config.py               # Configuration & env vars
-│   ├── discovery.py            # Core Discovery class (find missing divisions)
-│   ├── harvester.py            # Harvest all U.S. universities via SPARQL
-│   ├── hierarchy.py            # BFS crawler for organizational hierarchy
-│   ├── llm_helpers.py          # OpenAI integration & structured prompting
-│   ├── sparql_helpers.py       # SPARQL query execution wrapper
-│   ├── wikidata_api.py         # Wikidata entity search API
-│   ├── requirements.txt        # Python dependencies
-│   ├── results/                # Output directory (JSON + CSV)
+├── wikidata_discover/           # Main package
+│   ├── cli.py                   # argparse CLI: "harvest" and "discover" commands
+│   ├── config.py                # Env vars, constants (OPENAI_API_KEY, LLM_MODEL, SPARQL_ENDPOINT)
+│   ├── discovery.py             # Core Discovery class: orchestrates LLM + SPARQL + matching
+│   ├── harvester.py             # SPARQL harvest of all U.S. universities to JSON
+│   ├── hierarchy.py             # BFS crawler over P527/P355/P199/P361/P749
+│   ├── llm_helpers.py           # OpenAI Responses API: extract_divisions, choose_match
+│   ├── sparql_helpers.py        # Thin wrapper around SPARQLWrapper
+│   ├── wikidata_api.py          # wbsearchentities wrapper
+│   ├── to_qs_wikidata.py        # Export missing entities as QuickStatements
+│   ├── requirements.txt
+│   ├── results/                 # Output CSVs + universities_us.json
 │   └── scripts/
-│       └── wikidata_division_discover.py  # CLI entrypoint script
-└── misc_scripts/               # Legacy hierarchy crawlers
+│       └── wikidata_division_discover.py   # Entrypoint
+└── misc_scripts/                # Legacy hierarchy scripts (not imported by main package)
 ```
 
-## How It Works
+## How to run
 
-### Command 1: `harvest`
-Runs a SPARQL query to fetch all U.S. universities (P31/P279 → Q3918, P17 → Q30). Outputs `universities_us.json`.
+```bash
+pip install -r wikidata_discover/requirements.txt
+# Set OPENAI_API_KEY in .env
+python -m wikidata_discover.scripts.wikidata_division_discover harvest
+python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210  # NYU
+```
 
-### Command 2: `discover Q<ID>`
-1. Fetches the target university's label and website from Wikidata
-2. Sends university info to OpenAI LLM → extracts candidate divisions (name, type, city, state, website)
-3. For each candidate: searches Wikidata, checks existing children (P361/P355/P749), uses LLM to classify as linked / orphan / missing
-4. Outputs console table + `missing_divisions_Q<ID>.csv`
+## Tech stack
 
-## Tech Stack
+- Python 3.11+
+- OpenAI Responses API (`client.responses.create`) with JSON schema output and `web_search_preview` tool
+- SPARQLWrapper for Wikidata SPARQL endpoint
+- rapidfuzz for fuzzy name matching
+- pandas for CSV I/O
+- rich for console output
 
-- **Python 3** with `openai`, `SPARQLWrapper`, `pandas`, `rich`, `questionary`
-- **OpenAI API** — GPT-4o/GPT-5 for entity extraction and matching
-- **Wikidata SPARQL** endpoint (`https://query.wikidata.org/sparql`)
-- **Wikidata API** (`https://www.wikidata.org/w/api.php`)
+## Key Wikidata properties
 
-## Configuration
+| Property | Meaning | Usage |
+|----------|---------|-------|
+| P31 | instance of | Classify entities (Q3918=university, Q1183543=academic dept) |
+| P279 | subclass of | Type hierarchy |
+| P749 | parent organization | **Primary relationship**: school -> university, dept -> school |
+| P361 | part of | Alternative/supplementary upward link |
+| P527 | has part | Downward: university -> schools |
+| P355 | has subsidiary | Downward: org -> sub-org |
+| P199 | business division | Downward: org -> division |
+| P856 | official website | QA and verification |
+| P1771 | IPEDS ID | U.S. institution identifier |
+| P108 | employer | Researcher -> institution |
+| P39 | position held | Faculty role |
+| P101 | field of work | Department/researcher discipline |
+| P3418 | academic discipline | More specific than P101 |
+| P1960 | Google Scholar author ID | Researcher profile link |
 
-Environment variables (via `.env`):
-- `OPENAI_API_KEY` — required
-- `WD_BOT_USERAGENT` — default: `"AcademiaBot/1.0 (ipeirotis@example.com)"`
+## Data model (target hierarchy)
 
-Hardcoded in `config.py`:
-- `LLM_MODEL = "gpt-5"` (README says "gpt-4o" — mismatch)
-- `SPARQL_ENDPOINT` — Wikidata query service
+```
+University (Q3918)
+  └─ P749 ─ College/School (Q31855 or Q3918)
+       └─ P749 ─ Department (Q1183543 / Q2467461)
+            └─ P749 ─ Program / Lab / Center (Q1664727 / Q4830453)
+                 └─ P108 ─ Faculty/Researcher
+```
 
-## Key Wikidata Predicates
+Use **P749 (parent organization)** as the primary relationship. Add P361 as supplementary only. For dual-parent units (joint departments), add a second P749 with rank=normal and qualifiers.
 
-| Predicate | Meaning | Used For |
-|-----------|---------|----------|
-| P31/P279 | instance of / subclass of | Identify universities |
-| P17 | country | Filter for U.S. |
-| P361 | part of | Upward hierarchy |
-| P749 | parent organization | Upward hierarchy |
-| P527/P355/P199 | has part / subsidiary / business division | Downward hierarchy |
-| P856 | website | University URL |
+## Current pipeline
 
-## Known Issues
+1. `harvest`: SPARQL fetches all U.S. universities (P31/P279 -> Q3918, P17 -> Q30)
+2. `discover <QID>`: For a given university:
+   a. Fetch university label + website from Wikidata
+   b. LLM extracts candidate top-level units (schools/colleges) with web search
+   c. For each candidate: fuzzy-match against existing Wikidata children (rapidfuzz)
+   d. Unmatched candidates go to LLM `choose_match` for disambiguation
+   e. Results classified as: exists_linked, exists_orphan, or missing
+   f. Missing entities exported to CSV + QuickStatements file
 
-1. **Model version mismatch** — `config.py` says `gpt-5`, README says `gpt-4o`
-2. **Relative imports in misc_scripts** — `hierarchy.py` uses `from sparql_helpers import ...` instead of full path
-3. **No rate limiting** on Wikidata Search API calls (SPARQL has 0.3s sleep)
-4. **Minimal error handling** for LLM JSON schema validation failures
+## LLM integration details
 
-## TODO.md
+- `llm_helpers.py` uses OpenAI Responses API (not Chat Completions)
+- `extract_divisions()`: structured JSON output with `web_search_preview` tool, `reasoning.effort = "high"`
+- `choose_match()`: single-token classification (QID / ORPHAN:QID / NONE)
+- Model configured in `config.py` as `LLM_MODEL`
+- Future: support Anthropic Claude API as alternative provider
 
-This repo's TODO.md feeds into the `Research: Wikidata` section of the main tasks repo (`ipeirotis/tasks`).
+## Coding conventions
+
+- All SPARQL goes through `sparql_helpers.py` (never construct SPARQLWrapper directly)
+- All LLM calls go through `LLMHelper` static methods in `llm_helpers.py`
+- Use `config.console` (rich Console) for user-facing output
+- Keep 0.3s sleep between SPARQL requests (polite crawling)
+- Output files go to `wikidata_discover/results/`
+- Never use em-dashes in code comments, docstrings, or output strings
+- Write functions that are independently testable (separate logic from I/O)
+- For new LLM prompts, follow the pattern in `llm_helpers.py` (structured JSON schema)
+
+## Known issues
+
+1. `config.py` hardcodes `LLM_MODEL = "gpt-5"` but README says "gpt-4o"
+2. `misc_scripts/hierarchy.py` uses broken relative imports
+3. No rate limiting on `wikidata_api.quick_wd_search()`
+4. No retry/backoff on API failures
+5. `to_qs_wikidata.py` caps at 10 items (`missing[:10]`) with no config
+6. CLI `--llm` override is broken (imports `config` instead of `wikidata_discover.config`)
+7. No tests exist
+
+## Important: always check TASKS.md for current phase and priorities.
