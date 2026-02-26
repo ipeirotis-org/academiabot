@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 from wikidata_discover.config import OPENAI_API_KEY, LLM_MODEL
@@ -6,11 +7,12 @@ from rich.console import Console
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 console = Console()
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────  LLM PROMPTS  ─────────────────────────
 SYSTEM_EXTRACT = (
-    "You are an education‑data analyst. Given the name of a university and (optionally) its website URL, return a JSON "
-    "key `units` whose value is an *array* of objects, each describing a *top‑level* "
+    "You are an education data analyst. Given the name of a university and (optionally) its website URL, return a JSON "
+    "key `units` whose value is an *array* of objects, each describing a *top-level* "
     "academic or administrative unit (school, college, faculty, division, or campus). "
     "Each object *must* include: name, unit_type, city, state, website. Use null if a "
     "value is unknown. Do not list departments or research centers."
@@ -21,13 +23,13 @@ SYSTEM_EXTRACT = (
 MATCH_TEMPLATE = (
     "You are assisting with entity alignment to Wikidata. Below is the name of a "
     "candidate academic unit *CANDIDATE* from UNIVERSITY, followed by a numbered "
-    "list of existing descendant units from Wikidata, each labelled `[n] QID — LABEL`.\n\n"
+    "list of existing descendant units from Wikidata, each labelled `[n] QID -- LABEL`.\n\n"
     "If the candidate is equivalent to a listed unit **that already has** a parent-"
     "link to UNIVERSITY, reply with that QID.\n"
     "If it matches a listed unit but that unit is **missing** the parent link, "
     "reply `ORPHAN:QID`.\n"
     "If none match, reply `NONE`.\n"
-    "*Return that single token only — no explanation.*"
+    "*Return that single token only -- no explanation.*"
 )
 
 UNIVERSITY_UNITS_SCHEMA = {
@@ -54,43 +56,57 @@ UNIVERSITY_UNITS_SCHEMA = {
     "additionalProperties": False
 }
 
+_EXTRACT_MAX_RETRIES = 2
+
+
 class LLMHelper:
     @staticmethod
     def extract_divisions(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract top-level academic/administrative units for a university."""
-        messages = [
-            {"role": "developer", "content": [{"type": "input_text", "text": SYSTEM_EXTRACT}]},
-            {"role": "user",      "content": [{"type": "input_text", "text": f"{univ_label} -- {website}"}]}
-        ]
 
-        resp = client.responses.create(
-            model=LLM_MODEL,
-            input=[
-                {"role": "system", "content": SYSTEM_EXTRACT},
-                {"role": "user", "content": f"{univ_label} -- {website}"}
-            ],
-            tools=[{"type": "web_search_preview"}],
-            reasoning={"effort": "high"},
-            text= {"format":{"type": "output_text","type": "json_schema", "name": "university_units", "schema": UNIVERSITY_UNITS_SCHEMA}},
-            store=False
-        )
+        for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
+            resp = client.responses.create(
+                model=LLM_MODEL,
+                input=[
+                    {"role": "system", "content": SYSTEM_EXTRACT},
+                    {"role": "user", "content": f"{univ_label} -- {website}"}
+                ],
+                tools=[{"type": "web_search_preview"}],
+                reasoning={"effort": "high"},
+                text={"format": {"type": "json_schema", "name": "university_units", "schema": UNIVERSITY_UNITS_SCHEMA}},
+                store=False
+            )
 
-        
-        if resp.output and len(resp.output) > 0:
-            payload = resp.output_text
+            raw_text = resp.output_text if resp.output else None
+            if not raw_text:
+                logger.warning(
+                    "extract_divisions attempt %d/%d: empty response for %s",
+                    attempt, _EXTRACT_MAX_RETRIES, univ_label,
+                )
+                continue
+
             try:
-                payload = json.loads(payload)
-            except Exception:
-                payload = {}
-        else:
-            payload = {}
-        units = payload.get("units")
-        if not isinstance(units, list):
-            console.print("[red]LLM JSON did not contain expected `units` list.[/red]")
-            return []
+                payload = json.loads(raw_text)
+            except json.JSONDecodeError as exc:
+                logger.error(
+                    "extract_divisions attempt %d/%d: JSON parse error for %s: %s\nRaw response: %s",
+                    attempt, _EXTRACT_MAX_RETRIES, univ_label, exc, raw_text[:500],
+                )
+                continue
 
-        # Normalize entries: wrap bare strings into dicts
-        return [ {"name": itm} if isinstance(itm, str) else itm for itm in units ]
+            units = payload.get("units")
+            if not isinstance(units, list):
+                logger.error(
+                    "extract_divisions attempt %d/%d: 'units' key missing or not a list for %s\nParsed payload: %s",
+                    attempt, _EXTRACT_MAX_RETRIES, univ_label, json.dumps(payload)[:500],
+                )
+                continue
+
+            # Normalize entries: wrap bare strings into dicts
+            return [{"name": itm} if isinstance(itm, str) else itm for itm in units]
+
+        console.print(f"[red]Failed to extract divisions for {univ_label} after {_EXTRACT_MAX_RETRIES} attempts.[/red]")
+        return []
 
     @staticmethod
     def choose_match(candidate: str, univ_label: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:
@@ -98,7 +114,7 @@ class LLMHelper:
 
         # Compose numbered list for prompt
         listing_lines = [
-            f"[{i+1}] {qid} — {label}" for i, (qid, label) in enumerate(children)
+            f"[{i+1}] {qid} -- {label}" for i, (qid, label) in enumerate(children)
         ]
         listing = "\n".join(listing_lines)
 
@@ -110,17 +126,21 @@ class LLMHelper:
             + listing
         )
 
-        resp = client.responses.create(
-            model=LLM_MODEL,
-            input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-            max_output_tokens=16,
-        )
+        try:
+            resp = client.responses.create(
+                model=LLM_MODEL,
+                input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+                max_output_tokens=16,
+            )
+        except Exception:
+            logger.exception("choose_match LLM call failed for candidate '%s'", candidate)
+            return None
 
         answer = (resp.output_text or "").strip()
 
         if not answer:
             return None
-        
+
         if answer.upper() == "NONE":
             return None
         # look up answer among children

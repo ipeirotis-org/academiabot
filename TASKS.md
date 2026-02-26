@@ -5,20 +5,20 @@
 >
 > **Current phase**: Phase 1 (Stabilize and fix existing code)
 >
-> Last updated: 2026-02-21
+> Last updated: 2026-02-26
 
 ---
 
 ## Phase 0: Bugs and tech debt (do first)
 
-- [ ] **Fix LLM model config**: Reconcile `config.py` (`gpt-5`) vs README (`gpt-4o`). Make `LLM_MODEL` configurable via `.env` with a sensible default. Update README.
-- [ ] **Fix CLI --llm override**: In `cli.py`, the model override does `import config` (wrong module path). Should modify `wikidata_discover.config.LLM_MODEL`.
-- [ ] **Fix misc_scripts imports**: `misc_scripts/hierarchy.py` uses `from sparql_helpers import ...` which fails. Either fix to absolute import or deprecate these scripts.
-- [ ] **Add rate limiting to Wikidata Search API**: `wikidata_api.quick_wd_search()` has no sleep/throttle. Add 0.3s delay matching the SPARQL polite pause.
-- [ ] **Add retry/backoff**: Wrap SPARQL and Wikidata API calls with exponential backoff (use `tenacity` or similar). Both endpoints can return 429s.
-- [ ] **Remove hardcoded cap in QuickStatements export**: `to_qs_wikidata.py` has `missing[:10]`. Make configurable or remove the cap.
-- [ ] **Add basic error handling for LLM responses**: `llm_helpers.py` silently returns `{}` on JSON parse failure. Log the raw response, retry once, then fail gracefully.
-- [ ] **Add `.env.example`** with all required/optional env vars documented.
+- [x] **Fix LLM model config**: `LLM_MODEL` now read from `.env` with default `gpt-4o`. README updated.
+- [x] **Fix CLI --llm override**: `cli.py` now imports `wikidata_discover.config` correctly.
+- [x] **Fix misc_scripts imports**: Scripts were already standalone; added deprecation notices pointing to `wikidata_discover.hierarchy`.
+- [x] **Add rate limiting to Wikidata Search API**: `quick_wd_search()` now has 0.3s polite delay.
+- [x] **Add retry/backoff**: SPARQL and Wikidata API calls wrapped with `tenacity` exponential backoff (3 attempts).
+- [x] **Remove hardcoded cap in QuickStatements export**: `export_quickstatements()` now accepts optional `max_items` param; defaults to all.
+- [x] **Add basic error handling for LLM responses**: `extract_divisions()` now logs raw response on parse failure, retries once, then returns `[]` gracefully.
+- [x] **Add `.env.example`** with all required/optional env vars documented.
 
 ---
 
@@ -126,4 +126,4 @@ SELECT ?child ?childLabel ?childTypeLabel WHERE {
 
 ---
 
-_Last updated: 2026-02-21_
+_Last updated: 2026-02-26_

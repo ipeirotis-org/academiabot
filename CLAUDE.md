@@ -106,12 +106,12 @@ Use **P749 (parent organization)** as the primary relationship. Add P361 as supp
 
 ## Known issues
 
-1. `config.py` hardcodes `LLM_MODEL = "gpt-5"` but README says "gpt-4o"
-2. `misc_scripts/hierarchy.py` uses broken relative imports
-3. No rate limiting on `wikidata_api.quick_wd_search()`
-4. No retry/backoff on API failures
-5. `to_qs_wikidata.py` caps at 10 items (`missing[:10]`) with no config
-6. CLI `--llm` override is broken (imports `config` instead of `wikidata_discover.config`)
+1. ~~`config.py` hardcodes `LLM_MODEL = "gpt-5"` but README says "gpt-4o"~~ Fixed: reads from `.env` with default `gpt-4o`
+2. ~~`misc_scripts/hierarchy.py` uses broken relative imports~~ Fixed: scripts are standalone; deprecated in favor of `wikidata_discover.hierarchy`
+3. ~~No rate limiting on `wikidata_api.quick_wd_search()`~~ Fixed: 0.3s delay added
+4. ~~No retry/backoff on API failures~~ Fixed: tenacity exponential backoff on SPARQL and Wikidata API
+5. ~~`to_qs_wikidata.py` caps at 10 items (`missing[:10]`) with no config~~ Fixed: configurable `max_items` param, defaults to all
+6. ~~CLI `--llm` override is broken (imports `config` instead of `wikidata_discover.config`)~~ Fixed
 7. No tests exist
 
 ## Important: always check TASKS.md for current phase and priorities.

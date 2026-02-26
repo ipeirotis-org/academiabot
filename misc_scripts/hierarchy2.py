@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-BFS hierarchy crawler for a university Q‑ID.
-Shows edge predicate + node type, avoids WDQS time‑outs
+DEPRECATED: Use wikidata_discover.hierarchy.all_descendants() instead.
+
+BFS hierarchy crawler for a university Q-ID.
+Shows edge predicate + node type, avoids WDQS time-outs
 by issuing many small queries.
 """
 

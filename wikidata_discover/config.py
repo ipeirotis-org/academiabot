@@ -7,7 +7,7 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 USER_AGENT = os.getenv("WD_BOT_USERAGENT", "AcademiaBot/1.0 (ipeirotis@example.com)")
-LLM_MODEL = "gpt-5"
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
 SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 
 if not OPENAI_API_KEY:

@@ -5,3 +5,5 @@ pandas
 questionary
 SPARQLWrapper
 requests
+tenacity
+rapidfuzz

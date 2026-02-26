@@ -13,14 +13,18 @@ TYPE_MAP = {
     None: "Q2467461",
 }
 
-def export_quickstatements(missing, university_qid, university_label):
+def export_quickstatements(missing, university_qid, university_label, max_items=None):
     """
     Export missing or orphan divisions into QuickStatements format.
+
+    Args:
+        max_items: Optional cap on how many items to export. None means all.
     """
 
     qs_lines = []
+    items = missing[:max_items] if max_items else missing
 
-    for item in missing[:10]: 
+    for item in items:
         name = (item["name"] or "").replace('"', '\\"')
 
         unit_type = (item.get("unit_type") or "").lower()
