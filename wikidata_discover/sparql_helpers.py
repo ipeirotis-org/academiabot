@@ -1,7 +1,23 @@
-from SPARQLWrapper import SPARQLWrapper, JSON
+import logging
+from SPARQLWrapper import SPARQLWrapper, JSON, SPARQLExceptions
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from wikidata_discover.config import SPARQL_ENDPOINT, USER_AGENT
 
+logger = logging.getLogger(__name__)
 
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    retry=retry_if_exception_type((
+        SPARQLExceptions.EndPointInternalError,
+        SPARQLExceptions.EndPointNotFound,
+        Exception,
+    )),
+    before_sleep=lambda rs: logger.warning(
+        "SPARQL retry #%d after %s", rs.attempt_number, rs.outcome.exception()
+    ),
+)
 def execute_sparql_bindings(query: str) -> list[dict]:
     """
     Run any SPARQL query and return the full list of result bindings
@@ -11,7 +27,6 @@ def execute_sparql_bindings(query: str) -> list[dict]:
     wrapper.setQuery(query)
     wrapper.setReturnFormat(JSON)
     resp = wrapper.query().convert()
-    # print(resp)
     return resp["results"]["bindings"]
 
 

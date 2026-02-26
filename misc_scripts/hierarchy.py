@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Explore the organisational hierarchy under one university Q‑ID.
+DEPRECATED: Use wikidata_discover.hierarchy.all_descendants() instead.
+
+Standalone hierarchy explorer for a university Q-ID.
+Kept for reference only; the main package (wikidata_discover/) has
+the maintained version with shared config, rate limiting, and retries.
 
 Traverses these predicates (both directions):
 

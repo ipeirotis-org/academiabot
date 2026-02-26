@@ -1,7 +1,7 @@
 import argparse
 from wikidata_discover.discovery import Discovery
 from wikidata_discover.harvester import fetch_us_universities
-from wikidata_discover.config import LLM_MODEL
+import wikidata_discover.config as config
 
 
 def run_cli():
@@ -16,8 +16,8 @@ def run_cli():
     "university_qids",
     nargs="+",
     help="One or more Wikidata Q-IDs (e.g. Q49210 Q49115 ...)",
-    )  
-    d.add_argument("--llm", dest="llm_model", default=LLM_MODEL)
+    )
+    d.add_argument("--llm", dest="llm_model", default=None)
 
     # harvest subcommand
     h = sub.add_parser("harvest", help="Fetch all U.S. universities to JSON")
@@ -25,13 +25,7 @@ def run_cli():
     args = parser.parse_args()
 
     if args.command == "discover":
-        from .config import LLM_MODEL as DEFAULT_MODEL
-        from .config import console
-
-        # override model if requested
-        if args.llm_model != DEFAULT_MODEL:
-            import config
-
+        if args.llm_model:
             config.LLM_MODEL = args.llm_model
         for qid in args.university_qids:
             Discovery(qid).discover_missing()

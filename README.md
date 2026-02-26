@@ -13,7 +13,8 @@ It provides two core commands:
 - **CSV export** of missing divisions ready for batch Wikidata edits.
 - **JSON export** of U.S. universities for offline reuse.
 - **Configurable** via environment variables (`.env`):
-  - `OPENAI_API_KEY` – Your OpenAI API key  
+  - `OPENAI_API_KEY` – Your OpenAI API key
+  - `LLM_MODEL` – OpenAI model to use (defaults to `gpt-4o`)
   - `WD_BOT_USERAGENT` – Custom `User-Agent` for Wikidata/SPARQL requests (defaults to `AcademiaBot/1.0`)
 - **Rich** console output and tables for easy debugging.
 
