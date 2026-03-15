@@ -26,9 +26,13 @@
 
 - [ ] **Run pilot on 10 diverse universities**: NYU (Q49210), Columbia (Q49088), MIT (Q49108), Stanford (Q41506), UC Berkeley (Q168756), U Michigan (Q230492), Howard (Q1640613), Caltech (Q131252), U Texas Austin (Q579968), CUNY (Q1143289). Document precision/recall of LLM extraction.
 - [ ] **Add validation/QA reporting**: After discovery, output a summary report: how many candidates found, how many matched, how many orphans, how many truly missing. Store in `results/` as JSON.
+  - [x] Implemented: `Discovery._write_qa_report()` writes `results/reports/<QID>_report.json` after each run.
 - [ ] **Improve fuzzy matching**: Current `is_fuzzy_match` in `discovery.py` has aggressive partial matching (threshold 70 with partial_ratio can cause false positives). Tune thresholds, add unit tests for edge cases like "Stern School of Business" vs "Leonard N. Stern School of Business".
+  - [x] Implemented: `token_sort_ratio` raised to 88, `partial_ratio` raised to 92 with a 60% length-ratio guard. 17 unit tests in `tests/test_fuzzy.py` (all passing).
 - [ ] **Add caching for LLM responses**: Cache `extract_divisions` results keyed by (QID, model_version) to avoid redundant API calls during iteration. Use a JSON file in `results/cache/`.
+  - [x] Implemented: `llm_helpers.py` caches by SHA-256 of `(univ_label, LLM_MODEL)` in `results/cache/<hash>.json`.
 - [ ] **Add proper logging**: Replace ad-hoc `console.print` debug output with Python `logging` module. Keep `rich` for user-facing tables/progress only.
+  - [x] Implemented: `discovery.py` now uses `logging.getLogger(__name__)` for debug/info output; `rich` retained for tables and user-facing messages only.
 
 ---
 
