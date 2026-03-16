@@ -203,18 +203,22 @@ class Discovery:
                 "[green]No missing divisions detected - Wikidata seems up to date![/green]"
             )
 
-        self._write_qa_report(len(divisions), counts)
+        self._write_qa_report(len(divisions), len(direct_children), counts)
         return missing
 
-    def _write_qa_report(self, total_candidates: int, counts: Dict[str, int]) -> None:
+    def _write_qa_report(self, total_candidates: int, total_wikidata_children: int, counts: Dict[str, int]) -> None:
         """Write a JSON summary report to results/reports/<QID>_report.json."""
+        linked = counts["exists_linked"]
+        recall = linked / total_wikidata_children if total_wikidata_children > 0 else None
         report = {
             "university_qid": self.university_qid,
             "university_label": self.university_label,
             "total_candidates": total_candidates,
-            "exists_linked": counts["exists_linked"],
+            "total_wikidata_children": total_wikidata_children,
+            "exists_linked": linked,
             "exists_orphan": counts["exists_orphan"],
             "missing": counts["missing"],
+            "recall": round(recall, 3) if recall is not None else None,
         }
         reports_dir = RESULTS_DIR / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
