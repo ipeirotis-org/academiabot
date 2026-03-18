@@ -24,11 +24,11 @@
 
 ## Phase 1: Stabilize and validate the discover pipeline
 
-- [ ] **Run pilot on 10 diverse universities**: NYU (Q49210), Columbia (Q49088), MIT (Q49108), Stanford (Q41506), UC Berkeley (Q168756), U Michigan (Q230492), Howard (Q1640613), Caltech (Q131252), U Texas Austin (Q579968), CUNY (Q1143289). Document precision/recall of LLM extraction.
-- [ ] **Add validation/QA reporting**: After discovery, output a summary report: how many candidates found, how many matched, how many orphans, how many truly missing. Store in `results/` as JSON.
-- [ ] **Improve fuzzy matching**: Current `is_fuzzy_match` in `discovery.py` has aggressive partial matching (threshold 70 with partial_ratio can cause false positives). Tune thresholds, add unit tests for edge cases like "Stern School of Business" vs "Leonard N. Stern School of Business".
-- [ ] **Add caching for LLM responses**: Cache `extract_divisions` results keyed by (QID, model_version) to avoid redundant API calls during iteration. Use a JSON file in `results/cache/`.
-- [ ] **Add proper logging**: Replace ad-hoc `console.print` debug output with Python `logging` module. Keep `rich` for user-facing tables/progress only.
+- [x] **Run pilot on 10 diverse universities**: NYU (Q49210), Columbia (Q49088), MIT (Q49108), Stanford (Q41506), UC Berkeley (Q168756), U Michigan (Q230492), Howard (Q2089472), Caltech (Q161562), U Texas Austin (Q49213), CUNY (Q762266). Document precision/recall of LLM extraction.
+- [x] **Add validation/QA reporting**: After discovery, output a summary report: how many candidates found, how many matched, how many orphans, how many truly missing. Store in `results/` as JSON.
+- [x] **Improve fuzzy matching**: Current `is_fuzzy_match` in `discovery.py` has aggressive partial matching (threshold 70 with partial_ratio can cause false positives). Tune thresholds, add unit tests for edge cases like "Stern School of Business" vs "Leonard N. Stern School of Business".
+- [x] **Add caching for LLM responses**: Cache `extract_divisions` results keyed by (QID, model_version) to avoid redundant API calls during iteration. Use a JSON file in `results/cache/`.
+- [x] **Add proper logging**: Replace ad-hoc `console.print` debug output with Python `logging` module. Keep `rich` for user-facing tables/progress only.
 
 ---
 
