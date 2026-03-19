@@ -115,7 +115,8 @@ The current pipeline only discovers **top-level units** (schools/colleges) under
 
 ### Step 3: Secret Manager for API keys
 
-- [ ] **Store OPENAI_API_KEY in Secret Manager**: Secret name `openai-api-key` in project `wikidata-academia`. Update `config.py` to try Secret Manager first, fall back to `.env` / environment variable.
+- [x] **Store API keys in Secret Manager**: Three secrets created in project `wikidata-academia`: `openai-api-key`, `anthropic-api-key`, `gemini-api-key`. Service account has `roles/secretmanager.admin`.
+- [ ] **Wire `config.py` to read from Secret Manager**: Try Secret Manager first, fall back to env var / `.env`. Add `google-cloud-secret-manager` to requirements.txt with graceful import fallback.
 - [ ] **Store Wikidata bot credentials in Secret Manager**: For future Phase 5 bot operations. Secret name `wikidata-bot-password`.
 
 ### Step 4: Vertex AI as alternative LLM provider
