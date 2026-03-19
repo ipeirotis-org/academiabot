@@ -4,6 +4,8 @@ from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 from wikidata_discover.config import OPENAI_API_KEY, LLM_MODEL
 from rich.console import Console
+import hashlib
+from pathlib import Path
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 console = Console()
@@ -57,12 +59,37 @@ UNIVERSITY_UNITS_SCHEMA = {
 }
 
 _EXTRACT_MAX_RETRIES = 2
+_CACHE_DIR = Path(__file__).parent / "results" / "cache"
+
+
+def _cache_key(univ_label: str, model: str) -> str:
+    return hashlib.sha256(f"{univ_label}|{model}".encode()).hexdigest()
+
+
+def _load_cache(key: str) -> Optional[List[Dict[str, Any]]]:
+    path = _CACHE_DIR / f"{key}.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except Exception:
+            pass
+    return None
+
+
+def _save_cache(key: str, units: List[Dict[str, Any]]) -> None:
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    (_CACHE_DIR / f"{key}.json").write_text(json.dumps(units, indent=2))
 
 
 class LLMHelper:
     @staticmethod
     def extract_divisions(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract top-level academic/administrative units for a university."""
+        key = _cache_key(univ_label, LLM_MODEL)
+        cached = _load_cache(key)
+        if cached is not None:
+            logger.info("extract_divisions: cache hit for %s", univ_label)
+            return cached
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
             resp = client.responses.create(
@@ -72,7 +99,6 @@ class LLMHelper:
                     {"role": "user", "content": f"{univ_label} -- {website}"}
                 ],
                 tools=[{"type": "web_search_preview"}],
-                reasoning={"effort": "high"},
                 text={"format": {"type": "json_schema", "name": "university_units", "schema": UNIVERSITY_UNITS_SCHEMA}},
                 store=False
             )
@@ -103,7 +129,9 @@ class LLMHelper:
                 continue
 
             # Normalize entries: wrap bare strings into dicts
-            return [{"name": itm} if isinstance(itm, str) else itm for itm in units]
+            result = [{"name": itm} if isinstance(itm, str) else itm for itm in units]
+            _save_cache(key, result)
+            return result
 
         console.print(f"[red]Failed to extract divisions for {univ_label} after {_EXTRACT_MAX_RETRIES} attempts.[/red]")
         return []

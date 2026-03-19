@@ -1,0 +1,13 @@
+university_qid,university_name,precision,recall,f1,notes
+Q49210,NYU,1.000,0.579,0.733,"Missing Tisch notably"
+Q49088,Columbia,1.000,1.000,1.000,"Perfect match"
+Q49108,MIT,1.000,1.000,1.000,"Perfect match"
+Q41506,Stanford,0.778,1.000,0.875,"Extra schools like continuing studies; naming inconsistencies"
+Q168756,UC Berkeley,1.000,0.667,0.800,"Missed several colleges"
+Q230492,University of Michigan,1.000,1.000,1.000,"Perfect match"
+Q1068752,Howard University,1.000,0.786,0.880,"Missing some schools"
+Q161562,Caltech,1.000,1.000,1.000,"Not a single linked school however"
+Q49213,UT Austin,1.000,0.611,0.759,"Missed many schools"
+Q762266,CUNY,0.960,0.962,0.961,"Near-perfect, minor mismatch"
+Q131252,University of Chicago,0.846,0.917,0.880,"Extra 'College', one mismatch"
+Q579968,University of Missouri,0.769,1.000,0.69,"Extra schools hallucinated"
