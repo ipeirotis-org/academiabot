@@ -8,7 +8,13 @@
     "roles/storage.objectAdmin",
     "roles/logging.viewer",
     "roles/cloudfunctions.developer",
-    "roles/cloudscheduler.admin"
+    "roles/cloudscheduler.admin",
+    "roles/iam.serviceAccountUser",
+    "roles/secretmanager.secretAccessor",
+    "roles/aiplatform.user",
+    "roles/run.developer",
+    "roles/pubsub.editor",
+    "roles/cloudfunctions.invoker"
   ],
   "created_at": "2026-03-19T03:00:57Z"
 }
