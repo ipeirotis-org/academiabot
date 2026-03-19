@@ -6,7 +6,9 @@
     "roles/bigquery.dataEditor",
     "roles/bigquery.jobUser",
     "roles/storage.objectAdmin",
-    "roles/logging.viewer"
+    "roles/logging.viewer",
+    "roles/cloudfunctions.developer",
+    "roles/cloudscheduler.admin"
   ],
   "created_at": "2026-03-19T03:00:57Z"
 }

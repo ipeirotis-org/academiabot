@@ -124,6 +124,8 @@ Use **P749 (parent organization)** as the primary relationship. Add P361 as supp
   - `roles/bigquery.jobUser` -- run BigQuery queries
   - `roles/storage.objectAdmin` -- read/write data files in GCS buckets
   - `roles/logging.viewer` -- view logs for debugging
+  - `roles/cloudfunctions.developer` -- deploy Cloud Functions for data collection
+  - `roles/cloudscheduler.admin` -- schedule recurring data collection jobs
 - **Multi-user setup:** Each team member has their own `.cloud-credentials.<email>.enc` file, encrypted with their personal passphrase
 - **Authentication:** Handled automatically via the `cloud-bootstrap` skill and SessionStart hook (`.claude/hooks/cloud-auth.sh`)
 - **New team members:** The agent handles onboarding via the cloud-bootstrap "Add Team Member" flow
