@@ -114,4 +114,27 @@ Use **P749 (parent organization)** as the primary relationship. Add P361 as supp
 6. ~~CLI `--llm` override is broken (imports `config` instead of `wikidata_discover.config`)~~ Fixed
 7. No tests exist
 
+## Cloud Credentials
+
+- **Provider:** GCP
+- **Project:** `wikidata-academia`
+- **Service account:** `claude-agent@wikidata-academia.iam.gserviceaccount.com`
+- **Roles granted:**
+  - `roles/bigquery.dataEditor` -- read/write collected data in BigQuery
+  - `roles/bigquery.jobUser` -- run BigQuery queries
+  - `roles/storage.objectAdmin` -- read/write data files in GCS buckets
+  - `roles/logging.viewer` -- view logs for debugging
+  - `roles/cloudfunctions.developer` -- deploy Cloud Functions for data collection
+  - `roles/cloudscheduler.admin` -- schedule recurring data collection jobs
+  - `roles/iam.serviceAccountUser` -- required for deploying Cloud Functions as the service account
+  - `roles/secretmanager.secretAccessor` -- securely access API keys (OpenAI, Wikidata bot credentials)
+  - `roles/aiplatform.user` -- use Vertex AI / Gemini for entity discovery and judging
+  - `roles/run.developer` -- deploy Cloud Run services for long-running tasks
+  - `roles/pubsub.editor` -- event-driven pipelines between collection, verification, and writing stages
+  - `roles/cloudfunctions.invoker` -- allow scheduler and other functions to trigger Cloud Functions
+- **Multi-user setup:** Each team member has their own `.cloud-credentials.<email>.enc` file, encrypted with their personal passphrase
+- **Authentication:** Handled automatically via the `cloud-bootstrap` skill and SessionStart hook (`.claude/hooks/cloud-auth.sh`)
+- **New team members:** The agent handles onboarding via the cloud-bootstrap "Add Team Member" flow
+- **Permission escalation:** Ask the agent to escalate; it will propose roles and ask you to approve via `gcloud`
+
 ## Important: always check TASKS.md for current phase and priorities.
