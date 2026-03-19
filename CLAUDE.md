@@ -127,7 +127,8 @@ Use **P749 (parent organization)** as the primary relationship. Add P361 as supp
   - `roles/cloudfunctions.developer` -- deploy Cloud Functions for data collection
   - `roles/cloudscheduler.admin` -- schedule recurring data collection jobs
   - `roles/iam.serviceAccountUser` -- required for deploying Cloud Functions as the service account
-  - `roles/secretmanager.secretAccessor` -- securely access API keys (OpenAI, Wikidata bot credentials)
+  - `roles/secretmanager.secretAccessor` -- securely access API keys
+  - `roles/secretmanager.admin` -- create and manage secrets in Secret Manager
   - `roles/aiplatform.user` -- use Vertex AI / Gemini for entity discovery and judging
   - `roles/run.developer` -- deploy Cloud Run services for long-running tasks
   - `roles/pubsub.editor` -- event-driven pipelines between collection, verification, and writing stages
@@ -136,5 +137,42 @@ Use **P749 (parent organization)** as the primary relationship. Add P361 as supp
 - **Authentication:** Handled automatically via the `cloud-bootstrap` skill and SessionStart hook (`.claude/hooks/cloud-auth.sh`)
 - **New team members:** The agent handles onboarding via the cloud-bootstrap "Add Team Member" flow
 - **Permission escalation:** Ask the agent to escalate; it will propose roles and ask you to approve via `gcloud`
+
+## Secret Manager (API keys)
+
+All LLM API keys are stored in **GCP Secret Manager** under project `wikidata-academia`. This is the canonical source for keys used by Cloud Functions, Cloud Run, and other deployed services. Local development can still use `.env` as a fallback.
+
+| Secret name | Description | Accessed by |
+|-------------|-------------|-------------|
+| `openai-api-key` | OpenAI API key for GPT-4o / Responses API | `llm_helpers.py`, Cloud Functions |
+| `anthropic-api-key` | Anthropic API key for Claude models | Future: multi-provider LLM support |
+| `gemini-api-key` | Google Gemini API key | Future: Vertex AI provider in `llm_helpers.py` |
+
+**Accessing secrets in code** (via `google-cloud-secret-manager`):
+```python
+from google.cloud import secretmanager
+
+def get_secret(secret_id: str, project_id: str = "wikidata-academia") -> str:
+    client = secretmanager.SecretManagerServiceClient()
+    name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("UTF-8")
+```
+
+**Accessing secrets via gcloud**:
+```bash
+gcloud secrets versions access latest --secret=openai-api-key --project=wikidata-academia
+```
+
+**Key resolution order** (planned for `config.py`):
+1. Environment variable (e.g., `OPENAI_API_KEY`) -- for local dev and CI
+2. Secret Manager -- for deployed services (Cloud Functions, Cloud Run)
+3. `.env` file -- fallback for local development
+
+**Rotating a key**: Create a new version, then disable the old one:
+```bash
+printf "new-key-value" | gcloud secrets versions add openai-api-key --project=wikidata-academia --data-file=-
+gcloud secrets versions disable <old-version-number> --secret=openai-api-key --project=wikidata-academia
+```
 
 ## Important: always check TASKS.md for current phase and priorities.

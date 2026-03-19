@@ -11,6 +11,7 @@
     "roles/cloudscheduler.admin",
     "roles/iam.serviceAccountUser",
     "roles/secretmanager.secretAccessor",
+    "roles/secretmanager.admin",
     "roles/aiplatform.user",
     "roles/run.developer",
     "roles/pubsub.editor",

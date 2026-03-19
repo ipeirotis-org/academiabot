@@ -3,9 +3,9 @@
 > **Mission**: Make Wikidata the definitive, queryable source for the full organizational
 > hierarchy of every university worldwide, down to departments and faculty affiliations.
 >
-> **Current phase**: Phase 1 (Stabilize and fix existing code)
+> **Current phase**: Phase 2 (Recursive depth) + GCP integration
 >
-> Last updated: 2026-02-26
+> Last updated: 2026-03-19
 
 ---
 
@@ -50,12 +50,15 @@ The current pipeline only discovers **top-level units** (schools/colleges) under
 
 ## Phase 3: Batch processing and automation
 
-- [ ] **Add batch discovery mode**: `discover --batch` processes all universities from `universities_us.json`. Add progress tracking, resume capability (skip already-processed QIDs), and summary report.
-- [ ] **Add batch QuickStatements generation**: Aggregate all missing entities across universities into a single uploadable QS batch, organized by hierarchy level (schools first, then departments).
+> **Depends on**: GCP Steps 1-2 (BigQuery + GCS) for progress tracking and resume.
+> GCP Step 5 (Cloud Functions + Scheduler) for automated batch runs.
+
+- [ ] **Add batch discovery mode**: `discover --batch` processes all universities from the BigQuery `universities` table (or `universities_us.json` as fallback). Resume capability by querying `discovery_runs` for already-processed QIDs via `bq_helpers.get_processed_qids()`. Add progress tracking and summary report.
+- [ ] **Add batch QuickStatements generation**: Aggregate all missing entities across universities into a single uploadable QS batch, organized by hierarchy level (schools first, then departments). Record generated batches in `quickstatements_batches` BQ table.
 - [ ] **Implement ShEx validation schema**: Write Shape Expressions (one shape per entity level) and store in the repo. Validate generated QS statements against the schema before export.
-- [ ] **Add IPEDS reconciliation**: Download IPEDS CSV, match against Wikidata universities by IPEDS ID (P1771). Flag institutions missing from Wikidata entirely.
-- [ ] **Add diff/update mode**: Compare current Wikidata state against last run. Only generate QS for genuinely new entities (not already uploaded in a previous batch).
-- [ ] **Expand beyond U.S.**: Make country configurable. Add support for international institution identifiers (UK UCAS codes, EU ETER IDs, etc.).
+- [ ] **Add IPEDS reconciliation**: Download IPEDS CSV, match against Wikidata universities by IPEDS ID (P1771). Flag institutions missing from Wikidata entirely. Store reconciliation results in BigQuery.
+- [ ] **Add diff/update mode**: Compare current Wikidata state against last run using BigQuery `discovered_units` history. Only generate QS for genuinely new entities (not already uploaded in a previous batch).
+- [ ] **Expand beyond U.S.**: Make country configurable. Add support for international institution identifiers (UK UCAS codes, EU ETER IDs, etc.). Extend BigQuery `universities` table with a `country` column.
 
 ---
 
@@ -84,14 +87,61 @@ The current pipeline only discovers **top-level units** (schools/colleges) under
 
 ---
 
+## GCP integration (parallel track -- do alongside Phase 2)
+
+> **Project**: `wikidata-academia` | **SA**: `claude-agent@wikidata-academia.iam.gserviceaccount.com`
+>
+> GCP is already provisioned with BigQuery, GCS, Cloud Functions, Scheduler, Secret Manager,
+> Vertex AI, Cloud Run, and Pub/Sub roles. This phase wires the existing pipeline into GCP
+> so results are durable, shareable, and ready for batch automation in Phase 3.
+
+### Step 1: BigQuery for results storage (do first)
+
+- [ ] **Create BigQuery dataset and tables**: Dataset `academiabot` in project `wikidata-academia` with tables:
+  - `universities` -- harvested university list (qid, label, website, country, ipeds_id). Source of truth replacing `universities_us.json`.
+  - `discovery_runs` -- one row per discover invocation (run_id, university_qid, university_label, model, timestamp, total_candidates, exists_linked, exists_orphan, missing). Replaces per-QID `_report.json` files.
+  - `discovered_units` -- every candidate unit found across all runs (run_id, university_qid, unit_name, unit_type, status [exists_linked|exists_orphan|missing], matched_qid, website, location). Replaces per-QID `missing_divisions_*.csv` files.
+  - `quickstatements_batches` -- exported QS lines per run (run_id, university_qid, qs_line, uploaded_at). Tracks what has been submitted to Wikidata.
+- [ ] **Add `bq_helpers.py` module**: Thin wrapper around `google-cloud-bigquery` client. Functions: `save_discovery_run()`, `save_discovered_units()`, `get_processed_qids()`, `get_coverage_summary()`. Follow the same pattern as `sparql_helpers.py` (single source for all BQ access).
+- [ ] **Wire `discovery.py` to save results to BigQuery**: After `discover_missing()` completes, call `bq_helpers.save_discovery_run()` and `bq_helpers.save_discovered_units()`. Keep local CSV/JSON output as fallback when BQ is unavailable.
+- [ ] **Wire `harvester.py` to save to BigQuery**: `fetch_us_universities()` writes to `universities` table in addition to (or instead of) the local JSON file.
+- [ ] **Add `--no-bq` CLI flag**: Allow running without BigQuery (e.g., offline or local-only mode). When set, skip all BQ writes and fall back to local files only.
+
+### Step 2: GCS for cache and artifacts
+
+- [ ] **Move LLM response cache to GCS**: Bucket `gs://academiabot-cache/llm-responses/`. Same SHA256 key scheme, but stored in GCS instead of local `results/cache/`. Fall back to local cache if GCS is unreachable.
+- [ ] **Upload result artifacts to GCS**: After each discovery run, upload the CSV, QS file, and report JSON to `gs://academiabot-results/{qid}/`. Provides a durable backup and allows sharing across team members.
+- [ ] **Add `gcs_helpers.py` module**: Functions: `upload_cache()`, `download_cache()`, `upload_artifact()`, `list_artifacts()`. Use `google-cloud-storage` client.
+
+### Step 3: Secret Manager for API keys
+
+- [x] **Store API keys in Secret Manager**: Three secrets created in project `wikidata-academia`: `openai-api-key`, `anthropic-api-key`, `gemini-api-key`. Service account has `roles/secretmanager.admin`.
+- [ ] **Wire `config.py` to read from Secret Manager**: Try Secret Manager first, fall back to env var / `.env`. Add `google-cloud-secret-manager` to requirements.txt with graceful import fallback.
+- [ ] **Store Wikidata bot credentials in Secret Manager**: For future Phase 5 bot operations. Secret name `wikidata-bot-password`.
+
+### Step 4: Vertex AI as alternative LLM provider
+
+- [ ] **Add Gemini support via Vertex AI**: New provider option in `llm_helpers.py`. Set `LLM_PROVIDER=vertex` in `.env` to use `gemini-2.5-pro` instead of OpenAI. Implement `extract_divisions()` and `choose_match()` using the Vertex AI `generativeai` SDK with equivalent structured output.
+- [ ] **Add cost/quality comparison tooling**: CLI command `discover --compare Q49210` that runs the same university through both OpenAI and Vertex AI, then outputs a side-by-side diff of discovered units. Store comparison results in BigQuery for analysis.
+
+### Step 5: Cloud Functions + Scheduler (enables Phase 3 batch)
+
+- [ ] **Create `discover` Cloud Function**: HTTP-triggered function that accepts a university QID, runs `Discovery(qid).discover_missing()`, saves results to BigQuery, and returns a summary. Deploy via `gcloud functions deploy`.
+- [ ] **Create batch orchestrator**: Cloud Scheduler job that reads unprocessed QIDs from the BigQuery `universities` table (LEFT JOIN against `discovery_runs`), and invokes the discover Cloud Function for each. Rate-limited to respect Wikidata and LLM API quotas (e.g., 30 universities/hour).
+- [ ] **Add Pub/Sub event pipeline**: After a discovery run completes, publish a message to `discovery-complete` topic. A downstream subscriber can trigger QS generation, validation, or alerting.
+- [ ] **Add Cloud Run option for long-running recursive discovery**: For Phase 2 recursive mode (which may take minutes per university), deploy as a Cloud Run service instead of a Cloud Function (which has a 9-minute timeout).
+
+---
+
 ## Infrastructure and tooling (ongoing)
 
 - [ ] **Add tests**: Unit tests for `normalize_name`, `is_fuzzy_match`, SPARQL query construction, QS export format. Integration tests with mock LLM responses.
 - [ ] **Add pyproject.toml / setup.py**: Proper Python packaging so the CLI can be installed as `academiabot`.
 - [ ] **CI/CD**: GitHub Actions for linting (ruff/flake8), tests, and type checking (mypy).
-- [ ] **Support multiple LLM providers**: Abstract `llm_helpers.py` to support both OpenAI and Anthropic Claude APIs. Make provider configurable via `.env`.
+- [ ] **Support multiple LLM providers**: Abstract `llm_helpers.py` to support both OpenAI and Anthropic Claude APIs. Make provider configurable via `.env`. (See also GCP Step 4 for Vertex AI/Gemini.)
 - [ ] **Add Wikidata write capability**: Currently only generates QS files. Add direct Wikidata API editing via `wikibaseintegrator` or `pywikibot` for approved bot operations.
 - [ ] **Structured output validation**: Use pydantic models for LLM response schemas instead of raw dicts. Validate before processing.
+- [ ] **Add `google-cloud-bigquery`, `google-cloud-storage`, `google-cloud-secret-manager` to requirements.txt**: Required for GCP integration. Guard imports so the tool still works without them installed (graceful degradation).
 
 ---
 
@@ -126,4 +176,4 @@ SELECT ?child ?childLabel ?childTypeLabel WHERE {
 
 ---
 
-_Last updated: 2026-02-26_
+_Last updated: 2026-03-19_
