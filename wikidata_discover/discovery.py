@@ -108,7 +108,7 @@ class Discovery:
         descendant_qids = self.get_all_descendants_qids()
         alt_labels_map = self.get_children_alt_labels()
 
-        divisions = LLMHelper.extract_divisions(
+        divisions = LLMHelper.extract_divisions_ensemble(
             self.university_label, self.university_website
         )
         logger.info(

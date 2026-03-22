@@ -1,4 +1,5 @@
 import argparse
+import logging
 from wikidata_discover.discovery import Discovery
 from wikidata_discover.harvester import fetch_us_universities
 import wikidata_discover.config as config
