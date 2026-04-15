@@ -436,10 +436,37 @@ class LLMHelper:
         return LLMHelper.extract_divisions_openai(univ_label, website)
 
     @staticmethod
+    def extract_divisions_best_available(univ_label: str, website: str) -> List[Dict[str, Any]]:
+        """
+        Use the ensemble pipeline when OpenAI, Gemini, and Anthropic keys are all
+        available. Otherwise fall back to whichever single provider has a key,
+        preferring OpenAI -> Anthropic -> Gemini. Raises ValueError if no key is set.
+        """
+        has_openai = bool(OPENAI_API_KEY)
+        has_anthropic = bool(ANTHROPIC_API_KEY)
+        has_gemini = bool(GOOGLE_API_KEY)
+
+        if has_openai and has_anthropic and has_gemini:
+            return LLMHelper.extract_divisions_ensemble(univ_label, website)
+        if has_openai:
+            logger.info("extract_divisions_best_available: using OpenAI only (ensemble needs all three keys)")
+            return LLMHelper.extract_divisions_openai(univ_label, website)
+        if has_anthropic:
+            logger.info("extract_divisions_best_available: using Anthropic only")
+            return LLMHelper.extract_divisions_anthropic(univ_label, website)
+        if has_gemini:
+            logger.info("extract_divisions_best_available: using Gemini only")
+            return LLMHelper.extract_divisions_gemini(univ_label, website)
+        raise ValueError(
+            "No LLM provider key set. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY."
+        )
+
+    @staticmethod
     def extract_divisions_ensemble(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """
         Best-performing pipeline: OpenAI + Gemini generate, Anthropic judges.
         Returns a deduplicated, judge-filtered list of unit dicts.
+        Requires OPENAI_API_KEY, GOOGLE_API_KEY, and ANTHROPIC_API_KEY.
         """
         openai_divs = LLMHelper.extract_divisions_openai(univ_label, website)
         gemini_divs = LLMHelper.extract_divisions_gemini(univ_label, website)
