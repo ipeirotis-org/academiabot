@@ -156,6 +156,8 @@ def run_eval(providers: List[str], university_qids: List[str]) -> pd.DataFrame:
                 console.print(f"  [dim]{combo_label} ({len(u)} items)...[/dim]")
                 try:
                     kept = LLMHelper.judge_union(univ_name, u, judge)
+                    # Filter kept to only those in original union (prevent judge hallucinations)
+                    kept = [k for k in kept if any(is_fuzzy_match(k, orig) for orig in u)]
                     p, r, f = compute_metrics(kept, truth)
                     console.print(f"  {combo_label}: {len(kept)} kept, P={p:.3f} R={r:.3f} F1={f:.3f}")
                     rows.append({

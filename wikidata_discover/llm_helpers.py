@@ -544,12 +544,11 @@ class LLMHelper:
             payload = _parse_json_text(raw_text)
             kept = payload.get("keep", [])
             if not isinstance(kept, list):
-                logger.error("judge_union: 'keep' is not a list, got %s", type(kept).__name__)
-                return candidates
+                raise ValueError(f"judge_union: 'keep' field is not a list, got {type(kept).__name__}")
             return kept
         except Exception as e:
             logger.error("judge_union: failed to parse judge response: %s", e)
-            return candidates
+            raise
 
     @staticmethod
     def choose_match(candidate: str, univ_label: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:
