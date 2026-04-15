@@ -425,7 +425,11 @@ class LLMHelper:
                 continue
 
         logger.error("extract_divisions_best_available: all providers failed or unavailable for %s", univ_label)
-        return []
+        raise ValueError(
+            f"No LLM providers available for extraction. "
+            f"Please configure at least one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY. "
+            f"University: {univ_label}"
+        )
 
     @staticmethod
     def extract_divisions_ensemble(univ_label: str, website: str) -> List[Dict[str, Any]]:
