@@ -138,7 +138,8 @@ def run_eval(providers: List[str], university_qids: List[str]) -> pd.DataFrame:
                 failed_providers.add(provider)
 
         # Rotating judge combos -- only use providers that extracted successfully
-        all_providers = [p for p in provider_names.keys() if p not in failed_providers]
+        # Also exclude providers that returned empty results (retry-exhausted, no exception)
+        all_providers = [p for p in provider_names.keys() if p not in failed_providers and provider_names[p]]
         if len(all_providers) >= 2:
             for judge in all_providers:
                 generators = [p for p in all_providers if p != judge]

@@ -525,10 +525,14 @@ class LLMHelper:
         # Filter kept_names to only items that came from the generators
         # to prevent the judge from hallucinating new names not in the union
         result = []
+        seen_divs: set = set()
         for name in kept_names:
             match = next((d for d in name_to_div.values() if _names_match(name, d.get("name") or d.get("unit", ""))), None)
             if match:
-                result.append(match)
+                match_name = match.get("name") or match.get("unit", "")
+                if match_name not in seen_divs:
+                    seen_divs.add(match_name)
+                    result.append(match)
 
         logger.info(
             "extract_divisions_ensemble: judge kept %d/%d for %s",
