@@ -119,8 +119,8 @@ def _names_match(a: str, b: str) -> bool:
 # ─────────────────────────  CACHE HELPERS  ─────────────────────────
 
 
-def _cache_key(univ_label: str, model: str) -> str:
-    return hashlib.sha256(f"{univ_label}|{model}".encode()).hexdigest()
+def _cache_key(univ_label: str, model: str, provider: str = "") -> str:
+    return hashlib.sha256(f"{provider}|{univ_label}|{model}".encode()).hexdigest()
 
 
 def _load_cache(key: str) -> Optional[List[Dict[str, Any]]]:
@@ -544,7 +544,7 @@ class LLMHelper:
     def extract_divisions_openai(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using OpenAI (default model from config)."""
         model = LLM_MODEL
-        key = _cache_key(univ_label, model)
+        key = _cache_key(univ_label, model, provider="openai")
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_openai: cache hit for %s", univ_label)
@@ -558,7 +558,7 @@ class LLMHelper:
     def extract_divisions_anthropic(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using Anthropic Claude."""
         model = ANTHROPIC_MODEL
-        key = _cache_key(univ_label, model)
+        key = _cache_key(univ_label, model, provider="anthropic")
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_anthropic: cache hit for %s", univ_label)
@@ -572,7 +572,7 @@ class LLMHelper:
     def extract_divisions_gemini(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using Google Gemini."""
         model = GEMINI_MODEL
-        key = _cache_key(univ_label, model)
+        key = _cache_key(univ_label, model, provider="gemini")
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_gemini: cache hit for %s", univ_label)
