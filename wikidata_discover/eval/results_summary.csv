@@ -1,7 +1,7 @@
 method,precision,recall,f1
-judge_anthropic_gen_openai_gemini,0.9458,0.9517,0.9473
-judge_gemini_gen_openai_anthropic,0.9152,0.905,0.9083
-judge_openai_gen_anthropic_gemini,0.9411,0.906,0.9222
+judge_anthropic_gen_openai_gemini,0.9522,0.9533,0.9514
+judge_gemini_gen_openai_anthropic,0.9173,0.91,0.912
+judge_openai_gen_anthropic_gemini,0.926,0.903,0.912
 single_anthropic,0.8651,0.9378,0.8976
 single_gemini,0.8906,0.9722,0.9235
 single_openai,0.9314,0.842,0.8716

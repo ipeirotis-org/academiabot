@@ -171,9 +171,16 @@ def _parse_json_text(text: str) -> Optional[dict]:
     return None
 
 
-def _normalize_units(payload: dict, source: str = "") -> List[Dict[str, Any]]:
+def _normalize_units(payload: Any, source: str = "") -> List[Dict[str, Any]]:
     """Normalize units list from a parsed JSON payload."""
-    units = payload.get("units")
+    if isinstance(payload, list):
+        # Provider returned a bare array instead of {"units": [...]}
+        units = payload
+    elif isinstance(payload, dict):
+        units = payload.get("units")
+    else:
+        logger.error("'units' key missing or not a list in payload from %s: %s", source, str(payload)[:500])
+        return []
     if not isinstance(units, list):
         logger.error("'units' key missing or not a list in payload from %s: %s", source, str(payload)[:500])
         return []
@@ -360,13 +367,14 @@ def _judge_union_openai(univ_label: str, union_names: List[str], model: str) -> 
         )
         raw_text = resp.output_text if resp.output else None
         if not raw_text:
-            return union_names
+            raise ValueError("_judge_union_openai: empty response from API")
         payload = _parse_json_text(raw_text)
-        if payload and isinstance(payload.get("keep"), list):
-            return payload["keep"]
+        if not payload or not isinstance(payload.get("keep"), list):
+            raise ValueError(f"_judge_union_openai: could not parse 'keep' list from response: {raw_text[:200]}")
+        return payload["keep"]
     except Exception as exc:
         logger.error("_judge_union_openai error: %s", exc)
-    return union_names
+        raise
 
 
 def _judge_union_anthropic(univ_label: str, union_names: List[str], model: str) -> List[str]:
@@ -390,13 +398,14 @@ def _judge_union_anthropic(univ_label: str, union_names: List[str], model: str) 
                 raw_text = block.text
                 break
         if not raw_text:
-            return union_names
+            raise ValueError("_judge_union_anthropic: empty response from API")
         payload = _parse_json_text(raw_text)
-        if payload and isinstance(payload.get("keep"), list):
-            return payload["keep"]
+        if not payload or not isinstance(payload.get("keep"), list):
+            raise ValueError(f"_judge_union_anthropic: could not parse 'keep' list from response: {raw_text[:200]}")
+        return payload["keep"]
     except Exception as exc:
         logger.error("_judge_union_anthropic error: %s", exc)
-    return union_names
+        raise
 
 
 def _judge_union_gemini(univ_label: str, union_names: List[str], model: str) -> List[str]:
@@ -419,13 +428,14 @@ def _judge_union_gemini(univ_label: str, union_names: List[str], model: str) -> 
         )
         raw_text = getattr(response, "text", None)
         if not raw_text:
-            return union_names
+            raise ValueError("_judge_union_gemini: empty response from API")
         payload = _parse_json_text(raw_text)
-        if payload and isinstance(payload.get("keep"), list):
-            return payload["keep"]
+        if not payload or not isinstance(payload.get("keep"), list):
+            raise ValueError(f"_judge_union_gemini: could not parse 'keep' list from response: {raw_text[:200]}")
+        return payload["keep"]
     except Exception as exc:
         logger.error("_judge_union_gemini error: %s", exc)
-    return union_names
+        raise
 
 # ─────────────────────────  PUBLIC API  ─────────────────────────
 
@@ -512,10 +522,13 @@ class LLMHelper:
             if name and name not in name_to_div:
                 name_to_div[name] = div
 
+        # Filter kept_names to only items that came from the generators
+        # to prevent the judge from hallucinating new names not in the union
         result = []
         for name in kept_names:
             match = next((d for d in name_to_div.values() if _names_match(name, d.get("name") or d.get("unit", ""))), None)
-            result.append(match if match else {"name": name})
+            if match:
+                result.append(match)
 
         logger.info(
             "extract_divisions_ensemble: Anthropic judge kept %d/%d for %s",

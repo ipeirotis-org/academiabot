@@ -8,7 +8,7 @@ New York University,Q49210,judge_gemini_gen_openai_anthropic,22,19,0.8636,1.0,0.
 Columbia University,Q49088,single_openai,17,17,0.9412,0.9412,0.9412
 Columbia University,Q49088,single_anthropic,21,17,0.7619,0.9412,0.8421
 Columbia University,Q49088,single_gemini,17,17,0.8824,0.8824,0.8824
-Columbia University,Q49088,judge_openai_gen_anthropic_gemini,16,17,0.9375,0.8824,0.9091
+Columbia University,Q49088,judge_openai_gen_anthropic_gemini,21,17,0.7619,0.9412,0.8421
 Columbia University,Q49088,judge_anthropic_gen_openai_gemini,17,17,0.9412,0.9412,0.9412
 Columbia University,Q49088,judge_gemini_gen_openai_anthropic,17,17,0.9412,0.9412,0.9412
 Massachusetts Institute of Technology,Q49108,single_openai,6,6,1.0,1.0,1.0
@@ -22,17 +22,16 @@ Stanford University,Q41506,single_anthropic,7,7,0.8571,0.8571,0.8571
 Stanford University,Q41506,single_gemini,7,7,1.0,1.0,1.0
 Stanford University,Q41506,judge_openai_gen_anthropic_gemini,7,7,0.8571,0.8571,0.8571
 Stanford University,Q41506,judge_anthropic_gen_openai_gemini,7,7,1.0,1.0,1.0
-Stanford University,Q41506,judge_gemini_gen_openai_anthropic,7,7,0.8571,0.8571,0.8571
+Stanford University,Q41506,judge_gemini_gen_openai_anthropic,8,7,0.875,1.0,0.9333
 "University of California, Berkeley",Q168756,single_openai,12,15,1.0,0.8,0.8889
 "University of California, Berkeley",Q168756,single_anthropic,15,15,0.8,0.8,0.8
 "University of California, Berkeley",Q168756,single_gemini,15,15,0.8667,0.8667,0.8667
 "University of California, Berkeley",Q168756,judge_openai_gen_anthropic_gemini,15,15,0.8,0.8,0.8
-"University of California, Berkeley",Q168756,judge_anthropic_gen_openai_gemini,16,15,0.875,0.9333,0.9032
 "University of California, Berkeley",Q168756,judge_gemini_gen_openai_anthropic,15,15,0.8667,0.8667,0.8667
 University of Michigan,Q230492,single_openai,11,21,1.0,0.5238,0.6875
 University of Michigan,Q230492,single_anthropic,28,21,0.6071,0.8095,0.6939
 University of Michigan,Q230492,single_gemini,31,21,0.6774,1.0,0.8077
-University of Michigan,Q230492,judge_openai_gen_anthropic_gemini,20,21,0.95,0.9048,0.9268
+University of Michigan,Q230492,judge_openai_gen_anthropic_gemini,18,21,0.9444,0.8095,0.8718
 University of Michigan,Q230492,judge_anthropic_gen_openai_gemini,19,21,1.0,0.9048,0.95
 University of Michigan,Q230492,judge_gemini_gen_openai_anthropic,18,21,0.9444,0.8095,0.8718
 Howard University,Q1068752,single_openai,14,14,0.9286,0.9286,0.9286
@@ -58,13 +57,13 @@ City University of New York,Q762266,single_anthropic,26,26,1.0,1.0,1.0
 City University of New York,Q762266,single_gemini,26,26,1.0,1.0,1.0
 City University of New York,Q762266,judge_openai_gen_anthropic_gemini,24,26,1.0,0.9231,0.96
 City University of New York,Q762266,judge_anthropic_gen_openai_gemini,24,26,1.0,0.9231,0.96
-City University of New York,Q762266,judge_gemini_gen_openai_anthropic,24,26,1.0,0.9231,0.96
+City University of New York,Q762266,judge_gemini_gen_openai_anthropic,25,26,0.96,0.9231,0.9412
 University of Chicago,Q131252,single_openai,11,12,0.8182,0.75,0.7826
 University of Chicago,Q131252,single_anthropic,13,12,0.8462,0.9167,0.88
 University of Chicago,Q131252,single_gemini,13,12,0.8462,0.9167,0.88
 University of Chicago,Q131252,judge_openai_gen_anthropic_gemini,12,12,0.9167,0.9167,0.9167
 University of Chicago,Q131252,judge_anthropic_gen_openai_gemini,13,12,0.9231,1.0,0.96
-University of Chicago,Q131252,judge_gemini_gen_openai_anthropic,14,12,0.7857,0.9167,0.8462
+University of Chicago,Q131252,judge_gemini_gen_openai_anthropic,12,12,0.8333,0.8333,0.8333
 University of Missouri,Q579968,single_openai,13,10,0.6923,0.9,0.7826
 University of Missouri,Q579968,single_anthropic,13,10,0.7692,1.0,0.8696
 University of Missouri,Q579968,single_gemini,17,10,0.5882,1.0,0.7407
