@@ -58,15 +58,22 @@ def compute_metrics(
     if not ground_truth:
         return 0.0, 0.0, 0.0
 
-    tp_precision = sum(
-        1 for p in predicted if any(is_fuzzy_match(p, g) for g in ground_truth)
-    )
-    tp_recall = sum(
-        1 for g in ground_truth if any(is_fuzzy_match(p, g) for p in predicted)
-    )
+    # Greedy one-to-one match: each predicted item can satisfy at most one
+    # ground-truth item (and vice versa). Without this, the same predicted
+    # name could be counted against multiple truth entries and inflate recall.
+    used_truth: set = set()
+    tp = 0
+    for p in predicted:
+        for j, g in enumerate(ground_truth):
+            if j in used_truth:
+                continue
+            if is_fuzzy_match(p, g):
+                used_truth.add(j)
+                tp += 1
+                break
 
-    precision = tp_precision / len(predicted)
-    recall = tp_recall / len(ground_truth)
+    precision = tp / len(predicted)
+    recall = tp / len(ground_truth)
     f1 = (
         2 * precision * recall / (precision + recall)
         if (precision + recall) > 0
