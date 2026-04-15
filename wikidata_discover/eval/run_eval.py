@@ -119,6 +119,14 @@ def run_eval(providers: List[str], university_qids: List[str]) -> pd.DataFrame:
                 extractor = PROVIDER_EXTRACTORS[provider]
                 divisions = extractor(univ_name, website)
                 names = extract_names(divisions)
+
+                # Mark retry-exhausted extractions (empty results) as failures
+                if not names:
+                    console.print(f"  [yellow]{provider}: no results (retries exhausted)[/yellow]")
+                    provider_names[provider] = []
+                    failed_providers.add(provider)
+                    continue
+
                 provider_names[provider] = names
                 p, r, f = compute_metrics(names, truth)
                 console.print(f"  {provider}: {len(names)} schools, P={p:.3f} R={r:.3f} F1={f:.3f}")
