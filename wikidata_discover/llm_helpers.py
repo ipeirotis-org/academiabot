@@ -168,8 +168,15 @@ def _normalize_units(payload: Any) -> List[Dict[str, Any]]:
     if not isinstance(units, list):
         raise ValueError(f"Expected 'units' to be a list, got {type(units).__name__ if units else 'None'}")
 
-    # Normalize entries: wrap bare strings into dicts
-    result = [{"name": itm} if isinstance(itm, str) else itm for itm in units]
+    # Normalize entries: wrap bare strings into dicts, validate all items are dicts
+    result = []
+    for itm in units:
+        if isinstance(itm, str):
+            result.append({"name": itm})
+        elif isinstance(itm, dict):
+            result.append(itm)
+        else:
+            raise ValueError(f"Invalid unit entry: expected string or dict, got {type(itm).__name__}: {itm}")
     return result
 
 
@@ -545,6 +552,10 @@ class LLMHelper:
             kept = payload.get("keep", [])
             if not isinstance(kept, list):
                 raise ValueError(f"judge_union: 'keep' field is not a list, got {type(kept).__name__}")
+            # Validate each element is a string
+            for i, item in enumerate(kept):
+                if not isinstance(item, str):
+                    raise ValueError(f"judge_union: 'keep[{i}]' is not a string, got {type(item).__name__}: {item}")
             return kept
         except Exception as e:
             logger.error("judge_union: failed to parse judge response: %s", e)
