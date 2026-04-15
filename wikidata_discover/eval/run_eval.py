@@ -112,6 +112,7 @@ def run_eval(providers: List[str], university_qids: List[str]) -> pd.DataFrame:
 
         # Extract per provider
         provider_names: Dict[str, List[str]] = {}
+        failed_providers: set = set()
         for provider in providers:
             console.print(f"  [dim]Extracting with {provider}...[/dim]")
             try:
@@ -134,9 +135,10 @@ def run_eval(providers: List[str], university_qids: List[str]) -> pd.DataFrame:
             except Exception as e:
                 console.print(f"  [red]{provider} failed: {e}[/red]")
                 provider_names[provider] = []
+                failed_providers.add(provider)
 
-        # Rotating judge combos -- both with and without web search
-        all_providers = list(provider_names.keys())
+        # Rotating judge combos -- only use providers that extracted successfully
+        all_providers = [p for p in provider_names.keys() if p not in failed_providers]
         if len(all_providers) >= 2:
             for judge in all_providers:
                 generators = [p for p in all_providers if p != judge]

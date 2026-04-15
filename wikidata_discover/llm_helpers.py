@@ -103,12 +103,9 @@ def _get_anthropic_client():
 
 
 def _get_gemini_client():
-    global _gemini_configured
     from google import genai
-    if not _gemini_configured:
-        genai.configure(api_key=require_key("GOOGLE_API_KEY", GOOGLE_API_KEY))
-        _gemini_configured = True
-    return genai
+    from google.genai import types as genai_types  # noqa: F401
+    return genai.Client(api_key=require_key("GOOGLE_API_KEY", GOOGLE_API_KEY))
 
 # ─────────────────────────  NAME MATCHING  ─────────────────────────
 
@@ -221,8 +218,9 @@ def _extract_openai(univ_label: str, website: str, model: str) -> List[Dict[str,
             continue
 
         result = _normalize_units(payload, source=f"openai/{model}")
-        if result or "units" in payload:
+        if result:
             return result
+        logger.warning("_extract_openai attempt %d/%d: empty units list for %s", attempt, _EXTRACT_MAX_RETRIES, univ_label)
 
     console.print(f"[red]OpenAI failed to extract divisions for {univ_label} after {_EXTRACT_MAX_RETRIES} attempts.[/red]")
     return []
@@ -278,8 +276,9 @@ def _extract_anthropic(univ_label: str, website: str, model: str) -> List[Dict[s
             continue
 
         result = _normalize_units(payload, source=f"anthropic/{model}")
-        if result or "units" in payload:
+        if result:
             return result
+        logger.warning("_extract_anthropic attempt %d/%d: empty units list for %s", attempt, _EXTRACT_MAX_RETRIES, univ_label)
 
     console.print(f"[red]Anthropic failed to extract divisions for {univ_label} after {_EXTRACT_MAX_RETRIES} attempts.[/red]")
     return []
@@ -328,8 +327,9 @@ def _extract_gemini(univ_label: str, website: str, model: str) -> List[Dict[str,
             continue
 
         result = _normalize_units(payload, source=f"gemini/{model}")
-        if result or "units" in payload:
+        if result:
             return result
+        logger.warning("_extract_gemini attempt %d/%d: empty units list for %s", attempt, _EXTRACT_MAX_RETRIES, univ_label)
 
     console.print(f"[red]Gemini failed to extract divisions for {univ_label} after {_EXTRACT_MAX_RETRIES} attempts.[/red]")
     return []
@@ -531,7 +531,7 @@ class LLMHelper:
                 result.append(match)
 
         logger.info(
-            "extract_divisions_ensemble: Anthropic judge kept %d/%d for %s",
+            "extract_divisions_ensemble: judge kept %d/%d for %s",
             len(result), len(seen), univ_label,
         )
         return result
