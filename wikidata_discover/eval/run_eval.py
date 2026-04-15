@@ -240,6 +240,10 @@ def main():
     per_univ_path = EVAL_DIR / "results_per_university.csv"
     summary_path = EVAL_DIR / "results_summary.csv"
 
+    if df.empty:
+        console.print("[yellow]No results to save -- all extractions failed.[/yellow]")
+        return
+
     df.to_csv(per_univ_path, index=False)
     summary = df.groupby("method")[["precision", "recall", "f1"]].mean().round(4)
     summary.to_csv(summary_path)

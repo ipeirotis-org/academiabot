@@ -469,25 +469,45 @@ class LLMHelper:
         Requires OPENAI_API_KEY, GOOGLE_API_KEY, and ANTHROPIC_API_KEY.
         """
         openai_divs = LLMHelper.extract_divisions_openai(univ_label, website)
-        gemini_divs = LLMHelper.extract_divisions_gemini(univ_label, website)
+
+        # Use Gemini as second generator if available, fall back to Anthropic, else OpenAI only
+        second_divs: List[Dict[str, Any]] = []
+        second_label = "none"
+        if GOOGLE_API_KEY:
+            second_divs = LLMHelper.extract_divisions_gemini(univ_label, website)
+            second_label = "gemini"
+        elif ANTHROPIC_API_KEY:
+            second_divs = LLMHelper.extract_divisions_anthropic(univ_label, website)
+            second_label = "anthropic"
+
+        if not second_divs:
+            logger.warning("extract_divisions_ensemble: no second generator available, returning OpenAI only for %s", univ_label)
+            return openai_divs
 
         # Deduplicated union of names from both generators
         seen: List[str] = []
-        for div in openai_divs + gemini_divs:
+        for div in openai_divs + second_divs:
             name = div.get("name") or div.get("unit")
             if name and not any(_names_match(name, s) for s in seen):
                 seen.append(name)
 
         logger.info(
-            "extract_divisions_ensemble: %d openai + %d gemini -> %d union candidates for %s",
-            len(openai_divs), len(gemini_divs), len(seen), univ_label,
+            "extract_divisions_ensemble: %d openai + %d %s -> %d union candidates for %s",
+            len(openai_divs), len(second_divs), second_label, len(seen), univ_label,
         )
 
-        kept_names = LLMHelper.judge_union(univ_label, seen, provider="anthropic")
+        # Use Anthropic as judge if available, else Gemini, else return union unfiltered
+        if ANTHROPIC_API_KEY:
+            kept_names = LLMHelper.judge_union(univ_label, seen, provider="anthropic")
+        elif GOOGLE_API_KEY:
+            kept_names = LLMHelper.judge_union(univ_label, seen, provider="gemini")
+        else:
+            logger.warning("extract_divisions_ensemble: no judge available, returning union unfiltered for %s", univ_label)
+            kept_names = seen
 
         # Rebuild full dicts for kept names, preserving metadata from generators
         name_to_div: dict = {}
-        for div in openai_divs + gemini_divs:
+        for div in openai_divs + second_divs:
             name = div.get("name") or div.get("unit")
             if name and name not in name_to_div:
                 name_to_div[name] = div
