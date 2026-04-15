@@ -108,9 +108,13 @@ class Discovery:
         descendant_qids = self.get_all_descendants_qids()
         alt_labels_map = self.get_children_alt_labels()
 
-        divisions = LLMHelper.extract_divisions(
-            self.university_label, self.university_website
-        )
+        try:
+            divisions = LLMHelper.extract_divisions_best_available(
+                self.university_label, self.university_website
+            )
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise
         logger.info(
             "%s: %d direct children, %d LLM candidates",
             self.university_qid, len(direct_children), len(divisions),

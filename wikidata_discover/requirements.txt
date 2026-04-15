@@ -7,3 +7,5 @@ SPARQLWrapper
 requests
 tenacity
 rapidfuzz
+anthropic>=0.40.0
+google-genai
