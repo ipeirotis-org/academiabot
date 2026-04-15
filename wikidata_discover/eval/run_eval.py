@@ -118,24 +118,39 @@ def run_eval(providers: List[str], university_qids: List[str]) -> pd.DataFrame:
             try:
                 extractor = PROVIDER_EXTRACTORS[provider]
                 divisions = extractor(univ_name, website)
-                names = extract_names(divisions)
-                provider_names[provider] = names
-                p, r, f = compute_metrics(names, truth)
-                console.print(f"  {provider}: {len(names)} schools, P={p:.3f} R={r:.3f} F1={f:.3f}")
-                rows.append({
-                    "university": univ_name,
-                    "qid": qid,
-                    "method": f"single_{provider}",
-                    "n_predicted": len(names),
-                    "n_truth": len(truth),
-                    "precision": round(p, 4),
-                    "recall": round(r, 4),
-                    "f1": round(f, 4),
-                })
             except Exception as e:
                 console.print(f"  [red]{provider} failed: {e}[/red]")
                 provider_names[provider] = []
                 failed_providers.add(provider)
+                continue
+
+            names = extract_names(divisions)
+            provider_names[provider] = names
+
+            # Treat a retry-exhausted empty extraction as a failure rather than
+            # recording a misleading single_* row with zero metrics. The provider
+            # extractors swallow API exceptions and return [] after retries; if
+            # there is no ground-truth-matching signal at all, assume the call
+            # did not succeed.
+            if not names:
+                console.print(
+                    f"  [red]{provider} returned no results after retries -- treating as failure[/red]"
+                )
+                failed_providers.add(provider)
+                continue
+
+            p, r, f = compute_metrics(names, truth)
+            console.print(f"  {provider}: {len(names)} schools, P={p:.3f} R={r:.3f} F1={f:.3f}")
+            rows.append({
+                "university": univ_name,
+                "qid": qid,
+                "method": f"single_{provider}",
+                "n_predicted": len(names),
+                "n_truth": len(truth),
+                "precision": round(p, 4),
+                "recall": round(r, 4),
+                "f1": round(f, 4),
+            })
 
         # Rotating judge combos -- only use providers that extracted successfully
         # Also exclude providers that returned empty results (retry-exhausted, no exception)

@@ -437,6 +437,46 @@ def _judge_union_gemini(univ_label: str, union_names: List[str], model: str) -> 
         logger.error("_judge_union_gemini error: %s", exc)
         raise
 
+# ─────────────────────────  MATCH (single-token) CALLS  ─────────────────────────
+
+
+def _choose_match_call(provider: str, prompt: str) -> Optional[str]:
+    """Send the match prompt to the given provider and return the raw single-token reply."""
+    if provider == "openai":
+        client = _get_openai_client()
+        resp = client.responses.create(
+            model=LLM_MODEL,
+            input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+            max_output_tokens=16,
+        )
+        return (resp.output_text or "").strip() or None
+
+    if provider == "anthropic":
+        client = _get_anthropic_client()
+        resp = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=16,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        for block in reversed(resp.content):
+            if hasattr(block, "text"):
+                return (block.text or "").strip() or None
+        return None
+
+    if provider == "gemini":
+        from google import genai as google_genai
+        from google.genai import types as genai_types
+        client = google_genai.Client(api_key=require_key("GOOGLE_API_KEY", GOOGLE_API_KEY))
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(max_output_tokens=16),
+        )
+        return (getattr(response, "text", None) or "").strip() or None
+
+    raise ValueError(f"Unknown provider for _choose_match_call: {provider!r}")
+
+
 # ─────────────────────────  PUBLIC API  ─────────────────────────
 
 class LLMHelper:
@@ -450,26 +490,58 @@ class LLMHelper:
         """
         Use the ensemble pipeline when OpenAI, Gemini, and Anthropic keys are all
         available. Otherwise fall back to whichever single provider has a key,
-        preferring OpenAI -> Anthropic -> Gemini. Raises ValueError if no key is set.
+        preferring OpenAI -> Anthropic -> Gemini. If a preferred provider raises
+        (auth/quota/transient error), the next available provider is tried so a
+        stale key for one provider does not block a run that could succeed with
+        another. Raises ValueError if no key is set.
         """
         has_openai = bool(OPENAI_API_KEY)
         has_anthropic = bool(ANTHROPIC_API_KEY)
         has_gemini = bool(GOOGLE_API_KEY)
 
+        if not (has_openai or has_anthropic or has_gemini):
+            raise ValueError(
+                "No LLM provider key set. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY."
+            )
+
         if has_openai and has_anthropic and has_gemini:
-            return LLMHelper.extract_divisions_ensemble(univ_label, website)
-        if has_openai:
-            logger.info("extract_divisions_best_available: using OpenAI only (ensemble needs all three keys)")
-            return LLMHelper.extract_divisions_openai(univ_label, website)
-        if has_anthropic:
-            logger.info("extract_divisions_best_available: using Anthropic only")
-            return LLMHelper.extract_divisions_anthropic(univ_label, website)
-        if has_gemini:
-            logger.info("extract_divisions_best_available: using Gemini only")
-            return LLMHelper.extract_divisions_gemini(univ_label, website)
-        raise ValueError(
-            "No LLM provider key set. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY."
-        )
+            try:
+                return LLMHelper.extract_divisions_ensemble(univ_label, website)
+            except Exception:
+                logger.exception(
+                    "extract_divisions_best_available: ensemble failed for %s, "
+                    "falling back to single-provider chain", univ_label,
+                )
+
+        fallbacks = [
+            ("openai", has_openai, LLMHelper.extract_divisions_openai),
+            ("anthropic", has_anthropic, LLMHelper.extract_divisions_anthropic),
+            ("gemini", has_gemini, LLMHelper.extract_divisions_gemini),
+        ]
+        last_exc: Optional[Exception] = None
+        for name, available, fn in fallbacks:
+            if not available:
+                continue
+            logger.info("extract_divisions_best_available: trying %s for %s", name, univ_label)
+            try:
+                result = fn(univ_label, website)
+            except Exception as exc:
+                logger.exception(
+                    "extract_divisions_best_available: %s raised for %s, trying next provider",
+                    name, univ_label,
+                )
+                last_exc = exc
+                continue
+            if result:
+                return result
+            logger.warning(
+                "extract_divisions_best_available: %s returned no results for %s, trying next provider",
+                name, univ_label,
+            )
+
+        if last_exc is not None:
+            raise last_exc
+        return []
 
     @staticmethod
     def extract_divisions_ensemble(univ_label: str, website: str) -> List[Dict[str, Any]]:
@@ -602,7 +674,12 @@ class LLMHelper:
 
     @staticmethod
     def choose_match(candidate: str, univ_label: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:
-        """Return (qid,label) if LLM says the candidate matches one of the children, else None."""
+        """Return (qid,label) if LLM says the candidate matches one of the children, else None.
+
+        Provider-agnostic: tries OpenAI, then Anthropic, then Gemini depending on
+        which keys are available, so the single-provider fallback flow in
+        ``extract_divisions_best_available`` keeps working without OpenAI.
+        """
         listing_lines = [
             f"[{i+1}] {qid} -- {label}" for i, (qid, label) in enumerate(children)
         ]
@@ -616,22 +693,31 @@ class LLMHelper:
             + listing
         )
 
-        try:
-            client = _get_openai_client()
-            resp = client.responses.create(
-                model=LLM_MODEL,
-                input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-                max_output_tokens=16,
-            )
-        except Exception:
-            logger.exception("choose_match LLM call failed for candidate '%s'", candidate)
-            return None
+        # Try providers in order of preference, using whichever keys are available.
+        providers: List[str] = []
+        if OPENAI_API_KEY:
+            providers.append("openai")
+        if ANTHROPIC_API_KEY:
+            providers.append("anthropic")
+        if GOOGLE_API_KEY:
+            providers.append("gemini")
 
-        answer = (resp.output_text or "").strip()
+        answer: Optional[str] = None
+        for provider in providers:
+            try:
+                answer = _choose_match_call(provider, prompt)
+            except Exception:
+                logger.exception(
+                    "choose_match %s call failed for candidate '%s'", provider, candidate
+                )
+                continue
+            if answer:
+                break
 
         if not answer:
             return None
 
+        answer = answer.strip()
         if answer.upper() == "NONE":
             return None
         answer = answer.split()[0]
