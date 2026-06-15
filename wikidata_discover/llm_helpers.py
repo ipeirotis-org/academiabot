@@ -16,15 +16,55 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────  LLM PROMPTS  ─────────────────────────
-SYSTEM_EXTRACT = (
-    "You are an education data analyst. Given the name of a university and (optionally) its website URL, return a JSON "
-    "key `units` whose value is an *array* of objects, each describing a *top-level* "
-    "academic or administrative unit (school, college, faculty, division, or campus). "
-    "Each object *must* include: name, unit_type, city, state, website. Use null if a "
-    "value is unknown. Do not list departments or research centers."
-    "Provide also a URL as a reference so that someone can validate the information. The key for the reference URL should be 'reference'."
-    "You should double check that reference URL exists and contains the supporting information for the existence of the units."
+# Phase 2: the extraction prompt is parameterized by hierarchy level so the
+# same providers can extract schools (level 1), departments (level 2), or
+# programs/labs/centers (level 3+) depending on which entity we are expanding.
+SYSTEM_EXTRACT_TEMPLATE = (
+    "You are an education data analyst. Given the name of an academic entity and "
+    "(optionally) its website URL, return a JSON key `units` whose value is an "
+    "array of objects, each describing a direct sub-unit of that entity. "
+    "Scope: {scope}. "
+    "Each object must include: name, unit_type, city, state, website. Use null if "
+    "a value is unknown. The unit_type should be one of school, college, faculty, "
+    "division, campus, department, program, lab, center, institute, or unit. "
+    "Only list direct children of the entity, not every descendant. "
+    "For cross-listed or joint units, set is_joint to true and list the other "
+    "direct parent unit names in parent_names. If there are no additional "
+    "parents, set is_joint to false and parent_names to an empty array. "
+    "Set evidence to a short source-backed phrase explaining the parentage, or "
+    "null if unknown. "
+    "Provide also a URL as a reference so that someone can validate the "
+    "information. The key for the reference URL should be 'reference'. "
+    "You should double check that reference URL exists and contains the "
+    "supporting information for the existence of the units."
 )
+
+SYSTEM_EXTRACT = SYSTEM_EXTRACT_TEMPLATE.format(
+    scope=(
+        "top-level academic or administrative units under a university, such as "
+        "schools, colleges, faculties, divisions, or campuses. Do not list "
+        "departments or research centers."
+    )
+)
+
+
+def _extract_system_prompt(level: int = 1) -> str:
+    """Return the extraction system prompt scoped to the given hierarchy level."""
+    if level <= 1:
+        return SYSTEM_EXTRACT
+    if level == 2:
+        scope = (
+            "departments and similar direct academic sub-units under a school, "
+            "college, faculty, division, or campus. Do not list programs, labs, "
+            "or centers unless they are direct peers of departments."
+        )
+    else:
+        scope = (
+            "direct programs, labs, centers, institutes, and other direct "
+            "sub-units under a department or academic unit."
+        )
+    return SYSTEM_EXTRACT_TEMPLATE.format(scope=scope)
+
 
 MATCH_TEMPLATE = (
     "You are assisting with entity alignment to Wikidata. Below is the name of a "
@@ -39,12 +79,37 @@ MATCH_TEMPLATE = (
 )
 
 JUDGE_PROMPT_TEMPLATE = (
-    "You are evaluating academic units for a university. Given the name of UNIVERSITY and a union of school/college/division names "
-    "proposed by multiple automated extraction systems, filter to only those that are real, top-level academic units of UNIVERSITY.\n\n"
+    "You are evaluating academic units for an academic entity. Given the name of UNIVERSITY and a union of sub-unit names "
+    "proposed by multiple automated extraction systems, filter to only those that are real, direct sub-units of UNIVERSITY.\n\n"
+    "SCOPE_NOTE"
     "Proposed units:\nUNITS_LIST\n\n"
-    "Return a JSON object with a 'keep' key containing an array of unit names you confirm as real top-level units. "
+    "Return a JSON object with a 'keep' key containing an array of unit names you confirm as real direct sub-units. "
     "Do not invent or add units not in the list above."
 )
+
+
+def _judge_scope_note(level: int = 1) -> str:
+    """Return a level-specific scope clause for the judge prompt."""
+    if level <= 1:
+        scope = (
+            "Keep only genuine top-level academic units such as schools, colleges, "
+            "faculties, campuses, or major divisions. Remove departments within a "
+            "school, research centers, labs, and programs."
+        )
+    elif level == 2:
+        scope = (
+            "Keep only genuine direct departments or department-like academic units "
+            "under the given parent. Remove university-wide schools, standalone "
+            "centers, labs, and degree programs unless they are direct department peers."
+        )
+    else:
+        scope = (
+            "Keep only genuine direct programs, labs, centers, institutes, and other "
+            "named sub-units under the given parent. Remove unrelated units and "
+            "broader parents."
+        )
+    return scope + "\n\n"
+
 
 UNIVERSITY_UNITS_SCHEMA = {
     "type": "object",
@@ -58,9 +123,24 @@ UNIVERSITY_UNITS_SCHEMA = {
                     "unit_type": {"type": "string"},
                     "city":      {"type": "string"},
                     "state":     {"type": "string"},
-                    "website":   {"type": ["string", "null"]}
+                    "website":   {"type": ["string", "null"]},
+                    "is_joint":  {"type": "boolean"},
+                    "parent_names": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    },
+                    "evidence":  {"type": ["string", "null"]}
                 },
-                "required": ["name", "unit_type", "city", "state", "website"],
+                "required": [
+                    "name",
+                    "unit_type",
+                    "city",
+                    "state",
+                    "website",
+                    "is_joint",
+                    "parent_names",
+                    "evidence"
+                ],
                 "additionalProperties": False
             }
         },
@@ -128,9 +208,17 @@ def _names_match(a: str, b: str) -> bool:
     return na == nb or fuzz.token_sort_ratio(na, nb) >= 88
 
 
-def _cache_key(univ_label: str, provider: str, model: str) -> str:
-    """Cache key includes provider to avoid collisions between providers."""
-    return hashlib.sha256(f"{provider}|{univ_label}|{model}".encode()).hexdigest()
+def _cache_key(
+    univ_label: str,
+    provider: str,
+    model: str,
+    level: int = 1,
+    parent_context: str = "",
+) -> str:
+    """Cache key includes provider and hierarchy level to avoid collisions."""
+    return hashlib.sha256(
+        f"{provider}|{univ_label}|{model}|level:{level}|parent:{parent_context}".encode()
+    ).hexdigest()
 
 
 def _load_cache(key: str) -> Optional[List[Dict[str, Any]]]:
@@ -160,6 +248,8 @@ def _normalize_units(payload: Any) -> List[Dict[str, Any]]:
 
     Expects payload to be a dict with 'units' key containing a list.
     Returns normalized list or raises ValueError if structure is invalid.
+    Phase 2 fields (is_joint, parent_names, evidence) are defaulted when absent
+    so downstream recursive discovery can rely on them.
     """
     if not isinstance(payload, dict):
         raise ValueError(f"Expected dict payload, got {type(payload).__name__}")
@@ -172,11 +262,15 @@ def _normalize_units(payload: Any) -> List[Dict[str, Any]]:
     result = []
     for itm in units:
         if isinstance(itm, str):
-            result.append({"name": itm})
+            unit = {"name": itm}
         elif isinstance(itm, dict):
-            result.append(itm)
+            unit = itm
         else:
             raise ValueError(f"Invalid unit entry: expected string or dict, got {type(itm).__name__}: {itm}")
+        unit.setdefault("is_joint", False)
+        unit.setdefault("parent_names", [])
+        unit.setdefault("evidence", None)
+        result.append(unit)
     return result
 
 
@@ -197,24 +291,37 @@ class LLMHelper:
             return []
 
     @staticmethod
-    def extract_divisions_openai(univ_label: str, website: str) -> List[Dict[str, Any]]:
+    def extract_divisions_openai(
+        univ_label: str,
+        website: str,
+        level: int = 1,
+        parent_context: str = "",
+    ) -> List[Dict[str, Any]]:
         """Extract divisions using OpenAI API."""
         model = LLM_MODEL
-        key = _cache_key(univ_label, "openai", model)
+        key = _cache_key(univ_label, "openai", model, level, parent_context)
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_openai: cache hit for %s", univ_label)
             return cached
 
         client = _get_openai_client()
+        system_prompt = _extract_system_prompt(level)
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
             try:
                 resp = client.responses.create(
                     model=model,
                     input=[
-                        {"role": "system", "content": SYSTEM_EXTRACT},
-                        {"role": "user", "content": f"{univ_label} -- {website}"}
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Entity: {univ_label}\n"
+                                f"Parent context: {parent_context or 'none'}\n"
+                                f"Website: {website or 'unknown'}"
+                            ),
+                        },
                     ],
                     tools=[{"type": "web_search_preview"}],
                     text={"format": {"type": "json_schema", "name": "university_units", "schema": UNIVERSITY_UNITS_SCHEMA}},
@@ -261,25 +368,41 @@ class LLMHelper:
         return []
 
     @staticmethod
-    def extract_divisions_anthropic(univ_label: str, website: str) -> List[Dict[str, Any]]:
+    def extract_divisions_anthropic(
+        univ_label: str,
+        website: str,
+        level: int = 1,
+        parent_context: str = "",
+    ) -> List[Dict[str, Any]]:
         """Extract divisions using Anthropic Claude API."""
         model = ANTHROPIC_MODEL
-        key = _cache_key(univ_label, "anthropic", model)
+        key = _cache_key(univ_label, "anthropic", model, level, parent_context)
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_anthropic: cache hit for %s", univ_label)
             return cached
 
         client = _get_anthropic_client()
+        system_prompt = _extract_system_prompt(level)
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
             try:
                 resp = client.messages.create(
                     model=model,
                     max_tokens=2048,
-                    system=SYSTEM_EXTRACT,
+                    system=system_prompt,
                     messages=[
-                        {"role": "user", "content": f"{univ_label} -- {website}"}
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Entity: {univ_label}\n"
+                                f"Parent context: {parent_context or 'none'}\n"
+                                f"Website: {website or 'unknown'}\n\n"
+                                "Search the web for this entity's direct sub-units, "
+                                "then respond with ONLY a JSON object in this exact format with no other text:\n"
+                                '{"units": [{"name": "...", "unit_type": "school", "city": "...", "state": "...", "website": "...", "is_joint": false, "parent_names": [], "evidence": null}], "reference": "url"}'
+                            )
+                        }
                     ]
                 )
 
@@ -327,16 +450,22 @@ class LLMHelper:
         return []
 
     @staticmethod
-    def extract_divisions_gemini(univ_label: str, website: str) -> List[Dict[str, Any]]:
+    def extract_divisions_gemini(
+        univ_label: str,
+        website: str,
+        level: int = 1,
+        parent_context: str = "",
+    ) -> List[Dict[str, Any]]:
         """Extract divisions using Google Gemini API."""
         model = GEMINI_MODEL
-        key = _cache_key(univ_label, "gemini", model)
+        key = _cache_key(univ_label, "gemini", model, level, parent_context)
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_gemini: cache hit for %s", univ_label)
             return cached
 
         client = _get_gemini_client()
+        system_prompt = _extract_system_prompt(level)
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
             try:
@@ -347,7 +476,12 @@ class LLMHelper:
                     contents=[
                         genai_types.Content(
                             parts=[
-                                genai_types.Part.from_text(f"System: {SYSTEM_EXTRACT}\n\nInput: {univ_label} -- {website}")
+                                genai_types.Part.from_text(
+                                    f"System: {system_prompt}\n\n"
+                                    f"Entity: {univ_label}\n"
+                                    f"Parent context: {parent_context or 'none'}\n"
+                                    f"Website: {website or 'unknown'}"
+                                )
                             ]
                         )
                     ],
@@ -401,12 +535,20 @@ class LLMHelper:
         return []
 
     @staticmethod
-    def extract_divisions_best_available(univ_label: str, website: str) -> List[Dict[str, Any]]:
+    def extract_divisions_best_available(
+        univ_label: str,
+        website: str,
+        level: int = 1,
+        parent_context: str = "",
+    ) -> List[Dict[str, Any]]:
         """Extract divisions using the best available provider.
 
         Tries providers in order: OpenAI, Anthropic, Gemini.
         Falls back to next provider if current one fails or is not configured.
         Raises ValueError if no providers are available.
+
+        level and parent_context control which hierarchy level is extracted
+        (1=schools, 2=departments, 3+=programs/labs/centers).
         """
         providers = [
             ("openai", LLMHelper.extract_divisions_openai),
@@ -417,7 +559,7 @@ class LLMHelper:
         for provider_name, extractor in providers:
             try:
                 logger.debug("Trying %s for extraction...", provider_name)
-                result = extractor(univ_label, website)
+                result = extractor(univ_label, website, level, parent_context)
                 if result:  # Successfully extracted non-empty list
                     logger.info("extract_divisions_best_available: %s returned %d units", provider_name, len(result))
                     return result
@@ -435,24 +577,29 @@ class LLMHelper:
         raise ValueError(
             f"No LLM providers available for extraction. "
             f"Please configure at least one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY. "
-            f"University: {univ_label}"
+            f"Entity: {univ_label}"
         )
 
     @staticmethod
-    def extract_divisions_ensemble(univ_label: str, website: str) -> List[Dict[str, Any]]:
+    def extract_divisions_ensemble(
+        univ_label: str,
+        website: str,
+        level: int = 1,
+        parent_context: str = "",
+    ) -> List[Dict[str, Any]]:
         """Extract divisions using ensemble: generate from OpenAI + Anthropic, judge with Gemini.
 
         Returns union of kept names from judge, or empty list if any step fails.
         """
         try:
-            openai_units = LLMHelper.extract_divisions_openai(univ_label, website)
+            openai_units = LLMHelper.extract_divisions_openai(univ_label, website, level, parent_context)
             openai_names = [u.get("name") or u.get("unit") for u in openai_units if u.get("name") or u.get("unit")]
         except Exception as e:
             logger.error("ensemble: OpenAI extraction failed: %s", e)
             openai_names = []
 
         try:
-            anthropic_units = LLMHelper.extract_divisions_anthropic(univ_label, website)
+            anthropic_units = LLMHelper.extract_divisions_anthropic(univ_label, website, level, parent_context)
             anthropic_names = [u.get("name") or u.get("unit") for u in anthropic_units if u.get("name") or u.get("unit")]
         except Exception as e:
             logger.error("ensemble: Anthropic extraction failed: %s", e)
@@ -470,7 +617,7 @@ class LLMHelper:
 
         # Judge the union with Gemini
         try:
-            kept = LLMHelper.judge_union(univ_label, union, "gemini")
+            kept = LLMHelper.judge_union(univ_label, union, "gemini", level)
         except Exception as e:
             logger.error("ensemble: judge failed for %s: %s", univ_label, e)
             kept = union  # Fall back to union if judge fails
@@ -486,16 +633,22 @@ class LLMHelper:
         return result
 
     @staticmethod
-    def judge_union(univ_label: str, candidates: List[str], judge_provider: str) -> List[str]:
-        """Use a judge provider to filter candidates to real top-level units.
+    def judge_union(univ_label: str, candidates: List[str], judge_provider: str, level: int = 1) -> List[str]:
+        """Use a judge provider to filter candidates to real direct sub-units.
 
-        Returns list of approved unit names.
+        Returns list of approved unit names. level scopes the judgement to the
+        appropriate hierarchy tier (1=schools, 2=departments, 3+=programs/labs).
         """
         if not candidates:
             return []
 
         candidates_list = "\n".join(f"- {c}" for c in candidates)
-        prompt = JUDGE_PROMPT_TEMPLATE.replace("UNIVERSITY", univ_label).replace("UNITS_LIST", candidates_list)
+        prompt = (
+            JUDGE_PROMPT_TEMPLATE
+            .replace("UNIVERSITY", univ_label)
+            .replace("SCOPE_NOTE", _judge_scope_note(level))
+            .replace("UNITS_LIST", candidates_list)
+        )
 
         if judge_provider == "openai":
             try:

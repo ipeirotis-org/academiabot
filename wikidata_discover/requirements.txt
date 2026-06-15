@@ -9,3 +9,4 @@ tenacity
 rapidfuzz
 anthropic>=0.40.0
 google-genai
+google-cloud-bigquery

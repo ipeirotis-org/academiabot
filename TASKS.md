@@ -36,15 +36,15 @@
 
 The current pipeline only discovers **top-level units** (schools/colleges) under a university. This phase extends it to work recursively.
 
-- [ ] **Generalize `extract_divisions` to work at any level**: The LLM prompt currently says "top-level academic or administrative unit". Make it configurable: given any entity (school, department), extract its sub-units.
-- [ ] **Add recursive discovery mode**: `discover --recursive Q49210` should:
+- [x] **Generalize `extract_divisions` to work at any level**: The LLM prompt currently says "top-level academic or administrative unit". Make it configurable: given any entity (school, department), extract its sub-units.
+- [x] **Add recursive discovery mode**: `discover --recursive Q49210` should:
   1. Discover schools/colleges under the university
   2. For each school (existing or newly found), discover departments
   3. For each department, discover programs/labs/centers
   4. Output the full tree
-- [ ] **Add depth parameter**: `discover --depth 2 Q49210` to control how many levels deep to go (default 1 = schools only, 2 = schools+departments, 3 = full tree).
-- [ ] **Create entity type detection**: When discovering sub-units, the LLM should classify each as school/department/program/lab/center and assign the correct P31 value. Update `to_qs_wikidata.py` TYPE_MAP accordingly.
-- [ ] **Handle cross-listed/joint units**: Some departments belong to multiple schools. Detect and model with multiple P749 statements + qualifiers.
+- [x] **Add depth parameter**: `discover --depth 2 Q49210` to control how many levels deep to go (default 1 = schools only, 2 = schools+departments, 3 = full tree).
+- [x] **Create entity type detection**: When discovering sub-units, the LLM should classify each as school/department/program/lab/center and assign the correct P31 value. Update `to_qs_wikidata.py` TYPE_MAP accordingly.
+- [x] **Handle cross-listed/joint units**: Some departments belong to multiple schools. Detect and model with multiple P749 statements + qualifiers.
 
 ---
 
@@ -97,15 +97,15 @@ The current pipeline only discovers **top-level units** (schools/colleges) under
 
 ### Step 1: BigQuery for results storage (do first)
 
-- [ ] **Create BigQuery dataset and tables**: Dataset `academiabot` in project `wikidata-academia` with tables:
+- [x] **Create BigQuery dataset and tables**: Dataset `academiabot` in project `wikidata-academia` with tables:
   - `universities` -- harvested university list (qid, label, website, country, ipeds_id). Source of truth replacing `universities_us.json`.
   - `discovery_runs` -- one row per discover invocation (run_id, university_qid, university_label, model, timestamp, total_candidates, exists_linked, exists_orphan, missing). Replaces per-QID `_report.json` files.
   - `discovered_units` -- every candidate unit found across all runs (run_id, university_qid, unit_name, unit_type, status [exists_linked|exists_orphan|missing], matched_qid, website, location). Replaces per-QID `missing_divisions_*.csv` files.
   - `quickstatements_batches` -- exported QS lines per run (run_id, university_qid, qs_line, uploaded_at). Tracks what has been submitted to Wikidata.
-- [ ] **Add `bq_helpers.py` module**: Thin wrapper around `google-cloud-bigquery` client. Functions: `save_discovery_run()`, `save_discovered_units()`, `get_processed_qids()`, `get_coverage_summary()`. Follow the same pattern as `sparql_helpers.py` (single source for all BQ access).
-- [ ] **Wire `discovery.py` to save results to BigQuery**: After `discover_missing()` completes, call `bq_helpers.save_discovery_run()` and `bq_helpers.save_discovered_units()`. Keep local CSV/JSON output as fallback when BQ is unavailable.
-- [ ] **Wire `harvester.py` to save to BigQuery**: `fetch_us_universities()` writes to `universities` table in addition to (or instead of) the local JSON file.
-- [ ] **Add `--no-bq` CLI flag**: Allow running without BigQuery (e.g., offline or local-only mode). When set, skip all BQ writes and fall back to local files only.
+- [x] **Add `bq_helpers.py` module**: Thin wrapper around `google-cloud-bigquery` client. Functions: `save_discovery_run()`, `save_discovered_units()`, `get_processed_qids()`, `get_coverage_summary()`. Follow the same pattern as `sparql_helpers.py` (single source for all BQ access).
+- [x] **Wire `discovery.py` to save results to BigQuery**: After `discover_missing()` completes, call `bq_helpers.save_discovery_run()` and `bq_helpers.save_discovered_units()`. Keep local CSV/JSON output as fallback when BQ is unavailable.
+- [x] **Wire `harvester.py` to save to BigQuery**: `fetch_us_universities()` writes to `universities` table in addition to (or instead of) the local JSON file.
+- [x] **Add `--no-bq` CLI flag**: Allow running without BigQuery (e.g., offline or local-only mode). When set, skip all BQ writes and fall back to local files only.
 
 ### Step 2: GCS for cache and artifacts
 
