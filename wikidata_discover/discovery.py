@@ -51,6 +51,7 @@ class Discovery:
         self.university_label, self.university_website = self.fetch_entity_info(university_qid)
         self._children_cache: Dict[str, List[Tuple[str, str]]] = {}
         self._alt_labels_cache: Dict[str, Dict[str, List[str]]] = {}
+        self._descendant_qids_cache: Optional[set[str]] = None
 
     def fetch_entity_info(self, qid: str) -> tuple[str, str | None]:
         """
@@ -116,6 +117,25 @@ class Discovery:
         # fetch every descendant (for filtering deeper nodes)
         edges, _ = all_descendants(self.university_qid)
         return {child for _, child, _, _ in edges}
+
+    def university_descendant_qids(self) -> set[str]:
+        """Cached set of every QID reachable under the university's org tree.
+
+        Used to verify that a Wikidata search hit actually belongs to this
+        university before we attach a parent link to it. Fails safe: if the
+        descendant lookup is unavailable (e.g. SPARQL outage), returns an empty
+        set so unverifiable hits are treated as missing rather than linked.
+        """
+        if self._descendant_qids_cache is None:
+            try:
+                self._descendant_qids_cache = self.get_all_descendants_qids()
+            except Exception as exc:
+                logger.warning(
+                    "Could not fetch university descendants for orphan verification: %s",
+                    exc,
+                )
+                self._descendant_qids_cache = set()
+        return self._descendant_qids_cache
 
     def find_potential_orphans_for(
         self, candidate_name: str, existing_qids: set
@@ -219,12 +239,25 @@ class Discovery:
         alt_labels_map = self.get_children_alt_labels(parent_qid)
         parent_resolution_choices = self.parent_resolution_choices(parent_qid, direct_children)
 
-        divisions = LLMHelper.extract_divisions_best_available(
-            parent_label,
-            parent_website or "",
-            level=level,
-            parent_context=" > ".join(path[:-1]),
-        )
+        try:
+            divisions = LLMHelper.extract_divisions_best_available(
+                parent_label,
+                parent_website or "",
+                level=level,
+                parent_context=" > ".join(path[:-1]),
+            )
+        except ValueError as exc:
+            # extract_divisions_best_available raises when no provider returns
+            # units. At the top level that signals a real failure (e.g. no API
+            # keys configured), so surface it. At deeper levels an entity with
+            # no sub-units is a valid leaf, not a failure, so stop recursing here.
+            if level == 1:
+                raise
+            logger.info(
+                "%s: level %d extraction returned no sub-units; treating as leaf (%s)",
+                parent_qid, level, exc,
+            )
+            divisions = []
         logger.info(
             "%s: level %d, %d direct children, %d LLM candidates",
             parent_qid, level, len(direct_children), len(divisions),
@@ -286,20 +319,37 @@ class Discovery:
                 status = "missing"
                 display_status = "missing"
 
-            elif matched[0].startswith("ORPHAN:"):
-                child_qid = matched[0].split(":", 1)[1]
-                child_label = matched[1]
-                status = "exists_orphan"
-                display_status = f"exists_orphan -> {child_qid} ({child_label})"
-
             else:
-                child_qid, child_label = matched
-                if child_qid in direct_qids:
+                if matched[0].startswith("ORPHAN:"):
+                    candidate_qid = matched[0].split(":", 1)[1]
+                    candidate_label = matched[1]
+                else:
+                    candidate_qid, candidate_label = matched
+
+                if candidate_qid in direct_qids:
+                    child_qid = candidate_qid
+                    child_label = candidate_label
                     status = "exists_linked"
                     display_status = f"exists_linked -> {child_qid} ({child_label})"
-                else:
+                elif candidate_qid in self.university_descendant_qids():
+                    # Already inside this university's org tree but not linked to
+                    # this specific parent: a safe orphan to (re)link.
+                    child_qid = candidate_qid
+                    child_label = candidate_label
                     status = "exists_orphan"
                     display_status = f"exists_orphan -> {child_qid} ({child_label})"
+                else:
+                    # Matched a global Wikidata search hit we cannot confirm
+                    # belongs to this university. Generic labels (e.g. "School of
+                    # Medicine") can resolve to another institution's entity, so
+                    # do not attach a P749 to it. Treat as a new unit to create.
+                    logger.info(
+                        "Search hit %s (%s) for '%s' is not within %s's tree; "
+                        "treating as missing to avoid cross-institution linking.",
+                        candidate_qid, candidate_label, name, self.university_qid,
+                    )
+                    status = "missing"
+                    display_status = "missing"
 
             child_node = {
                 "name": name,
