@@ -89,7 +89,12 @@ def build_quickstatements(
         if status not in CREATE_STATUSES | LINK_STATUSES:
             continue
 
-        parent_specs = parent_specs_for_item(item, university_qid)
+        # For an already-linked cross-listed unit, the current parent link
+        # already exists in Wikidata; only emit its remaining (joint) parents.
+        include_direct_parent = status != "linked_joint"
+        parent_specs = parent_specs_for_item(
+            item, university_qid, include_direct_parent=include_direct_parent
+        )
         if not parent_specs:
             continue
 
@@ -157,6 +162,7 @@ def parent_statement(subject: str, parent_spec: Dict[str, Any]) -> str:
 def parent_specs_for_item(
     item: Dict[str, Any],
     fallback_parent_qid: str,
+    include_direct_parent: bool = True,
 ) -> List[Dict[str, Any]]:
     specs: List[Dict[str, Any]] = []
 
@@ -171,9 +177,10 @@ def parent_specs_for_item(
                     }
                 )
 
-    direct_parent = clean_qid(item.get("parent_qid") or fallback_parent_qid)
-    if direct_parent:
-        specs.append({"qid": direct_parent, "qualifiers": item.get("qualifiers") or []})
+    if include_direct_parent:
+        direct_parent = clean_qid(item.get("parent_qid") or fallback_parent_qid)
+        if direct_parent:
+            specs.append({"qid": direct_parent, "qualifiers": item.get("qualifiers") or []})
 
     for field in ("parent_qids", "additional_parent_qids", "joint_parent_qids"):
         for qid in split_qids(item.get(field)):

@@ -104,6 +104,8 @@ def test_linked_joint_unit_adds_extra_parents_without_create():
 
     assert "CREATE" not in lines
     assert "Q5|P749|Q2" in lines
+    # The current parent (Q1) is already linked, so don't re-emit it.
+    assert "Q5|P749|Q1" not in lines
 
 
 def test_parent_specs_support_qualifiers_for_joint_units():

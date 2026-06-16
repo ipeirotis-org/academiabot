@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 CHILDREN_SPARQL_TEMPLATE = """
 SELECT ?child ?childLabel WHERE {
   VALUES ?parent { wd:%s }
-  ?child (wdt:P361|wdt:P355|wdt:P749) ?parent .
+  { ?child (wdt:P361|wdt:P749) ?parent . }
+  UNION
+  { ?parent wdt:P355 ?child . }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
 }
 """
@@ -37,7 +39,9 @@ SELECT ?child ?childLabel WHERE {
 CHILDREN_ALT_LABELS_SPARQL_TEMPLATE = """
 SELECT ?child (GROUP_CONCAT(DISTINCT ?alt; separator="|") AS ?altLabels) WHERE {
   VALUES ?parent { wd:%s }
-  ?child (wdt:P361|wdt:P355|wdt:P749) ?parent .
+  { ?child (wdt:P361|wdt:P749) ?parent . }
+  UNION
+  { ?parent wdt:P355 ?child . }
   OPTIONAL { ?child skos:altLabel ?alt . FILTER(LANG(?alt)="en") }
 }
 GROUP BY ?child
@@ -410,9 +414,13 @@ class Discovery:
             if child_qid and level < max_depth:
                 child_website = division.get("website")
                 if not child_website:
+                    # Website is optional metadata for the recursive call; a
+                    # transient SPARQL/API failure here must not abort the whole
+                    # --depth run, so swallow any error and recurse without it.
                     try:
                         _, child_website = self.fetch_entity_info(child_qid)
-                    except ValueError:
+                    except Exception as exc:
+                        logger.debug("Optional website fetch for %s failed: %s", child_qid, exc)
                         child_website = None
                 child_subtree = self._discover_entity(
                     parent_qid=child_qid,

@@ -6,9 +6,9 @@ from rich.console import Console
 import hashlib
 from pathlib import Path
 
+from wikidata_discover import config
 from wikidata_discover.config import (
     OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY,
-    LLM_MODEL, ANTHROPIC_MODEL, GEMINI_MODEL,
     require_key,
 )
 
@@ -268,6 +268,11 @@ def _normalize_units(payload: Any) -> List[Dict[str, Any]]:
     if not isinstance(units, list):
         raise ValueError(f"Expected 'units' to be a list, got {type(units).__name__ if units else 'None'}")
 
+    # The source URL lives on the top-level payload ({"units": [...],
+    # "reference": "url"}), so propagate it onto each unit that lacks its own,
+    # otherwise the per-unit reference would always be null.
+    payload_reference = payload.get("reference")
+
     # Normalize entries: wrap bare strings into dicts, validate all items are dicts
     result = []
     for itm in units:
@@ -280,6 +285,7 @@ def _normalize_units(payload: Any) -> List[Dict[str, Any]]:
         unit.setdefault("is_joint", False)
         unit.setdefault("parent_names", [])
         unit.setdefault("evidence", None)
+        unit.setdefault("reference", payload_reference)
         result.append(unit)
     return result
 
@@ -308,7 +314,7 @@ class LLMHelper:
         parent_context: str = "",
     ) -> List[Dict[str, Any]]:
         """Extract divisions using OpenAI API."""
-        model = LLM_MODEL
+        model = config.LLM_MODEL
         key = _cache_key(univ_label, "openai", model, level, parent_context)
         cached = _load_cache(key)
         if cached is not None:
@@ -387,7 +393,7 @@ class LLMHelper:
         parent_context: str = "",
     ) -> List[Dict[str, Any]]:
         """Extract divisions using Anthropic Claude API."""
-        model = ANTHROPIC_MODEL
+        model = config.ANTHROPIC_MODEL
         key = _cache_key(univ_label, "anthropic", model, level, parent_context)
         cached = _load_cache(key)
         if cached is not None:
@@ -471,7 +477,7 @@ class LLMHelper:
         parent_context: str = "",
     ) -> List[Dict[str, Any]]:
         """Extract divisions using Google Gemini API."""
-        model = GEMINI_MODEL
+        model = config.GEMINI_MODEL
         key = _cache_key(univ_label, "gemini", model, level, parent_context)
         cached = _load_cache(key)
         if cached is not None:
@@ -684,7 +690,7 @@ class LLMHelper:
             try:
                 client = _get_openai_client()
                 resp = client.responses.create(
-                    model=LLM_MODEL,
+                    model=config.LLM_MODEL,
                     input=[{"role": "user", "content": prompt}],
                     text={"format": {"type": "json_schema", "name": "judge_keep", "schema": JUDGE_KEEP_SCHEMA}},
                     max_output_tokens=1024,
@@ -699,7 +705,7 @@ class LLMHelper:
             try:
                 client = _get_anthropic_client()
                 resp = client.messages.create(
-                    model=ANTHROPIC_MODEL,
+                    model=config.ANTHROPIC_MODEL,
                     max_tokens=1024,
                     messages=[{"role": "user", "content": prompt}]
                 )
@@ -716,7 +722,7 @@ class LLMHelper:
                 client = _get_gemini_client()
                 from google.genai import types as genai_types
                 resp = client.models.generate_content(
-                    model=GEMINI_MODEL,
+                    model=config.GEMINI_MODEL,
                     contents=[genai_types.Content(parts=[genai_types.Part.from_text(prompt)])],
                     generation_config=genai_types.GenerationConfig(max_output_tokens=1024),
                 )
@@ -769,9 +775,9 @@ class LLMHelper:
 
         # Try providers in order
         providers = [
-            ("openai", _get_openai_client, LLM_MODEL),
-            ("anthropic", _get_anthropic_client, ANTHROPIC_MODEL),
-            ("gemini", _get_gemini_client, GEMINI_MODEL),
+            ("openai", _get_openai_client, config.LLM_MODEL),
+            ("anthropic", _get_anthropic_client, config.ANTHROPIC_MODEL),
+            ("gemini", _get_gemini_client, config.GEMINI_MODEL),
         ]
 
         for provider_name, get_client, model in providers:
