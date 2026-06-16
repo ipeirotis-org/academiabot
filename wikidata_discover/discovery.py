@@ -88,8 +88,15 @@ class Discovery:
                     label_key="childLabel",
                 )
             except Exception as exc:
-                logger.warning("SPARQL child lookup failed for %s; continuing without direct children: %s", qid, exc)
-                self._children_cache[qid] = []
+                # A failed lookup is NOT the same as "no children". Treating it as
+                # empty would classify already-linked units as missing and emit
+                # CREATE QuickStatements, producing duplicate Wikidata entities.
+                # Fail loudly instead so the run does not corrupt data from an
+                # unverified empty state (e.g. a SPARQL timeout or rate-limit).
+                raise RuntimeError(
+                    f"Could not load existing children for {qid}; aborting to avoid "
+                    f"classifying linked units as missing. Cause: {exc}"
+                ) from exc
         return self._children_cache[qid]
 
     def get_children_alt_labels(self, parent_qid: Optional[str] = None) -> Dict[str, List[str]]:
