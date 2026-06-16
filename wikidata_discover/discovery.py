@@ -11,7 +11,8 @@ from wikidata_discover.wikidata_api import (
 )
 from wikidata_discover.hierarchy import all_descendants
 from wikidata_discover.llm_helpers import LLMHelper
-from wikidata_discover.config import LLM_MODEL, console
+from wikidata_discover import config as _config
+from wikidata_discover.config import console
 from wikidata_discover import bq_helpers
 
 from rapidfuzz import fuzz
@@ -194,7 +195,7 @@ class Discovery:
             "run_id": run_id,
             "university_qid": self.university_qid,
             "university_label": self.university_label,
-            "model": LLM_MODEL,
+            "model": model_for_provider(tree.get("extraction_provider")),
             "timestamp": run_timestamp,
             "depth": depth,
             "total_candidates": counts["total_candidates"],
@@ -250,28 +251,20 @@ class Discovery:
         alt_labels_map = self.get_children_alt_labels(parent_qid)
         parent_resolution_choices = self.parent_resolution_choices(parent_qid, direct_children)
 
-        try:
-            divisions = LLMHelper.extract_divisions_best_available(
-                parent_label,
-                parent_website or "",
-                level=level,
-                parent_context=" > ".join(path[:-1]),
-            )
-        except ValueError as exc:
-            # extract_divisions_best_available raises when no provider returns
-            # units. At the top level that signals a real failure (e.g. no API
-            # keys configured), so surface it. At deeper levels an entity with
-            # no sub-units is a valid leaf, not a failure, so stop recursing here.
-            if level == 1:
-                raise
-            logger.info(
-                "%s: level %d extraction returned no sub-units; treating as leaf (%s)",
-                parent_qid, level, exc,
-            )
-            divisions = []
+        # extract_divisions_best_available returns (units, provider). A valid but
+        # empty list means a genuine leaf (no sub-units); it raises only when
+        # every provider was unavailable or failed. We let that raise propagate
+        # rather than treating an extraction failure as an empty leaf, which
+        # would silently write an incomplete tree.
+        divisions, extraction_provider = LLMHelper.extract_divisions_best_available(
+            parent_label,
+            parent_website or "",
+            level=level,
+            parent_context=" > ".join(path[:-1]),
+        )
         logger.info(
-            "%s: level %d, %d direct children, %d LLM candidates",
-            parent_qid, level, len(direct_children), len(divisions),
+            "%s: level %d, %d direct children, %d LLM candidates (provider=%s)",
+            parent_qid, level, len(direct_children), len(divisions), extraction_provider,
         )
 
         table = Table(show_header=True, header_style="bold magenta")
@@ -285,6 +278,7 @@ class Discovery:
             "website": parent_website,
             "level": level - 1,
             "path": path,
+            "extraction_provider": extraction_provider,
             "children": [],
         }
 
@@ -418,7 +412,23 @@ class Discovery:
     ) -> List[Tuple[str, str]]:
         choices = list(direct_children)
         if parent_qid != self.university_qid:
-            choices.extend(self.get_existing_children(self.university_qid))
+            # Enrichment for resolving joint/cross-listed parents. Besides the
+            # university's top-level units, include sibling units that share a
+            # parent with the current unit (e.g. at level 3 the current parent is
+            # a department, so its siblings are the other departments under the
+            # same school). Without these, a joint program whose other parent is
+            # a sibling department cannot resolve that QID. Best-effort: a lookup
+            # failure here must not abort the run.
+            enrichment_parents = {self.university_qid}
+            enrichment_parents.update(self._existing_parent_qids(parent_qid) or set())
+            for enrichment_qid in enrichment_parents:
+                try:
+                    choices.extend(self.get_existing_children(enrichment_qid))
+                except Exception as exc:
+                    logger.debug(
+                        "joint-parent enrichment: children lookup for %s failed: %s",
+                        enrichment_qid, exc,
+                    )
         return dedupe_qid_label_pairs(choices)
     
 #helper functions for matching logic
@@ -454,6 +464,20 @@ def is_fuzzy_match(a: str, b: str) -> bool:
             return True
 
     return False
+
+
+def model_for_provider(provider: Optional[str]) -> str:
+    """Map the provider that handled extraction to its configured model id.
+
+    Reads the config module dynamically so a CLI --llm override (which mutates
+    config.LLM_MODEL after import) is reflected, and so fallback to Anthropic or
+    Gemini records that provider's model rather than the OpenAI default.
+    """
+    return {
+        "openai": _config.LLM_MODEL,
+        "anthropic": _config.ANTHROPIC_MODEL,
+        "gemini": _config.GEMINI_MODEL,
+    }.get(provider, _config.LLM_MODEL)
 
 
 def classify_search_match(

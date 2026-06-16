@@ -15,6 +15,16 @@ from wikidata_discover.config import (
 console = Console()
 logger = logging.getLogger(__name__)
 
+
+class ProviderExtractionError(Exception):
+    """Raised when a provider could not produce any valid extraction response.
+
+    Distinct from a provider returning a valid but empty result: an empty list
+    means "this entity genuinely has no sub-units" (a leaf), whereas this error
+    means the call failed (timeout, API error, unparseable output) and the
+    result is unknown. Callers must not treat this as an empty/leaf result.
+    """
+
 # ─────────────────────────  LLM PROMPTS  ─────────────────────────
 # Phase 2: the extraction prompt is parameterized by hierarchy level so the
 # same providers can extract schools (level 1), departments (level 2), or
@@ -365,7 +375,9 @@ class LLMHelper:
                 continue
 
         logger.error("extract_divisions_openai failed for %s after %d attempts", univ_label, _EXTRACT_MAX_RETRIES)
-        return []
+        raise ProviderExtractionError(
+            f"OpenAI extraction for {univ_label} failed after {_EXTRACT_MAX_RETRIES} attempts"
+        )
 
     @staticmethod
     def extract_divisions_anthropic(
@@ -447,7 +459,9 @@ class LLMHelper:
                 continue
 
         logger.error("extract_divisions_anthropic failed for %s after %d attempts", univ_label, _EXTRACT_MAX_RETRIES)
-        return []
+        raise ProviderExtractionError(
+            f"Anthropic extraction for {univ_label} failed after {_EXTRACT_MAX_RETRIES} attempts"
+        )
 
     @staticmethod
     def extract_divisions_gemini(
@@ -532,7 +546,9 @@ class LLMHelper:
                 continue
 
         logger.error("extract_divisions_gemini failed for %s after %d attempts", univ_label, _EXTRACT_MAX_RETRIES)
-        return []
+        raise ProviderExtractionError(
+            f"Gemini extraction for {univ_label} failed after {_EXTRACT_MAX_RETRIES} attempts"
+        )
 
     @staticmethod
     def extract_divisions_best_available(
@@ -540,12 +556,17 @@ class LLMHelper:
         website: str,
         level: int = 1,
         parent_context: str = "",
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], str]:
         """Extract divisions using the best available provider.
 
-        Tries providers in order: OpenAI, Anthropic, Gemini.
-        Falls back to next provider if current one fails or is not configured.
-        Raises ValueError if no providers are available.
+        Tries providers in order: OpenAI, Anthropic, Gemini. Falls back to the
+        next provider if the current one is not configured or fails.
+
+        Returns a (units, provider_name) tuple. units may be an empty list when a
+        provider successfully determined the entity has no sub-units (a leaf).
+        Raises ValueError only when every configured provider was unavailable or
+        failed to produce any valid response, so callers can tell a genuine leaf
+        apart from an extraction failure.
 
         level and parent_context control which hierarchy level is extracted
         (1=schools, 2=departments, 3+=programs/labs/centers).
@@ -556,28 +577,37 @@ class LLMHelper:
             ("gemini", LLMHelper.extract_divisions_gemini),
         ]
 
+        valid_empty_provider: Optional[str] = None
         for provider_name, extractor in providers:
             try:
                 logger.debug("Trying %s for extraction...", provider_name)
                 result = extractor(univ_label, website, level, parent_context)
-                if result:  # Successfully extracted non-empty list
-                    logger.info("extract_divisions_best_available: %s returned %d units", provider_name, len(result))
-                    return result
-                else:
-                    logger.debug("extract_divisions_best_available: %s returned empty list", provider_name)
-            except ValueError as e:
-                # Provider not configured (missing key)
-                logger.debug("extract_divisions_best_available: %s not available (%s)", provider_name, e)
-                continue
             except Exception as e:
-                logger.warning("extract_divisions_best_available: %s raised error (%s), trying next", provider_name, e)
+                # Not configured (missing key) or ran but produced no valid
+                # response. Either way this provider gave us nothing usable.
+                logger.warning(
+                    "extract_divisions_best_available: %s unavailable or failed (%s), trying next",
+                    provider_name, e,
+                )
                 continue
 
-        logger.error("extract_divisions_best_available: all providers failed or unavailable for %s", univ_label)
+            if result:
+                logger.info("extract_divisions_best_available: %s returned %d units", provider_name, len(result))
+                return result, provider_name
+            # Valid response with no sub-units: a genuine leaf. Remember it but
+            # keep trying other providers in case one finds sub-units.
+            logger.debug("extract_divisions_best_available: %s returned a valid empty result", provider_name)
+            if valid_empty_provider is None:
+                valid_empty_provider = provider_name
+
+        if valid_empty_provider is not None:
+            return [], valid_empty_provider
+
+        logger.error("extract_divisions_best_available: all providers unavailable or failed for %s", univ_label)
         raise ValueError(
-            f"No LLM providers available for extraction. "
-            f"Please configure at least one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY. "
-            f"Entity: {univ_label}"
+            f"No usable LLM extraction for {univ_label}: every configured provider was "
+            f"unavailable or failed. Configure or repair at least one of "
+            f"OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY."
         )
 
     @staticmethod

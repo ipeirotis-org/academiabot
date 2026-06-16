@@ -11,6 +11,23 @@ from wikidata_discover.discovery import (
 )
 
 
+def test_model_for_provider_maps_each_provider(monkeypatch):
+    from wikidata_discover import config
+
+    monkeypatch.setattr(config, "LLM_MODEL", "gpt-test")
+    monkeypatch.setattr(config, "ANTHROPIC_MODEL", "claude-test")
+    monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-test")
+
+    from wikidata_discover.discovery import model_for_provider
+
+    assert model_for_provider("openai") == "gpt-test"
+    assert model_for_provider("anthropic") == "claude-test"
+    assert model_for_provider("gemini") == "gemini-test"
+    # Unknown/None falls back to the configured default model.
+    assert model_for_provider(None) == "gpt-test"
+    assert model_for_provider("mystery") == "gpt-test"
+
+
 def test_classify_search_match_direct_child_is_linked():
     assert classify_search_match("Q2", "Q1", {"Q2"}, None) == "exists_linked"
 
