@@ -4,7 +4,11 @@ import uuid
 from typing import List, Dict, Any, Tuple, Optional
 from wikidata_discover.sparql_helpers import run_sparql
 from wikidata_discover.sparql_helpers import execute_sparql_bindings
-from wikidata_discover.wikidata_api import get_entity_label_and_website, quick_wd_search
+from wikidata_discover.wikidata_api import (
+    get_entity_label_and_website,
+    get_entity_parent_qids,
+    quick_wd_search,
+)
 from wikidata_discover.hierarchy import all_descendants
 from wikidata_discover.llm_helpers import LLMHelper
 from wikidata_discover.config import LLM_MODEL, console
@@ -51,7 +55,7 @@ class Discovery:
         self.university_label, self.university_website = self.fetch_entity_info(university_qid)
         self._children_cache: Dict[str, List[Tuple[str, str]]] = {}
         self._alt_labels_cache: Dict[str, Dict[str, List[str]]] = {}
-        self._descendant_qids_cache: Optional[set[str]] = None
+        self._entity_parents_cache: Dict[str, Optional[set]] = {}
 
     def fetch_entity_info(self, qid: str) -> tuple[str, str | None]:
         """
@@ -125,24 +129,24 @@ class Discovery:
         edges, _ = all_descendants(self.university_qid)
         return {child for _, child, _, _ in edges}
 
-    def university_descendant_qids(self) -> set[str]:
-        """Cached set of every QID reachable under the university's org tree.
+    def _existing_parent_qids(self, qid: str) -> Optional[set]:
+        """Cached lookup of an entity's existing parent QIDs (P749/P361).
 
-        Used to verify that a Wikidata search hit actually belongs to this
-        university before we attach a parent link to it. Fails safe: if the
-        descendant lookup is unavailable (e.g. SPARQL outage), returns an empty
-        set so unverifiable hits are treated as missing rather than linked.
+        Returns the set of parents, or None if the lookup could not be performed
+        (so callers treat it as unverifiable and fail safe). Uses the Wikidata
+        Action API, which keeps working when the SPARQL endpoint is unavailable.
         """
-        if self._descendant_qids_cache is None:
+        if qid not in self._entity_parents_cache:
             try:
-                self._descendant_qids_cache = self.get_all_descendants_qids()
+                self._entity_parents_cache[qid] = get_entity_parent_qids(qid)
             except Exception as exc:
                 logger.warning(
-                    "Could not fetch university descendants for orphan verification: %s",
-                    exc,
+                    "Could not fetch existing parents for %s; treating as "
+                    "unverifiable: %s",
+                    qid, exc,
                 )
-                self._descendant_qids_cache = set()
-        return self._descendant_qids_cache
+                self._entity_parents_cache[qid] = None
+        return self._entity_parents_cache[qid]
 
     def find_potential_orphans_for(
         self, candidate_name: str, existing_qids: set
@@ -333,29 +337,30 @@ class Discovery:
                 else:
                     candidate_qid, candidate_label = matched
 
+                # Only attach a P749 to an existing entity when it is safe:
+                # verify the candidate is unparented (a true orphan) or already
+                # under this parent. An entity parented under a different unit
+                # (another school/department, or another university) is left
+                # alone and we create a new unit instead.
                 if candidate_qid in direct_qids:
-                    child_qid = candidate_qid
-                    child_label = candidate_label
-                    status = "exists_linked"
-                    display_status = f"exists_linked -> {child_qid} ({child_label})"
-                elif candidate_qid in self.university_descendant_qids():
-                    # Already inside this university's org tree but not linked to
-                    # this specific parent: a safe orphan to (re)link.
-                    child_qid = candidate_qid
-                    child_label = candidate_label
-                    status = "exists_orphan"
-                    display_status = f"exists_orphan -> {child_qid} ({child_label})"
+                    existing_parents: Optional[set] = direct_qids
                 else:
-                    # Matched a global Wikidata search hit we cannot confirm
-                    # belongs to this university. Generic labels (e.g. "School of
-                    # Medicine") can resolve to another institution's entity, so
-                    # do not attach a P749 to it. Treat as a new unit to create.
+                    existing_parents = self._existing_parent_qids(candidate_qid)
+
+                status = classify_search_match(
+                    candidate_qid, parent_qid, direct_qids, existing_parents
+                )
+                if status in ("exists_linked", "exists_orphan"):
+                    child_qid = candidate_qid
+                    child_label = candidate_label
+                    display_status = f"{status} -> {child_qid} ({child_label})"
+                else:
                     logger.info(
-                        "Search hit %s (%s) for '%s' is not within %s's tree; "
-                        "treating as missing to avoid cross-institution linking.",
-                        candidate_qid, candidate_label, name, self.university_qid,
+                        "Search hit %s (%s) for '%s' is parented elsewhere or "
+                        "unverifiable; treating as missing to avoid an incorrect "
+                        "P749 under %s.",
+                        candidate_qid, candidate_label, name, parent_qid,
                     )
-                    status = "missing"
                     display_status = "missing"
 
             child_node = {
@@ -449,6 +454,38 @@ def is_fuzzy_match(a: str, b: str) -> bool:
             return True
 
     return False
+
+
+def classify_search_match(
+    candidate_qid: str,
+    current_parent_qid: str,
+    direct_qids: set,
+    existing_parents: Optional[set],
+) -> str:
+    """Decide the status for a Wikidata match that is not a direct child.
+
+    existing_parents is the candidate's current set of parent QIDs (P749/P361),
+    or None if that lookup could not be performed. Returns one of
+    "exists_linked", "exists_orphan", or "missing".
+
+    The goal is to only attach a P749 to an existing entity when it is safe:
+      - already a direct child of this parent -> exists_linked
+      - already linked to this parent via P749/P361 -> exists_linked
+      - genuinely unparented (a true orphan) -> exists_orphan (safe to link)
+      - parented under a different unit (another school, department, or even
+        another university) -> missing, so we create a new unit instead of
+        re-parenting or hijacking an entity that belongs elsewhere
+      - parents unknown (lookup failed) -> missing, the safe default
+    """
+    if candidate_qid in direct_qids:
+        return "exists_linked"
+    if existing_parents is None:
+        return "missing"
+    if current_parent_qid in existing_parents:
+        return "exists_linked"
+    if not existing_parents:
+        return "exists_orphan"
+    return "missing"
 
 
 def normalize_unit_type(unit_type: Optional[str], level: int = 1) -> str:

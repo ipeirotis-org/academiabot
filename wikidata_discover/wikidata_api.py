@@ -70,3 +70,46 @@ def get_entity_label_and_website(qid: str) -> Tuple[str, Optional[str]]:
     if not label:
         raise ValueError(f"Label not found for {qid}")
     return label, website
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    retry=retry_if_exception_type((requests.RequestException,)),
+    before_sleep=lambda rs: logger.warning(
+        "Wikidata parents retry #%d after %s", rs.attempt_number, rs.outcome.exception()
+    ),
+)
+def get_entity_parent_qids(qid: str) -> set:
+    """Return the set of an entity's parent QIDs via the Wikidata Action API.
+
+    Considers parent organization (P749) and part of (P361). Uses the Action
+    API (wbgetentities) rather than SPARQL so it keeps working when the WDQS
+    SPARQL endpoint is rate-limited or down.
+    """
+    time.sleep(_WD_API_DELAY)
+    resp = requests.get(
+        "https://www.wikidata.org/w/api.php",
+        params={
+            "action": "wbgetentities",
+            "format": "json",
+            "ids": qid,
+            "props": "claims",
+        },
+        headers={"User-Agent": USER_AGENT},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    claims = resp.json().get("entities", {}).get(qid, {}).get("claims", {})
+    parents = set()
+    for prop in ("P749", "P361"):
+        for stmt in claims.get(prop, []):
+            value = (
+                stmt.get("mainsnak", {})
+                .get("datavalue", {})
+                .get("value", {})
+            )
+            parent_id = value.get("id") if isinstance(value, dict) else None
+            if parent_id:
+                parents.add(parent_id)
+    return parents

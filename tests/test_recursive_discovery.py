@@ -1,6 +1,7 @@
 """Unit tests for recursive discovery tree helpers."""
 
 from wikidata_discover.discovery import (
+    classify_search_match,
     collect_missing,
     count_statuses,
     extract_joint_parent_names,
@@ -8,6 +9,29 @@ from wikidata_discover.discovery import (
     normalize_unit_type,
     resolve_parent_qids,
 )
+
+
+def test_classify_search_match_direct_child_is_linked():
+    assert classify_search_match("Q2", "Q1", {"Q2"}, None) == "exists_linked"
+
+
+def test_classify_search_match_true_orphan_is_linkable():
+    # Exists in Wikidata but has no parents at all: safe to link to this parent.
+    assert classify_search_match("Q5", "Q1", set(), set()) == "exists_orphan"
+
+
+def test_classify_search_match_already_under_this_parent_is_linked():
+    assert classify_search_match("Q5", "Q1", set(), {"Q1"}) == "exists_linked"
+
+
+def test_classify_search_match_parented_elsewhere_is_missing():
+    # Already a child of a different unit (e.g. another school): do not re-parent.
+    assert classify_search_match("Q5", "Q1", set(), {"Q9"}) == "missing"
+
+
+def test_classify_search_match_unknown_parents_is_missing():
+    # Parent lookup failed: fail safe rather than risk an incorrect link.
+    assert classify_search_match("Q5", "Q1", set(), None) == "missing"
 
 
 def test_normalize_unit_type_defaults_by_level():
