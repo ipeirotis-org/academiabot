@@ -1,7 +1,7 @@
 import json
 import logging
 import uuid
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Iterable
 from wikidata_discover.sparql_helpers import run_sparql
 from wikidata_discover.sparql_helpers import execute_sparql_bindings
 from wikidata_discover.wikidata_api import (
@@ -331,18 +331,22 @@ class Discovery:
                 else:
                     candidate_qid, candidate_label = matched
 
-                # Only attach a P749 to an existing entity when it is safe:
-                # verify the candidate is unparented (a true orphan) or already
-                # under this parent. An entity parented under a different unit
-                # (another school/department, or another university) is left
-                # alone and we create a new unit instead.
+                # Only attach a P749 to an existing entity when there is evidence
+                # it belongs here: it is already under this parent, or it is a
+                # cross-listed unit that already exists under one of its claimed
+                # joint parents. Otherwise create a new unit rather than risk
+                # linking another unit's or institution's entity.
                 if candidate_qid in direct_qids:
                     existing_parents: Optional[set] = direct_qids
                 else:
                     existing_parents = self._existing_parent_qids(candidate_qid)
 
                 status = classify_search_match(
-                    candidate_qid, parent_qid, direct_qids, existing_parents
+                    candidate_qid,
+                    parent_qid,
+                    direct_qids,
+                    existing_parents,
+                    joint_parent_qids=additional_parent_qids["qids"],
                 )
                 if status in ("exists_linked", "exists_orphan"):
                     child_qid = candidate_qid
@@ -485,21 +489,25 @@ def classify_search_match(
     current_parent_qid: str,
     direct_qids: set,
     existing_parents: Optional[set],
+    joint_parent_qids: Iterable[str] = (),
 ) -> str:
     """Decide the status for a Wikidata match that is not a direct child.
 
     existing_parents is the candidate's current set of parent QIDs (P749/P361),
-    or None if that lookup could not be performed. Returns one of
-    "exists_linked", "exists_orphan", or "missing".
+    or None if that lookup could not be performed. joint_parent_qids are the
+    other parents the LLM claims this unit is cross-listed under (already
+    resolved to QIDs). Returns "exists_linked", "exists_orphan", or "missing".
 
-    The goal is to only attach a P749 to an existing entity when it is safe:
+    We only attach a P749 to an existing entity when there is positive evidence
+    it belongs here:
       - already a direct child of this parent -> exists_linked
       - already linked to this parent via P749/P361 -> exists_linked
-      - genuinely unparented (a true orphan) -> exists_orphan (safe to link)
-      - parented under a different unit (another school, department, or even
-        another university) -> missing, so we create a new unit instead of
-        re-parenting or hijacking an entity that belongs elsewhere
-      - parents unknown (lookup failed) -> missing, the safe default
+      - a cross-listed unit that already exists under one of its claimed joint
+        parents -> exists_orphan, so we add the current parent to that entity
+        instead of creating a duplicate
+      - everything else (unparented, parented under an unrelated unit, or an
+        unverifiable/failed lookup) -> missing, so we create a new unit rather
+        than risk attaching another institution's or another unit's entity
     """
     if candidate_qid in direct_qids:
         return "exists_linked"
@@ -507,7 +515,7 @@ def classify_search_match(
         return "missing"
     if current_parent_qid in existing_parents:
         return "exists_linked"
-    if not existing_parents:
+    if joint_parent_qids and (set(existing_parents) & set(joint_parent_qids)):
         return "exists_orphan"
     return "missing"
 
@@ -609,14 +617,24 @@ def collect_missing(tree: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Flatten missing and orphan candidate nodes from a discovered tree."""
     rows: List[Dict[str, Any]] = []
     for child in tree.get("children", []):
-        if child.get("status") in {"missing", "exists_orphan"}:
+        status = child.get("status")
+        additional = child.get("additional_parent_qids") or []
+        # Export missing units (to create), orphans (to link), and already-linked
+        # units that are cross-listed (to add their remaining joint parents).
+        if status in {"missing", "exists_orphan"} or (status == "exists_linked" and additional):
+            if status == "exists_orphan":
+                export_status = "orphan"
+            elif status == "exists_linked":
+                export_status = "linked_joint"
+            else:
+                export_status = "missing"
             rows.append(
                 {
                     "name": child.get("name"),
                     "unit_type": child.get("unit_type"),
                     "url": child.get("website") or "",
                     "location": child.get("location") or "",
-                    "status": "orphan" if child.get("status") == "exists_orphan" else "missing",
+                    "status": export_status,
                     "qid": child.get("qid") or "",
                     "parent_qid": child.get("parent_qid"),
                     "parent_label": child.get("parent_label"),

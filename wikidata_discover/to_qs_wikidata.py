@@ -5,31 +5,41 @@ from typing import Any, Dict, Iterable, List, Optional
 from wikidata_discover.config import console
 
 
+# Q43229 = organization, the generic fallback. Several unit types intentionally
+# map to it because no verified class QID is known yet: emitting a specific but
+# wrong QID would stamp every uploaded entity with an incorrect P31 (e.g.
+# Q1664727 is "Institute of Christ the King Sovereign Priest", Q576104 is
+# "neonate", Q33506 is "museum" -- none are organizational-unit classes). Prefer
+# a generic-but-correct class over a specific-but-wrong one until verified
+# mappings are supplied.
+GENERIC_UNIT_QID = "Q43229"
 TYPE_MAP = {
     "school": "Q31855",
     "college": "Q31855",
     "faculty": "Q31855",
-    "division": "Q576104",
-    "campus": "Q33506",
+    "division": GENERIC_UNIT_QID,
+    "campus": GENERIC_UNIT_QID,
     "department": "Q2467461",
     "dept": "Q2467461",
     "academic department": "Q2467461",
-    "program": "Q1664727",
-    "academic program": "Q1664727",
-    "degree program": "Q1664727",
+    "program": GENERIC_UNIT_QID,
+    "academic program": GENERIC_UNIT_QID,
+    "degree program": GENERIC_UNIT_QID,
     "lab": "Q483242",
     "laboratory": "Q483242",
     "center": "Q7315155",
     "centre": "Q7315155",
     "research center": "Q7315155",
     "research centre": "Q7315155",
-    "institute": "Q1664727",
-    "unit": "Q43229",
-    None: "Q43229",
+    "institute": GENERIC_UNIT_QID,
+    "unit": GENERIC_UNIT_QID,
+    None: GENERIC_UNIT_QID,
 }
 
 CREATE_STATUSES = {"missing"}
-LINK_STATUSES = {"orphan", "exists_orphan"}
+# "linked_joint": an existing unit already linked to the current parent that is
+# also cross-listed, so it still needs P749 statements for its other parents.
+LINK_STATUSES = {"orphan", "exists_orphan", "linked_joint"}
 
 
 def export_quickstatements(

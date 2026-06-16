@@ -32,9 +32,10 @@ def test_classify_search_match_direct_child_is_linked():
     assert classify_search_match("Q2", "Q1", {"Q2"}, None) == "exists_linked"
 
 
-def test_classify_search_match_true_orphan_is_linkable():
-    # Exists in Wikidata but has no parents at all: safe to link to this parent.
-    assert classify_search_match("Q5", "Q1", set(), set()) == "exists_orphan"
+def test_classify_search_match_unparented_is_missing():
+    # Exists but has no parents at all: no evidence it belongs to this parent, so
+    # create a new unit rather than risk linking another institution's entity.
+    assert classify_search_match("Q5", "Q1", set(), set()) == "missing"
 
 
 def test_classify_search_match_already_under_this_parent_is_linked():
@@ -44,6 +45,23 @@ def test_classify_search_match_already_under_this_parent_is_linked():
 def test_classify_search_match_parented_elsewhere_is_missing():
     # Already a child of a different unit (e.g. another school): do not re-parent.
     assert classify_search_match("Q5", "Q1", set(), {"Q9"}) == "missing"
+
+
+def test_classify_search_match_joint_under_other_parent_is_orphan():
+    # Cross-listed unit that already exists under one of its claimed joint
+    # parents (Q9): add the current parent to it instead of duplicating.
+    assert (
+        classify_search_match("Q5", "Q1", set(), {"Q9"}, joint_parent_qids=["Q9"])
+        == "exists_orphan"
+    )
+
+
+def test_classify_search_match_parented_elsewhere_not_joint_is_missing():
+    # Parented under an unrelated unit and not claimed as joint: don't hijack it.
+    assert (
+        classify_search_match("Q5", "Q1", set(), {"Q9"}, joint_parent_qids=["Q8"])
+        == "missing"
+    )
 
 
 def test_classify_search_match_unknown_parents_is_missing():
