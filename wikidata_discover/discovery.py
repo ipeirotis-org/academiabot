@@ -2,6 +2,7 @@ import json
 import logging
 import uuid
 from typing import List, Dict, Any, Tuple, Optional, Iterable
+from urllib.parse import urlparse
 from wikidata_discover.sparql_helpers import run_sparql
 from wikidata_discover.sparql_helpers import execute_sparql_bindings
 from wikidata_discover.wikidata_api import (
@@ -57,6 +58,7 @@ class Discovery:
         self._children_cache: Dict[str, List[Tuple[str, str]]] = {}
         self._alt_labels_cache: Dict[str, Dict[str, List[str]]] = {}
         self._entity_parents_cache: Dict[str, Optional[set]] = {}
+        self._entity_website_cache: Dict[str, Optional[str]] = {}
 
     def fetch_entity_info(self, qid: str) -> tuple[str, str | None]:
         """
@@ -148,6 +150,17 @@ class Discovery:
                 )
                 self._entity_parents_cache[qid] = None
         return self._entity_parents_cache[qid]
+
+    def _entity_website(self, qid: str) -> Optional[str]:
+        """Cached, best-effort lookup of an entity's official website (P856)."""
+        if qid not in self._entity_website_cache:
+            try:
+                _, website = get_entity_label_and_website(qid)
+            except Exception as exc:
+                logger.debug("Could not fetch website for %s: %s", qid, exc)
+                website = None
+            self._entity_website_cache[qid] = website
+        return self._entity_website_cache[qid]
 
     def find_potential_orphans_for(
         self, candidate_name: str, existing_qids: set
@@ -338,8 +351,15 @@ class Discovery:
                 # linking another unit's or institution's entity.
                 if candidate_qid in direct_qids:
                     existing_parents: Optional[set] = direct_qids
+                    institution_confirmed = True
                 else:
                     existing_parents = self._existing_parent_qids(candidate_qid)
+                    # Non-name evidence: does the candidate's website sit on the
+                    # university's domain? If so it genuinely belongs to this
+                    # institution, letting us safely adopt a disconnected orphan.
+                    institution_confirmed = same_registrable_domain(
+                        self.university_website, self._entity_website(candidate_qid)
+                    )
 
                 status = classify_search_match(
                     candidate_qid,
@@ -347,6 +367,7 @@ class Discovery:
                     direct_qids,
                     existing_parents,
                     joint_parent_qids=additional_parent_qids["qids"],
+                    institution_confirmed=institution_confirmed,
                 )
                 if status in ("exists_linked", "exists_orphan"):
                     child_qid = candidate_qid
@@ -484,19 +505,45 @@ def model_for_provider(provider: Optional[str]) -> str:
     }.get(provider, _config.LLM_MODEL)
 
 
+def registrable_domain(url: Optional[str]) -> Optional[str]:
+    """Return the registrable domain of a URL (e.g. 'nyu.edu' for any nyu.edu host).
+
+    A heuristic last-two-labels approach, which is correct for the U.S. .edu
+    domains this project targets. Returns None if no host can be parsed.
+    """
+    if not url:
+        return None
+    parsed = urlparse(url if "://" in url else "//" + url)
+    host = (parsed.hostname or "").lower()
+    labels = [label for label in host.split(".") if label]
+    if len(labels) >= 2:
+        return ".".join(labels[-2:])
+    return labels[0] if labels else None
+
+
+def same_registrable_domain(a: Optional[str], b: Optional[str]) -> bool:
+    """True if both URLs share a registrable domain (e.g. www.nyu.edu vs med.nyu.edu)."""
+    da, db = registrable_domain(a), registrable_domain(b)
+    return bool(da and db and da == db)
+
+
 def classify_search_match(
     candidate_qid: str,
     current_parent_qid: str,
     direct_qids: set,
     existing_parents: Optional[set],
     joint_parent_qids: Iterable[str] = (),
+    institution_confirmed: bool = False,
 ) -> str:
     """Decide the status for a Wikidata match that is not a direct child.
 
     existing_parents is the candidate's current set of parent QIDs (P749/P361),
     or None if that lookup could not be performed. joint_parent_qids are the
     other parents the LLM claims this unit is cross-listed under (already
-    resolved to QIDs). Returns "exists_linked", "exists_orphan", or "missing".
+    resolved to QIDs). institution_confirmed is True when non-name evidence
+    (e.g. the candidate's website is on the university's domain) shows the
+    entity belongs to this institution. Returns "exists_linked",
+    "exists_orphan", or "missing".
 
     We only attach a P749 to an existing entity when there is positive evidence
     it belongs here:
@@ -505,9 +552,12 @@ def classify_search_match(
       - a cross-listed unit that already exists under one of its claimed joint
         parents -> exists_orphan, so we add the current parent to that entity
         instead of creating a duplicate
-      - everything else (unparented, parented under an unrelated unit, or an
-        unverifiable/failed lookup) -> missing, so we create a new unit rather
-        than risk attaching another institution's or another unit's entity
+      - an unparented entity confirmed to belong to this institution -> a real
+        disconnected orphan, exists_orphan, so we adopt it rather than create a
+        duplicate
+      - everything else (unparented but unconfirmed, parented under an unrelated
+        unit, or an unverifiable/failed lookup) -> missing, so we create a new
+        unit rather than risk attaching another institution's or unit's entity
     """
     if candidate_qid in direct_qids:
         return "exists_linked"
@@ -516,6 +566,8 @@ def classify_search_match(
     if current_parent_qid in existing_parents:
         return "exists_linked"
     if joint_parent_qids and (set(existing_parents) & set(joint_parent_qids)):
+        return "exists_orphan"
+    if not existing_parents and institution_confirmed:
         return "exists_orphan"
     return "missing"
 

@@ -7,8 +7,33 @@ from wikidata_discover.discovery import (
     extract_joint_parent_names,
     flatten_discovered_units,
     normalize_unit_type,
+    registrable_domain,
     resolve_parent_qids,
+    same_registrable_domain,
 )
+
+
+def test_registrable_domain_normalizes_subdomains():
+    assert registrable_domain("https://www.nyu.edu/") == "nyu.edu"
+    assert registrable_domain("https://med.nyu.edu/biology") == "nyu.edu"
+    assert registrable_domain("nyu.edu") == "nyu.edu"
+    assert registrable_domain(None) is None
+    assert registrable_domain("") is None
+
+
+def test_same_registrable_domain():
+    assert same_registrable_domain("https://www.nyu.edu", "https://med.nyu.edu/x") is True
+    assert same_registrable_domain("https://nyu.edu", "https://stanford.edu") is False
+    assert same_registrable_domain(None, "https://nyu.edu") is False
+
+
+def test_classify_search_match_unparented_confirmed_is_orphan():
+    # Unparented, but its website confirms it belongs to this institution:
+    # adopt the disconnected orphan instead of creating a duplicate.
+    assert (
+        classify_search_match("Q5", "Q1", set(), set(), institution_confirmed=True)
+        == "exists_orphan"
+    )
 
 
 def test_model_for_provider_maps_each_provider(monkeypatch):
