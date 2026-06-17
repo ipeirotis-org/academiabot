@@ -108,6 +108,45 @@ def test_linked_joint_unit_adds_extra_parents_without_create():
     assert "Q5|P749|Q1" not in lines
 
 
+def test_orphan_does_not_re_emit_already_present_joint_parent():
+    # A cross-listed unit already linked under joint parent Q2; we are adding the
+    # current parent Q1. The LLM-resolved joint parents include Q2, which is
+    # already present, so only the missing current-parent link should be emitted.
+    rows = [
+        {
+            "name": "Cross-listed Department",
+            "unit_type": "department",
+            "status": "orphan",
+            "qid": "Q5",
+            "parent_qid": "Q1",
+            "additional_parent_qids": "Q2",
+            "existing_parent_qids": "Q2",
+        }
+    ]
+
+    lines = build_quickstatements(rows, "Q0", "Example University")
+
+    assert "Q5|P749|Q1" in lines
+    # Q2 is already a parent in Wikidata; re-emitting it would duplicate the link.
+    assert "Q5|P749|Q2" not in lines
+
+
+def test_parent_specs_skip_existing_parents():
+    specs = parent_specs_for_item(
+        {
+            "parent_qid": "Q1",
+            "additional_parent_qids": ["Q2", "Q3"],
+            "existing_parent_qids": ["Q2"],
+        },
+        "Q0",
+    )
+
+    assert specs == [
+        {"qid": "Q1", "qualifiers": []},
+        {"qid": "Q3", "qualifiers": []},
+    ]
+
+
 def test_parent_specs_support_qualifiers_for_joint_units():
     specs = parent_specs_for_item(
         {
