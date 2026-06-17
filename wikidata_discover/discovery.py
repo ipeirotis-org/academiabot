@@ -337,6 +337,7 @@ class Discovery:
             ]
             child_qid = None
             child_label = name
+            existing_parent_qids: List[str] = []
             if matched is None:
                 status = "missing"
                 display_status = "missing"
@@ -377,6 +378,11 @@ class Discovery:
                     child_qid = candidate_qid
                     child_label = candidate_label
                     display_status = f"{status} -> {child_qid} ({child_label})"
+                    # The entity's actual current parents (P749/P361), so the
+                    # export only emits P749 for parents it does not already have
+                    # and never re-links an existing joint parent. Cached lookup.
+                    real_parents = self._existing_parent_qids(candidate_qid)
+                    existing_parent_qids = sorted(real_parents) if real_parents else []
                 else:
                     logger.info(
                         "Search hit %s (%s) for '%s' is parented elsewhere or "
@@ -396,6 +402,7 @@ class Discovery:
                 "is_joint": bool(division.get("is_joint") or parent_names),
                 "parent_names": parent_names,
                 "additional_parent_qids": additional_parent_qids["qids"],
+                "existing_parent_qids": existing_parent_qids,
                 "unresolved_parent_names": unresolved_parent_names,
                 "evidence": division.get("evidence"),
                 "location": ", ".join(
@@ -701,6 +708,7 @@ def collect_missing(tree: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "is_joint": child.get("is_joint", False),
                     "parent_names": "|".join(child.get("parent_names") or []),
                     "additional_parent_qids": "|".join(child.get("additional_parent_qids") or []),
+                    "existing_parent_qids": "|".join(child.get("existing_parent_qids") or []),
                     "unresolved_parent_names": "|".join(child.get("unresolved_parent_names") or []),
                     "evidence": child.get("evidence") or "",
                     "university_qid": child.get("university_qid"),

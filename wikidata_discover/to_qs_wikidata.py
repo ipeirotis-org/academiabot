@@ -166,6 +166,12 @@ def parent_specs_for_item(
 ) -> List[Dict[str, Any]]:
     specs: List[Dict[str, Any]] = []
 
+    # Parents the matched entity already has in Wikidata. For an orphan or
+    # cross-listed match, an LLM-resolved joint parent may already be linked;
+    # re-emitting it would add a duplicate QID|P749|existing_parent on upload, so
+    # these are skipped during de-duplication below.
+    existing_parents = set(split_qids(item.get("existing_parent_qids")))
+
     for parent in item.get("parents") or []:
         if isinstance(parent, dict):
             qid = clean_qid(parent.get("qid") or parent.get("parent_qid"))
@@ -190,7 +196,7 @@ def parent_specs_for_item(
     seen = set()
     for spec in specs:
         qid = clean_qid(spec.get("qid"))
-        if not qid or qid in seen:
+        if not qid or qid in seen or qid in existing_parents:
             continue
         seen.add(qid)
         deduped.append({"qid": qid, "qualifiers": spec.get("qualifiers") or []})
