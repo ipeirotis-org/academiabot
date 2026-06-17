@@ -76,6 +76,20 @@ def _extract_system_prompt(level: int = 1) -> str:
     return SYSTEM_EXTRACT_TEMPLATE.format(scope=scope)
 
 
+def _example_unit_type(level: int = 1) -> str:
+    """A representative unit_type for the given level, used in prompt examples.
+
+    Keeps the example aligned with the level being extracted so a provider does
+    not anchor on a top-level type (e.g. "school") while extracting departments
+    or programs, which would otherwise produce a wrong P31 downstream.
+    """
+    if level <= 1:
+        return "school"
+    if level == 2:
+        return "department"
+    return "program"
+
+
 MATCH_TEMPLATE = (
     "You are assisting with entity alignment to Wikidata. Below is the name of a "
     "candidate academic unit *CANDIDATE* from UNIVERSITY, followed by a numbered "
@@ -402,6 +416,15 @@ class LLMHelper:
 
         client = _get_anthropic_client()
         system_prompt = _extract_system_prompt(level)
+        # Keep the example unit_type aligned with the level so Claude does not
+        # echo a top-level "school" while extracting departments or programs.
+        example_json = (
+            '{"units": [{"name": "...", "unit_type": "'
+            + _example_unit_type(level)
+            + '", "city": "...", "state": "...", "website": "...", '
+            '"is_joint": false, "parent_names": [], "evidence": null}], '
+            '"reference": "url"}'
+        )
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
             try:
@@ -418,7 +441,7 @@ class LLMHelper:
                                 f"Website: {website or 'unknown'}\n\n"
                                 "Search the web for this entity's direct sub-units, "
                                 "then respond with ONLY a JSON object in this exact format with no other text:\n"
-                                '{"units": [{"name": "...", "unit_type": "school", "city": "...", "state": "...", "website": "...", "is_joint": false, "parent_names": [], "evidence": null}], "reference": "url"}'
+                                + example_json
                             )
                         }
                     ]

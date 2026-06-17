@@ -232,8 +232,13 @@ class Discovery:
 
         if write_bq:
             units = flatten_discovered_units(tree, run_id, run_timestamp)
-            run_saved = bq_helpers.try_save_discovery_run(report)
+            # Persist the unit rows first and only write the discovery_runs
+            # marker once they are durable. get_processed_qids() and
+            # get_coverage_summary() key on discovery_runs, so a run row written
+            # without its units would make a later resume skip this university or
+            # report it with no unit rows.
             units_saved = bq_helpers.try_save_discovered_units(units)
+            run_saved = units_saved and bq_helpers.try_save_discovery_run(report)
             if run_saved and units_saved:
                 console.print(
                     f"[green]Saved discovery run and {len(units)} units to BigQuery.[/green]"
@@ -520,20 +525,44 @@ def model_for_provider(provider: Optional[str]) -> str:
     }.get(provider, _config.LLM_MODEL)
 
 
+# Multi-label public suffixes seen for academic and other institutions outside
+# the U.S. For hosts under these, the registrable domain needs the label before
+# the suffix (e.g. "ox.ac.uk", not "ac.uk"); otherwise unrelated institutions
+# would collapse to the same domain. Not exhaustive: a complete public-suffix
+# list would need an extra dependency, and this project primarily targets U.S.
+# .edu institutions where the last-two-labels heuristic is already correct.
+_COMPOUND_PUBLIC_SUFFIXES = frozenset({
+    "ac.uk", "ac.nz", "ac.jp", "ac.kr", "ac.in", "ac.za", "ac.il",
+    "ac.at", "ac.be", "ac.th", "ac.ir", "ac.id",
+    "edu.au", "edu.cn", "edu.sg", "edu.hk", "edu.in", "edu.my", "edu.tr",
+    "edu.mx", "edu.br", "edu.co", "edu.pk", "edu.tw", "edu.sa", "edu.eg",
+    "edu.ph", "edu.pl", "edu.gr", "edu.ar",
+    "co.uk", "com.au", "co.jp", "co.nz", "co.in", "co.za",
+})
+
+
 def registrable_domain(url: Optional[str]) -> Optional[str]:
     """Return the registrable domain of a URL (e.g. 'nyu.edu' for any nyu.edu host).
 
-    A heuristic last-two-labels approach, which is correct for the U.S. .edu
-    domains this project targets. Returns None if no host can be parsed.
+    Uses the last two labels, falling back to the last three when those two form
+    a known compound public suffix (e.g. 'ac.uk', 'edu.au') so that unrelated
+    institutions under the same suffix are not treated as one domain. Returns
+    None if no host can be parsed, or if the host is itself only a bare public
+    suffix with no registrable part.
     """
     if not url:
         return None
     parsed = urlparse(url if "://" in url else "//" + url)
     host = (parsed.hostname or "").lower()
     labels = [label for label in host.split(".") if label]
-    if len(labels) >= 2:
-        return ".".join(labels[-2:])
-    return labels[0] if labels else None
+    if len(labels) < 2:
+        return labels[0] if labels else None
+    last_two = ".".join(labels[-2:])
+    if last_two in _COMPOUND_PUBLIC_SUFFIXES:
+        # Need the label before the compound suffix to identify the institution.
+        # A bare public suffix (e.g. just "ac.uk") has no registrable part.
+        return ".".join(labels[-3:]) if len(labels) >= 3 else None
+    return last_two
 
 
 def same_registrable_domain(a: Optional[str], b: Optional[str]) -> bool:
@@ -630,7 +659,11 @@ def extract_joint_parent_names(division: Dict[str, Any], current_parent_label: s
         if isinstance(value, list):
             raw_values.extend(value)
         elif value:
-            raw_values.extend(re.split(r"[|,;]\s*", str(value)))
+            # Split only on pipe/semicolon, not comma: parent labels commonly
+            # contain commas (e.g. "College of Arts, Media and Design"), so
+            # comma-splitting would break a name before resolve_parent_qids()
+            # can match it and drop the joint P749 parent.
+            raw_values.extend(re.split(r"[|;]\s*", str(value)))
 
     names: List[str] = []
     seen = set()

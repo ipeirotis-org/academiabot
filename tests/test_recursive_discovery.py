@@ -27,6 +27,23 @@ def test_same_registrable_domain():
     assert same_registrable_domain(None, "https://nyu.edu") is False
 
 
+def test_registrable_domain_handles_compound_public_suffixes():
+    # ac.uk / edu.au are public suffixes: unrelated institutions under them must
+    # not collapse to the same registrable domain.
+    assert registrable_domain("https://www.cs.ox.ac.uk/") == "ox.ac.uk"
+    assert registrable_domain("https://eng.cam.ac.uk/") == "cam.ac.uk"
+    assert registrable_domain("https://sydney.edu.au/") == "sydney.edu.au"
+    # A bare public suffix has no registrable part.
+    assert registrable_domain("https://ac.uk/") is None
+
+
+def test_same_registrable_domain_distinguishes_uk_universities():
+    # Two different UK universities share the ac.uk public suffix but must not be
+    # treated as the same institution.
+    assert same_registrable_domain("https://www.ox.ac.uk", "https://www.cam.ac.uk") is False
+    assert same_registrable_domain("https://www.ox.ac.uk", "https://cs.ox.ac.uk/x") is True
+
+
 def test_classify_search_match_unparented_confirmed_is_orphan():
     # Unparented, but its website confirms it belongs to this institution:
     # adopt the disconnected orphan instead of creating a duplicate.
@@ -250,6 +267,26 @@ def test_extract_joint_parent_names_ignores_current_parent_and_dedupes():
     assert extract_joint_parent_names(division, "School of Arts") == [
         "School of Science",
         "School of Engineering",
+    ]
+
+
+def test_extract_joint_parent_names_preserves_commas_in_labels():
+    # A non-schema provider may return a single string; commas inside a label
+    # must not be treated as a delimiter.
+    division = {"parent_names": "College of Arts, Media and Design"}
+
+    assert extract_joint_parent_names(division, "School of Engineering") == [
+        "College of Arts, Media and Design",
+    ]
+
+
+def test_extract_joint_parent_names_splits_on_pipe_and_semicolon():
+    division = {"joint_with": "School of Science; School of Engineering | School of Law"}
+
+    assert extract_joint_parent_names(division, "School of Arts") == [
+        "School of Science",
+        "School of Engineering",
+        "School of Law",
     ]
 
 
