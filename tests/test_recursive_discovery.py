@@ -305,11 +305,11 @@ def test_extract_joint_parent_names_splits_on_pipe_and_semicolon():
     ]
 
 
-def test_p355_parent_qids_parses_and_is_best_effort(monkeypatch):
+def test_downward_parent_qids_parses_and_is_best_effort(monkeypatch):
     from wikidata_discover import discovery as disc
 
     d = disc.Discovery.__new__(disc.Discovery)
-    d._p355_parents_cache = {}
+    d._downward_parents_cache = {}
     monkeypatch.setattr(
         disc,
         "execute_sparql_bindings",
@@ -318,30 +318,38 @@ def test_p355_parent_qids_parses_and_is_best_effort(monkeypatch):
             {"parent": {"value": "http://www.wikidata.org/entity/Q8"}},
         ],
     )
-    assert d._p355_parent_qids("Q5") == {"Q9", "Q8"}
+    assert d._downward_parent_qids("Q5") == {"Q9", "Q8"}
 
     # A lookup failure yields an empty set rather than aborting the run.
     d2 = disc.Discovery.__new__(disc.Discovery)
-    d2._p355_parents_cache = {}
+    d2._downward_parents_cache = {}
 
     def boom(_q):
         raise RuntimeError("sparql down")
 
     monkeypatch.setattr(disc, "execute_sparql_bindings", boom)
-    assert d2._p355_parent_qids("Q5") == set()
+    assert d2._downward_parent_qids("Q5") == set()
 
 
-def test_parent_resolution_choices_includes_p355_sibling_parents(monkeypatch):
+def test_downward_parent_query_covers_p355_p527_p199():
+    from wikidata_discover.discovery import PARENT_DOWNWARD_SPARQL_TEMPLATE
+
+    for predicate in ("P355", "P527", "P199"):
+        assert f"wdt:{predicate}" in PARENT_DOWNWARD_SPARQL_TEMPLATE
+
+
+def test_parent_resolution_choices_includes_downward_sibling_parents(monkeypatch):
     from wikidata_discover import discovery as disc
 
     d = disc.Discovery.__new__(disc.Discovery)
     d.university_qid = "Q0"
 
     # Current parent Q2 (a department) has no child-side parents, but school Q1
-    # lists it via P355; Q1's children include sibling department Q3, which must
-    # become an available choice for joint-parent resolution.
+    # lists it via a downward edge (P355/P527/P199); Q1's children include
+    # sibling department Q3, which must become an available choice for
+    # joint-parent resolution.
     monkeypatch.setattr(d, "_existing_parent_qids", lambda qid: set())
-    monkeypatch.setattr(d, "_p355_parent_qids", lambda qid: {"Q1"})
+    monkeypatch.setattr(d, "_downward_parent_qids", lambda qid: {"Q1"})
     children = {
         "Q0": [("Q1", "School of X")],
         "Q1": [("Q2", "Department A"), ("Q3", "Department B")],
