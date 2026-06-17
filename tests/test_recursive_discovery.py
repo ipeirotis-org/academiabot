@@ -13,6 +13,21 @@ from wikidata_discover.discovery import (
 )
 
 
+def test_children_queries_cover_downward_hierarchy_predicates():
+    # Existing children can be modeled from the parent side via P355/P527/P199
+    # (has subsidiary / has part / business division), not only child-side
+    # P361/P749. The direct-children queries must read all of them so such units
+    # are matched instead of re-created as duplicates.
+    from wikidata_discover.discovery import (
+        CHILDREN_SPARQL_TEMPLATE,
+        CHILDREN_ALT_LABELS_SPARQL_TEMPLATE,
+    )
+
+    for template in (CHILDREN_SPARQL_TEMPLATE, CHILDREN_ALT_LABELS_SPARQL_TEMPLATE):
+        for predicate in ("P361", "P749", "P355", "P527", "P199"):
+            assert f"wdt:{predicate}" in template
+
+
 def test_registrable_domain_normalizes_subdomains():
     assert registrable_domain("https://www.nyu.edu/") == "nyu.edu"
     assert registrable_domain("https://med.nyu.edu/biology") == "nyu.edu"

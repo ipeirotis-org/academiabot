@@ -31,7 +31,7 @@ SELECT ?child ?childLabel WHERE {
   VALUES ?parent { wd:%s }
   { ?child (wdt:P361|wdt:P749) ?parent . }
   UNION
-  { ?parent wdt:P355 ?child . }
+  { ?parent (wdt:P355|wdt:P527|wdt:P199) ?child . }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
 }
 """
@@ -41,7 +41,7 @@ SELECT ?child (GROUP_CONCAT(DISTINCT ?alt; separator="|") AS ?altLabels) WHERE {
   VALUES ?parent { wd:%s }
   { ?child (wdt:P361|wdt:P749) ?parent . }
   UNION
-  { ?parent wdt:P355 ?child . }
+  { ?parent (wdt:P355|wdt:P527|wdt:P199) ?child . }
   OPTIONAL { ?child skos:altLabel ?alt . FILTER(LANG(?alt)="en") }
 }
 GROUP BY ?child
@@ -99,7 +99,8 @@ class Discovery:
         return self.fetch_entity_info(self.university_qid)
 
     def get_existing_children(self, parent_qid: Optional[str] = None) -> List[Tuple[str, str]]:
-        # fetch only direct children (already-linked via P361/P355/P749)
+        # fetch only direct children: child-side P361/P749 or parent-side
+        # downward links P355/P527/P199 (the hierarchy edges hierarchy.py crawls)
         qid = parent_qid or self.university_qid
         if qid not in self._children_cache:
             try:
