@@ -290,6 +290,54 @@ def test_extract_joint_parent_names_splits_on_pipe_and_semicolon():
     ]
 
 
+def test_p355_parent_qids_parses_and_is_best_effort(monkeypatch):
+    from wikidata_discover import discovery as disc
+
+    d = disc.Discovery.__new__(disc.Discovery)
+    d._p355_parents_cache = {}
+    monkeypatch.setattr(
+        disc,
+        "execute_sparql_bindings",
+        lambda q: [
+            {"parent": {"value": "http://www.wikidata.org/entity/Q9"}},
+            {"parent": {"value": "http://www.wikidata.org/entity/Q8"}},
+        ],
+    )
+    assert d._p355_parent_qids("Q5") == {"Q9", "Q8"}
+
+    # A lookup failure yields an empty set rather than aborting the run.
+    d2 = disc.Discovery.__new__(disc.Discovery)
+    d2._p355_parents_cache = {}
+
+    def boom(_q):
+        raise RuntimeError("sparql down")
+
+    monkeypatch.setattr(disc, "execute_sparql_bindings", boom)
+    assert d2._p355_parent_qids("Q5") == set()
+
+
+def test_parent_resolution_choices_includes_p355_sibling_parents(monkeypatch):
+    from wikidata_discover import discovery as disc
+
+    d = disc.Discovery.__new__(disc.Discovery)
+    d.university_qid = "Q0"
+
+    # Current parent Q2 (a department) has no child-side parents, but school Q1
+    # lists it via P355; Q1's children include sibling department Q3, which must
+    # become an available choice for joint-parent resolution.
+    monkeypatch.setattr(d, "_existing_parent_qids", lambda qid: set())
+    monkeypatch.setattr(d, "_p355_parent_qids", lambda qid: {"Q1"})
+    children = {
+        "Q0": [("Q1", "School of X")],
+        "Q1": [("Q2", "Department A"), ("Q3", "Department B")],
+    }
+    monkeypatch.setattr(d, "get_existing_children", lambda qid: children.get(qid, []))
+
+    choices = d.parent_resolution_choices("Q2", [("Q9", "Program P")])
+    qids = {qid for qid, _ in choices}
+    assert "Q3" in qids
+
+
 def test_resolve_parent_qids_matches_known_choices():
     result = resolve_parent_qids(
         ["School of Science", "Unknown School"],

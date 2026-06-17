@@ -54,6 +54,16 @@ SELECT ?label ?website WHERE {
 }
 """
 
+# Units that declare this entity as a subsidiary from the parent side (P355).
+# hierarchy.py crawls P355 as a parent->child link, so a unit can sit under an
+# organization that only states the relationship from the parent side, with no
+# child-side P749/P361. Used for best-effort joint-parent enrichment.
+PARENT_P355_SPARQL_TEMPLATE = """
+SELECT ?parent WHERE {
+  ?parent wdt:P355 wd:%s .
+}
+"""
+
 
 class Discovery:
     def __init__(self, university_qid: str):
@@ -63,6 +73,7 @@ class Discovery:
         self._alt_labels_cache: Dict[str, Dict[str, List[str]]] = {}
         self._entity_parents_cache: Dict[str, Optional[set]] = {}
         self._entity_website_cache: Dict[str, Optional[str]] = {}
+        self._p355_parents_cache: Dict[str, set] = {}
 
     def fetch_entity_info(self, qid: str) -> tuple[str, str | None]:
         """
@@ -154,6 +165,26 @@ class Discovery:
                 )
                 self._entity_parents_cache[qid] = None
         return self._entity_parents_cache[qid]
+
+    def _p355_parent_qids(self, qid: str) -> set:
+        """Best-effort lookup of units that list this entity as a subsidiary (P355).
+
+        Complements _existing_parent_qids() (which reads only child-side
+        P749/P361) for joint-parent enrichment, so siblings under a parent that
+        declares the relationship only from its own side are still reachable.
+        Used for enrichment only, never for classification. Best-effort: a lookup
+        failure returns an empty set and never aborts the run.
+        """
+        if qid not in self._p355_parents_cache:
+            try:
+                bindings = execute_sparql_bindings(PARENT_P355_SPARQL_TEMPLATE % qid)
+                self._p355_parents_cache[qid] = {
+                    b["parent"]["value"].split("/")[-1] for b in bindings
+                }
+            except Exception as exc:
+                logger.debug("P355 parent lookup for %s failed: %s", qid, exc)
+                self._p355_parents_cache[qid] = set()
+        return self._p355_parents_cache[qid]
 
     def _entity_website(self, qid: str) -> Optional[str]:
         """Cached, best-effort lookup of an entity's official website (P856)."""
@@ -466,6 +497,12 @@ class Discovery:
             # failure here must not abort the run.
             enrichment_parents = {self.university_qid}
             enrichment_parents.update(self._existing_parent_qids(parent_qid) or set())
+            # Also include parents that declare this unit only from the parent
+            # side via P355, so sibling units under such a parent are available
+            # for joint-parent matching even when the child-side P749/P361 link
+            # is absent. Best-effort and enrichment-only; never affects
+            # classification.
+            enrichment_parents.update(self._p355_parent_qids(parent_qid))
             for enrichment_qid in enrichment_parents:
                 try:
                     choices.extend(self.get_existing_children(enrichment_qid))
