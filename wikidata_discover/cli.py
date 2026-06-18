@@ -20,9 +20,22 @@ def run_cli():
     )
     d.add_argument("--llm", dest="llm_model", default=None)
     d.add_argument("--debug", action="store_true", help="Enable debug logging")
+    d.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Discover children recursively. Equivalent to --depth 3 unless --depth is set.",
+    )
+    d.add_argument(
+        "--depth",
+        type=int,
+        default=None,
+        help="Hierarchy depth to discover. 1=schools only, 2=schools+departments, 3=programs/labs/centers.",
+    )
+    d.add_argument("--no-bq", action="store_true", help="Skip BigQuery writes")
 
     # harvest subcommand
     h = sub.add_parser("harvest", help="Fetch all U.S. universities to JSON")
+    h.add_argument("--no-bq", action="store_true", help="Skip BigQuery writes")
 
     args = parser.parse_args()
 
@@ -31,8 +44,11 @@ def run_cli():
             logging.basicConfig(level=logging.DEBUG, force=True)
         if args.llm_model:
             config.LLM_MODEL = args.llm_model
+        depth = args.depth if args.depth is not None else (3 if args.recursive else 1)
+        if depth < 1:
+            parser.error("--depth must be 1 or greater")
         for qid in args.university_qids:
-            Discovery(qid).discover_missing()
+            Discovery(qid).discover_missing(depth=depth, write_bq=not args.no_bq)
 
     elif args.command == "harvest":
-        fetch_us_universities()
+        fetch_us_universities(write_bq=not args.no_bq)

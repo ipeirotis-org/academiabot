@@ -13,6 +13,8 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-6")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
+GCP_PROJECT = os.getenv("GCP_PROJECT", "wikidata-academia")
+BQ_DATASET = os.getenv("BQ_DATASET", "academiabot")
 
 console = Console()
 

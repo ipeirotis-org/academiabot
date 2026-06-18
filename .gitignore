@@ -67,3 +67,11 @@ credentials.json
 credentials_clean.json
 /tmp/
 
+# Generated discovery artifacts (output of discover runs)
+/missing_divisions_*.csv
+/quickstatements_*.qs
+/organization_llm_only.csv
+wikidata_discover/results/cache/
+wikidata_discover/results/reports/
+wikidata_discover/results/trees/
+
