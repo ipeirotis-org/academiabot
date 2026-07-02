@@ -18,12 +18,9 @@ from wikidata_discover.discovery import Discovery
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path(__file__).parent / "results"
-# The harvester writes ``universities_us.json`` to the current working directory;
-# an older copy also lives under results/. Check both when falling back to local.
-LOCAL_UNIVERSITY_PATHS = (
-    Path("universities_us.json"),
-    RESULTS_DIR / "universities_us.json",
-)
+# The harvester writes ``universities_us.json`` (U.S.) or
+# ``universities_<country_qid>.json`` (other countries) to the working directory.
+LOCAL_UNIVERSITY_GLOB = "universities_*.json"
 
 
 def parse_universities_payload(data: Any) -> List[Tuple[str, Optional[str]]]:
@@ -82,20 +79,31 @@ def _qid_from_value(value: Any) -> Optional[str]:
     return text or None
 
 
-def load_local_universities() -> List[Tuple[str, Optional[str]]]:
-    """Load the university list from the first available local harvest file."""
-    for path in LOCAL_UNIVERSITY_PATHS:
-        if path.exists():
-            try:
-                data = json.loads(path.read_text())
-            except (json.JSONDecodeError, OSError) as exc:
-                logger.warning("Could not read local universities file %s: %s", path, exc)
-                continue
-            pairs = parse_universities_payload(data)
-            if pairs:
-                logger.info("Loaded %d universities from %s", len(pairs), path)
-                return pairs
-    return []
+def load_local_universities(
+    directory: Optional[Path] = None,
+) -> List[Tuple[str, Optional[str]]]:
+    """Load universities from local harvest files in the working directory.
+
+    Globs ``universities_*.json`` so a country-specific harvest
+    (``harvest --country <QID>`` -> ``universities_<QID>.json``) also feeds
+    ``discover --batch --no-bq``, not just the U.S. file. Multiple country files
+    are combined; duplicate QIDs are de-duplicated later in ``select_pending``.
+    The package ``results/`` directory is intentionally not scanned to avoid
+    pulling in stale tracked snapshots.
+    """
+    base = Path(directory) if directory is not None else Path.cwd()
+    pairs: List[Tuple[str, Optional[str]]] = []
+    for path in sorted(base.glob(LOCAL_UNIVERSITY_GLOB)):
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Could not read local universities file %s: %s", path, exc)
+            continue
+        parsed = parse_universities_payload(data)
+        if parsed:
+            logger.info("Loaded %d universities from %s", len(parsed), path)
+            pairs.extend(parsed)
+    return pairs
 
 
 def load_universities(use_bq: bool = True) -> List[Tuple[str, Optional[str]]]:

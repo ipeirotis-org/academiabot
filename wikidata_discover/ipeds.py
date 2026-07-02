@@ -53,7 +53,7 @@ def parse_ipeds_csv(source: Any) -> List[Dict[str, Any]]:
     Returns rows of {ipeds_id, name, website}. Rows without a usable UNITID are
     skipped. Column lookup is case-insensitive to tolerate layout variations.
     """
-    if isinstance(source, (str, Path)) and Path(str(source)).exists():
+    if isinstance(source, (str, Path)) and _is_existing_path(source):
         # IPEDS files are commonly latin-1 encoded.
         frame = pd.read_csv(source, dtype=str, encoding="latin-1")
     elif isinstance(source, str):
@@ -62,6 +62,15 @@ def parse_ipeds_csv(source: Any) -> List[Dict[str, Any]]:
         frame = pd.read_csv(source, dtype=str)
 
     return _rows_from_frame(frame)
+
+
+def _is_existing_path(source: Any) -> bool:
+    """True if source names an existing file. Raw CSV text (too long or with
+    newlines) is not a path; guard against OSError on such values."""
+    try:
+        return Path(source).exists()
+    except OSError:
+        return False
 
 
 def _rows_from_frame(frame: pd.DataFrame) -> List[Dict[str, Any]]:

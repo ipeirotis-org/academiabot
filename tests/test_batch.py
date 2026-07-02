@@ -1,6 +1,10 @@
 """Unit tests for batch discovery helpers (pure logic, no network/BQ)."""
 
-from wikidata_discover.batch import parse_universities_payload, select_pending
+from wikidata_discover.batch import (
+    load_local_universities,
+    parse_universities_payload,
+    select_pending,
+)
 
 
 def test_parse_pairs_format():
@@ -40,6 +44,17 @@ def test_parse_skips_rows_without_qid():
 
 def test_parse_non_list_returns_empty():
     assert parse_universities_payload({"not": "a list"}) == []
+
+
+def test_load_local_universities_globs_country_files(tmp_path):
+    import json
+    (tmp_path / "universities_us.json").write_text(json.dumps([["Q49210", "NYU"]]))
+    (tmp_path / "universities_Q145.json").write_text(
+        json.dumps([["Q160302", "University of Oxford"]])
+    )
+    pairs = load_local_universities(directory=tmp_path)
+    qids = {qid for qid, _ in pairs}
+    assert qids == {"Q49210", "Q160302"}  # both US and non-US harvests picked up
 
 
 def test_select_pending_skips_processed():

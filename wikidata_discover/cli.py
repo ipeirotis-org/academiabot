@@ -1,5 +1,6 @@
 import argparse
 import logging
+from pathlib import Path
 from wikidata_discover.discovery import Discovery
 import wikidata_discover.config as config
 
@@ -118,7 +119,6 @@ def run_cli():
     elif args.command == "qs-batch":
         if getattr(args, "debug", False):
             logging.basicConfig(level=logging.DEBUG, force=True)
-        from pathlib import Path
         from wikidata_discover.batch_qs import generate_batch_quickstatements
         generate_batch_quickstatements(
             use_bq=not args.no_bq,
@@ -129,7 +129,6 @@ def run_cli():
     elif args.command == "ipeds":
         if getattr(args, "debug", False):
             logging.basicConfig(level=logging.DEBUG, force=True)
-        from pathlib import Path
         from wikidata_discover.ipeds import run_ipeds_reconciliation
         run_ipeds_reconciliation(
             csv_path=args.csv,
