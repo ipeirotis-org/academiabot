@@ -53,6 +53,19 @@ def run_cli():
     h = sub.add_parser("harvest", help="Fetch all U.S. universities to JSON")
     h.add_argument("--no-bq", action="store_true", help="Skip BigQuery writes")
 
+    # qs-batch subcommand: aggregate discovered units into one QuickStatements file
+    q = sub.add_parser(
+        "qs-batch",
+        help="Aggregate all discovered units into a single QuickStatements batch",
+    )
+    q.add_argument(
+        "--no-bq",
+        action="store_true",
+        help="Aggregate from local missing_divisions_*.csv instead of BigQuery.",
+    )
+    q.add_argument("--out", default=None, help="Output .qs file path (optional).")
+    q.add_argument("--debug", action="store_true", help="Enable debug logging")
+
     args = parser.parse_args()
 
     if args.command == "discover":
@@ -81,3 +94,13 @@ def run_cli():
 
     elif args.command == "harvest":
         fetch_us_universities(write_bq=not args.no_bq)
+
+    elif args.command == "qs-batch":
+        if getattr(args, "debug", False):
+            logging.basicConfig(level=logging.DEBUG, force=True)
+        from pathlib import Path
+        from wikidata_discover.batch_qs import generate_batch_quickstatements
+        generate_batch_quickstatements(
+            use_bq=not args.no_bq,
+            out_path=Path(args.out) if args.out else None,
+        )
