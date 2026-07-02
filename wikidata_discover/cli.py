@@ -64,6 +64,11 @@ def run_cli():
         help="Aggregate from local missing_divisions_*.csv instead of BigQuery.",
     )
     q.add_argument("--out", default=None, help="Output .qs file path (optional).")
+    q.add_argument(
+        "--diff",
+        action="store_true",
+        help="Only emit units not already generated in a previous batch (needs BigQuery).",
+    )
     q.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     # ipeds subcommand: reconcile an IPEDS HD CSV against Wikidata by P1771
@@ -113,6 +118,7 @@ def run_cli():
         generate_batch_quickstatements(
             use_bq=not args.no_bq,
             out_path=Path(args.out) if args.out else None,
+            diff=args.diff,
         )
 
     elif args.command == "ipeds":

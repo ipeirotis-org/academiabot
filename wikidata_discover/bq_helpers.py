@@ -61,6 +61,7 @@ TABLE_SCHEMAS = {
     "quickstatements_batches": [
         ("run_id", "STRING", "REQUIRED"),
         ("university_qid", "STRING", "NULLABLE"),
+        ("unit_key", "STRING", "NULLABLE"),
         ("qs_line", "STRING", "NULLABLE"),
         ("uploaded_at", "TIMESTAMP", "NULLABLE"),
     ],
@@ -297,6 +298,27 @@ def try_get_exportable_units() -> Optional[List[Dict[str, Any]]]:
 
 def try_save_quickstatements_batch(rows: List[Dict[str, Any]]) -> bool:
     return _try_save(lambda: save_quickstatements_batch(rows), "quickstatements batch")
+
+
+def get_emitted_unit_keys() -> set[str]:
+    """Return the set of unit_keys already emitted in previous QS batches."""
+    ensure_dataset_and_tables()
+    client = _client()
+    query = f"""
+    SELECT DISTINCT unit_key
+    FROM `{_table_id("quickstatements_batches")}`
+    WHERE unit_key IS NOT NULL
+    """
+    return {row.unit_key for row in client.query(query).result() if row.unit_key}
+
+
+def try_get_emitted_unit_keys() -> set[str]:
+    """Best-effort read of previously-emitted unit keys; empty set on failure."""
+    try:
+        return get_emitted_unit_keys()
+    except Exception as exc:
+        logger.warning("Could not read emitted unit keys from BigQuery: %s", exc)
+        return set()
 
 
 def try_get_processed_qids(min_depth: Optional[int] = None) -> set[str]:

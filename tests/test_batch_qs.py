@@ -4,7 +4,10 @@ from wikidata_discover.batch_qs import (
     aggregate_quickstatements,
     bq_unit_to_export_row,
     build_attributed_lines,
+    filter_new_rows,
+    load_local_export_rows,
     quickstatements_batch_rows,
+    unit_key,
 )
 
 
@@ -71,14 +74,14 @@ def test_aggregate_orders_schools_before_departments():
     assert text.index("School of Arts") < text.index("Dept of History")
 
 
-def test_attribution_tags_lines_with_university():
+def test_attribution_tags_lines_with_university_and_key():
     a = _missing_school("School A", "Q100")
     b = _missing_school("School B", "Q200")
     _, attributed = build_attributed_lines([a, b])
-    universities = {u for u, _ in attributed}
+    universities = {u for u, _, _ in attributed}
     assert universities == {"Q100", "Q200"}
-    # Every recorded line is non-blank.
-    assert all(line.strip() for _, line in attributed)
+    # Every recorded line is non-blank and carries a unit key.
+    assert all(line.strip() and key for _, key, line in attributed)
 
 
 def test_local_row_without_parent_qid_falls_back_to_university():
@@ -118,12 +121,55 @@ def test_bq_adapter_carries_existing_parent_qids_to_suppress_duplicates():
 
 
 def test_quickstatements_batch_rows_shape():
-    attributed = [("Q1", "CREATE"), ("Q1", 'LAST|Len|"School A"')]
+    attributed = [("Q1", "create|Q1|a|Q1", "CREATE"),
+                  ("Q1", "create|Q1|a|Q1", 'LAST|Len|"School A"')]
     rows = quickstatements_batch_rows("batch-123", attributed)
     assert rows[0] == {
         "run_id": "batch-123",
         "university_qid": "Q1",
+        "unit_key": "create|Q1|a|Q1",
         "qs_line": "CREATE",
         "uploaded_at": None,
     }
     assert len(rows) == 2
+
+
+def test_unit_key_stable_for_same_missing_unit():
+    a = _missing_school("School of Law", "Q1", parent_qid="Q10")
+    b = _missing_school("School of Law", "Q1", parent_qid="Q10")
+    assert unit_key(a) == unit_key(b)
+
+
+def test_unit_key_differs_by_parent_and_university():
+    base = _missing_school("School of Law", "Q1", parent_qid="Q10")
+    other_parent = _missing_school("School of Law", "Q1", parent_qid="Q20")
+    other_uni = _missing_school("School of Law", "Q2", parent_qid="Q10")
+    assert unit_key(base) != unit_key(other_parent)
+    assert unit_key(base) != unit_key(other_uni)
+
+
+def test_link_unit_key_uses_matched_qid():
+    row = {"status": "orphan", "qid": "Q99", "parent_qid": "Q1", "name": "X"}
+    assert unit_key(row) == "link|Q99|Q1"
+
+
+def test_load_local_export_rows_scans_only_given_dir(tmp_path):
+    (tmp_path / "missing_divisions_Q1.csv").write_text(
+        "name,status,parent_qid,university_qid,level\nSchool A,missing,Q1,Q1,1\n"
+    )
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "missing_divisions_Q2.csv").write_text(
+        "name,status,parent_qid,university_qid,level\nStale School,missing,Q2,Q2,1\n"
+    )
+    rows = load_local_export_rows(directories=[tmp_path])
+    names = {r["name"] for r in rows}
+    assert names == {"School A"}  # the 'other' dir (stale) is not scanned
+
+
+def test_filter_new_rows_drops_already_emitted():
+    a = _missing_school("School A", "Q1", parent_qid="Q1")
+    b = _missing_school("School B", "Q1", parent_qid="Q1")
+    emitted = {unit_key(a)}
+    remaining = filter_new_rows([a, b], emitted)
+    assert remaining == [b]

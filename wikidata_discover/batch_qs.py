@@ -16,6 +16,7 @@ import pandas as pd
 
 from wikidata_discover import bq_helpers
 from wikidata_discover.config import console
+from wikidata_discover.discovery import normalize_name
 from wikidata_discover.to_qs_wikidata import build_quickstatements
 
 logger = logging.getLogger(__name__)
@@ -70,19 +71,36 @@ def _level_key(row: Dict[str, Any]) -> tuple:
     return (level_int, str(row.get("university_qid") or ""))
 
 
+def unit_key(row: Dict[str, Any]) -> str:
+    """Stable identity for a discovered unit, used to diff against prior batches.
+
+    CREATE units are keyed by (university, normalized name, parent); link units
+    (orphan / cross-listed) by (matched QID, parent). The same unit rediscovered
+    in a later run therefore produces the same key, so a diff can skip it.
+    """
+    status = str(row.get("status") or "").strip().lower()
+    university = str(row.get("university_qid") or "")
+    parent = str(row.get("parent_qid") or "")
+    if status in ("orphan", "exists_orphan", "linked_joint"):
+        qid = str(row.get("qid") or row.get("matched_qid") or "")
+        return f"link|{qid}|{parent}"
+    name = normalize_name(str(row.get("name") or row.get("unit_name") or ""))
+    return f"create|{university}|{name}|{parent}"
+
+
 def build_attributed_blocks(
     export_rows: List[Dict[str, Any]],
-) -> List[Tuple[Optional[str], List[str]]]:
-    """Build the level-ordered QS batch as (university_qid, block_lines) pairs.
+) -> List[Tuple[Dict[str, Any], List[str]]]:
+    """Build the level-ordered QS batch as (source_row, block_lines) pairs.
 
     Rows are sorted by hierarchy level (schools before departments) and built one
-    at a time so each block keeps the university_qid it came from. Building per
-    row is equivalent to one ``build_quickstatements`` call because rows are
-    independent, and block-level attribution lets validation drop a bad block
-    without losing the university tag on the survivors.
+    at a time so each block keeps its source row. Building per row is equivalent
+    to one ``build_quickstatements`` call because rows are independent, and
+    keeping the row lets validation drop a bad block and diff recording recover
+    the university QID and unit key of the survivors.
     """
     ordered = sorted(export_rows, key=_level_key)
-    blocks: List[Tuple[Optional[str], List[str]]] = []
+    blocks: List[Tuple[Dict[str, Any], List[str]]] = []
     for row in ordered:
         # Use the row's own university as the fallback parent so local CSVs that
         # carry university_qid but no parent_qid still emit LAST|P749|<university>.
@@ -92,29 +110,39 @@ def build_attributed_blocks(
             university_label=str(row.get("university_label") or ""),
         )
         if any(line.strip() for line in lines):
-            blocks.append((row.get("university_qid"), lines))
+            blocks.append((row, lines))
     return blocks
 
 
 def flatten_blocks(
-    blocks: List[Tuple[Optional[str], List[str]]],
-) -> Tuple[List[str], List[Tuple[Optional[str], str]]]:
-    """Flatten attributed blocks into (all_lines, [(university_qid, line), ...])."""
+    blocks: List[Tuple[Dict[str, Any], List[str]]],
+) -> Tuple[List[str], List[Tuple[Optional[str], str, str]]]:
+    """Flatten blocks into (all_lines, [(university_qid, unit_key, line), ...])."""
     all_lines: List[str] = []
-    attributed: List[Tuple[Optional[str], str]] = []
-    for university_qid, block_lines in blocks:
+    attributed: List[Tuple[Optional[str], str, str]] = []
+    for row, block_lines in blocks:
+        university_qid = row.get("university_qid")
+        key = unit_key(row)
         for line in block_lines:
             all_lines.append(line)
             if line.strip():
-                attributed.append((university_qid, line))
+                attributed.append((university_qid, key, line))
     return all_lines, attributed
 
 
 def build_attributed_lines(
     export_rows: List[Dict[str, Any]],
-) -> Tuple[List[str], List[Tuple[Optional[str], str]]]:
-    """Build the level-ordered QS batch plus per-line university attribution."""
+) -> Tuple[List[str], List[Tuple[Optional[str], str, str]]]:
+    """Build the level-ordered QS batch plus per-line (university, key) attribution."""
     return flatten_blocks(build_attributed_blocks(export_rows))
+
+
+def filter_new_rows(
+    export_rows: List[Dict[str, Any]],
+    emitted_keys: set,
+) -> List[Dict[str, Any]]:
+    """Keep only rows whose unit_key was not already emitted in a prior batch."""
+    return [row for row in export_rows if unit_key(row) not in emitted_keys]
 
 
 def aggregate_quickstatements(export_rows: List[Dict[str, Any]]) -> List[str]:
@@ -136,16 +164,25 @@ def load_export_rows(use_bq: bool = True) -> List[Dict[str, Any]]:
     return load_local_export_rows()
 
 
-def load_local_export_rows() -> List[Dict[str, Any]]:
+def load_local_export_rows(
+    directories: Optional[List[Path]] = None,
+) -> List[Dict[str, Any]]:
     """Aggregate export rows from local ``missing_divisions_*.csv`` files.
+
+    Scans the current working directory only by default, where ``discover``
+    writes fresh per-university CSVs. The package ``results/`` directory is
+    intentionally NOT scanned: it holds tracked historical CSVs that would
+    otherwise pull stale, unrelated universities into a local batch. Pass an
+    explicit ``directories`` list to aggregate from elsewhere.
 
     These CSVs are already written in export-row shape by discovery, so no status
     remapping is needed; only NaN cells are blanked for clean QS output.
     """
+    search_dirs = directories if directories is not None else [Path.cwd()]
     rows: List[Dict[str, Any]] = []
     seen_paths = set()
-    for directory in (Path.cwd(), RESULTS_DIR):
-        for csv_path in sorted(directory.glob("missing_divisions_*.csv")):
+    for directory in search_dirs:
+        for csv_path in sorted(Path(directory).glob("missing_divisions_*.csv")):
             resolved = csv_path.resolve()
             if resolved in seen_paths:
                 continue
@@ -160,25 +197,25 @@ def load_local_export_rows() -> List[Dict[str, Any]]:
 
 
 def _validate_batch_blocks(
-    blocks: List[Tuple[Optional[str], List[str]]],
-) -> List[Tuple[Optional[str], List[str]]]:
+    blocks: List[Tuple[Dict[str, Any], List[str]]],
+) -> List[Tuple[Dict[str, Any], List[str]]]:
     """Drop blocks that fail the ShEx schema, warning about each dropped unit."""
     from wikidata_discover.shex_validation import parse_qs_blocks, validate_block
 
-    survivors: List[Tuple[Optional[str], List[str]]] = []
+    survivors: List[Tuple[Dict[str, Any], List[str]]] = []
     dropped = 0
-    for university_qid, block_lines in blocks:
+    for row, block_lines in blocks:
         parsed = parse_qs_blocks(block_lines)
         violations = [v for block in parsed for v in validate_block(block)]
         if violations:
             dropped += 1
             describe = parsed[0].describe() if parsed else "(empty)"
             console.print(
-                f"[yellow]ShEx dropped {describe} ({university_qid}): "
+                f"[yellow]ShEx dropped {describe} ({row.get('university_qid')}): "
                 f"{'; '.join(violations)}[/yellow]"
             )
             continue
-        survivors.append((university_qid, block_lines))
+        survivors.append((row, block_lines))
     if dropped:
         console.print(
             f"[yellow]ShEx validation dropped {dropped} of {len(blocks)} block(s).[/yellow]"
@@ -188,10 +225,11 @@ def _validate_batch_blocks(
 
 def quickstatements_batch_rows(
     batch_id: str,
-    attributed: List[Tuple[Optional[str], str]],
+    attributed: List[Tuple[Optional[str], str, str]],
 ) -> List[Dict[str, Any]]:
     """Shape attributed QS lines into ``quickstatements_batches`` rows.
 
+    unit_key is recorded so a later diff run can skip units already emitted.
     uploaded_at is left null: these lines are generated, not yet submitted to
     Wikidata. The batch_id (stored in run_id) groups all lines of one batch.
     """
@@ -199,10 +237,11 @@ def quickstatements_batch_rows(
         {
             "run_id": batch_id,
             "university_qid": university_qid,
+            "unit_key": key,
             "qs_line": line,
             "uploaded_at": None,
         }
-        for university_qid, line in attributed
+        for university_qid, key, line in attributed
     ]
 
 
@@ -210,15 +249,35 @@ def generate_batch_quickstatements(
     use_bq: bool = True,
     out_path: Optional[Path] = None,
     validate: bool = True,
+    diff: bool = False,
 ) -> Dict[str, Any]:
     """Generate a single aggregated QuickStatements batch across all universities.
 
     Returns a summary dict with the batch id, unit/line counts, and output path.
     When ``validate`` is True, blocks failing the ShEx schema are dropped before
-    the file is written and recorded.
+    the file is written and recorded. When ``diff`` is True, units already
+    emitted in a previous batch (recorded in ``quickstatements_batches``) are
+    skipped so only genuinely new statements are produced.
     """
     batch_id = str(uuid.uuid4())
     export_rows = load_export_rows(use_bq=use_bq)
+
+    skipped_existing = 0
+    if diff and use_bq:
+        emitted_keys = bq_helpers.try_get_emitted_unit_keys()
+        before = len(export_rows)
+        export_rows = filter_new_rows(export_rows, emitted_keys)
+        skipped_existing = before - len(export_rows)
+        console.print(
+            f"[dim]Diff mode: skipped {skipped_existing} unit(s) already emitted "
+            f"in a previous batch.[/dim]"
+        )
+    elif diff and not use_bq:
+        console.print(
+            "[yellow]Diff mode needs BigQuery to read prior batches; "
+            "ignoring --diff under --no-bq.[/yellow]"
+        )
+
     blocks = build_attributed_blocks(export_rows)
 
     if validate:
@@ -249,6 +308,7 @@ def generate_batch_quickstatements(
         "batch_id": batch_id,
         "units": len(export_rows),
         "lines": len(all_lines),
+        "skipped_existing": skipped_existing,
         "path": str(path),
         "saved_to_bq": saved_to_bq,
     }
