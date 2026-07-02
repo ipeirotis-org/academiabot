@@ -48,6 +48,7 @@ def export_quickstatements(
     university_label: str,
     max_items: Optional[int] = None,
     out_path: Optional[Path] = None,
+    validate: bool = True,
 ) -> Path:
     """
     Export missing or orphan divisions into QuickStatements format.
@@ -55,6 +56,8 @@ def export_quickstatements(
     Args:
         max_items: Optional cap on how many items to export. None means all.
         out_path: Optional explicit output path.
+        validate: When True, run ShEx validation and drop any block that fails
+            the schema (shapes/academia.shex) before writing.
     """
     qs_lines = build_quickstatements(
         missing,
@@ -63,10 +66,29 @@ def export_quickstatements(
         max_items=max_items,
     )
 
+    if validate:
+        qs_lines = validate_and_report(qs_lines)
+
     path = out_path or Path(f"quickstatements_{university_qid}.qs")
     path.write_text("\n".join(qs_lines))
     console.print(f"[green]QuickStatements file written to {path}[/green]")
     return path
+
+
+def validate_and_report(qs_lines: List[str]) -> List[str]:
+    """Validate QS lines against the ShEx schema, warn on drops, return valid lines."""
+    # Imported here to avoid a circular import (shex_validation imports TYPE_MAP).
+    from wikidata_discover.shex_validation import filter_valid_quickstatements
+
+    valid_lines, report = filter_valid_quickstatements(qs_lines)
+    if report.invalid:
+        console.print(
+            f"[yellow]ShEx validation dropped {len(report.invalid)} of "
+            f"{report.total_blocks} block(s):[/yellow]"
+        )
+        for _, describe, violations in report.invalid:
+            console.print(f"[yellow]  - {describe}: {'; '.join(violations)}[/yellow]")
+    return valid_lines
 
 
 def build_quickstatements(
