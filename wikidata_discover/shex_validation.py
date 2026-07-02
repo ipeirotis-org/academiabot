@@ -105,8 +105,12 @@ def _looks_like_url(value: str) -> bool:
     return text.startswith("http://") or text.startswith("https://")
 
 
-def validate_block(block: QSBlock) -> List[str]:
-    """Return a list of constraint violations for a single block (empty if valid)."""
+def hard_violations(block: QSBlock) -> List[str]:
+    """Return only violations that must invalidate a block (label, P31, P749).
+
+    An optional bad P856 is not included here: it should not suppress an
+    otherwise valid CREATE/link. See ``website_violations``.
+    """
     violations: List[str] = []
 
     if block.is_create:
@@ -123,11 +127,31 @@ def validate_block(block: QSBlock) -> List[str]:
     if not block.properties.get("P749"):
         violations.append("missing P749 (parent organization)")
 
-    for website in block.properties.get("P856", []):
-        if not _looks_like_url(website):
-            violations.append(f"P856 website is not a URL: {website}")
-
     return violations
+
+
+def website_violations(block: QSBlock) -> List[str]:
+    """Return soft violations for malformed optional P856 websites."""
+    return [
+        f"P856 website is not a URL: {website}"
+        for website in block.properties.get("P856", [])
+        if not _looks_like_url(website)
+    ]
+
+
+def validate_block(block: QSBlock) -> List[str]:
+    """Return all constraint violations for a block (hard + soft; empty if clean)."""
+    return hard_violations(block) + website_violations(block)
+
+
+def _is_bad_website_line(line: str) -> bool:
+    parts = line.split("|")
+    return len(parts) >= 3 and parts[1] == "P856" and not _looks_like_url(parts[2])
+
+
+def strip_bad_website_lines(lines: List[str]) -> List[str]:
+    """Drop only the malformed P856 lines, keeping the rest of the block intact."""
+    return [line for line in lines if not _is_bad_website_line(line)]
 
 
 @dataclass
@@ -168,11 +192,13 @@ def filter_valid_quickstatements(
     valid_lines: List[str] = []
     invalid: List[Tuple[int, str, List[str]]] = []
     for index, block in enumerate(blocks):
-        violations = validate_block(block)
-        if violations:
-            invalid.append((index, block.describe(), violations))
+        hard = hard_violations(block)
+        if hard:
+            invalid.append((index, block.describe(), hard))
             continue
-        valid_lines.extend(block.lines)
+        # Keep the block, but drop any malformed optional P856 line so a bad
+        # website does not suppress an otherwise valid unit.
+        valid_lines.extend(strip_bad_website_lines(block.lines))
         valid_lines.append("")
     report = ValidationReport(
         total_blocks=len(blocks),

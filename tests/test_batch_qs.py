@@ -2,9 +2,11 @@
 
 from wikidata_discover.batch_qs import (
     aggregate_quickstatements,
+    block_diff_keys,
     bq_unit_to_export_row,
+    build_attributed_blocks,
     build_attributed_lines,
-    filter_new_rows,
+    filter_new_blocks,
     load_local_export_rows,
     quickstatements_batch_rows,
     unit_key,
@@ -148,11 +150,6 @@ def test_unit_key_differs_by_parent_and_university():
     assert unit_key(base) != unit_key(other_uni)
 
 
-def test_link_unit_key_uses_matched_qid():
-    row = {"status": "orphan", "qid": "Q99", "parent_qid": "Q1", "name": "X"}
-    assert unit_key(row) == "link|Q99|Q1"
-
-
 def test_load_local_export_rows_scans_only_given_dir(tmp_path):
     (tmp_path / "missing_divisions_Q1.csv").write_text(
         "name,status,parent_qid,university_qid,level\nSchool A,missing,Q1,Q1,1\n"
@@ -167,9 +164,32 @@ def test_load_local_export_rows_scans_only_given_dir(tmp_path):
     assert names == {"School A"}  # the 'other' dir (stale) is not scanned
 
 
-def test_filter_new_rows_drops_already_emitted():
+def test_filter_new_blocks_drops_fully_emitted_create():
     a = _missing_school("School A", "Q1", parent_qid="Q1")
     b = _missing_school("School B", "Q1", parent_qid="Q1")
-    emitted = {unit_key(a)}
-    remaining = filter_new_rows([a, b], emitted)
-    assert remaining == [b]
+    blocks = build_attributed_blocks([a, b])
+    emitted = block_diff_keys(*blocks[0])  # everything block A would emit
+    survivors, skipped = filter_new_blocks(blocks, emitted)
+    assert skipped == 1
+    survivor_names = {r.get("name") for r, _ in survivors}
+    assert survivor_names == {"School B"}
+
+
+def test_filter_new_blocks_keeps_link_with_new_joint_parent():
+    # An orphan Q99 under Q1 also cross-listed under joint parents. A first batch
+    # emitted P749 to Q2; a later run adds Q3 as a new joint parent.
+    row = {
+        "status": "orphan",
+        "name": "Joint Program",
+        "qid": "Q99",
+        "parent_qid": "Q1",
+        "additional_parent_qids": "Q2|Q3",
+        "level": 2,
+        "university_qid": "Q1",
+    }
+    blocks = build_attributed_blocks([row])
+    keys = block_diff_keys(*blocks[0])
+    assert "link|Q99|Q3" in keys
+    emitted = {"link|Q99|Q1", "link|Q99|Q2"}  # Q3 not yet emitted
+    survivors, skipped = filter_new_blocks(blocks, emitted)
+    assert skipped == 0  # the new Q3 link keeps the block

@@ -72,20 +72,36 @@ def _level_key(row: Dict[str, Any]) -> tuple:
 
 
 def unit_key(row: Dict[str, Any]) -> str:
-    """Stable identity for a discovered unit, used to diff against prior batches.
+    """Stable CREATE identity for a discovered unit (university, name, parent).
 
-    CREATE units are keyed by (university, normalized name, parent); link units
-    (orphan / cross-listed) by (matched QID, parent). The same unit rediscovered
-    in a later run therefore produces the same key, so a diff can skip it.
+    Used both as the diff key for a new entity (so we never create it twice) and
+    as the fallback key for non-P749 lines. Link statements are keyed per emitted
+    P749 target instead; see ``line_diff_key``.
     """
-    status = str(row.get("status") or "").strip().lower()
     university = str(row.get("university_qid") or "")
     parent = str(row.get("parent_qid") or "")
-    if status in ("orphan", "exists_orphan", "linked_joint"):
-        qid = str(row.get("qid") or row.get("matched_qid") or "")
-        return f"link|{qid}|{parent}"
     name = normalize_name(str(row.get("name") or row.get("unit_name") or ""))
     return f"create|{university}|{name}|{parent}"
+
+
+def line_diff_key(row: Dict[str, Any], line: str) -> str:
+    """Diff key for a single emitted line.
+
+    An added P749 on an existing entity is keyed by its actual (subject, target)
+    so that a *new* joint parent produces a new key and is not filtered out. All
+    other lines (CREATE label/type/website and a new entity's own P749s, whose
+    subject is LAST) share the unit's CREATE identity, so a create is emitted at
+    most once.
+    """
+    parts = line.split("|")
+    if len(parts) >= 3 and parts[1] == "P749" and parts[0] != "LAST":
+        return f"link|{parts[0]}|{parts[2]}"
+    return unit_key(row)
+
+
+def block_diff_keys(row: Dict[str, Any], block_lines: List[str]) -> set:
+    """All diff keys a block would emit (one per statement target + its identity)."""
+    return {line_diff_key(row, line) for line in block_lines if line.strip()}
 
 
 def build_attributed_blocks(
@@ -122,11 +138,10 @@ def flatten_blocks(
     attributed: List[Tuple[Optional[str], str, str]] = []
     for row, block_lines in blocks:
         university_qid = row.get("university_qid")
-        key = unit_key(row)
         for line in block_lines:
             all_lines.append(line)
             if line.strip():
-                attributed.append((university_qid, key, line))
+                attributed.append((university_qid, line_diff_key(row, line), line))
     return all_lines, attributed
 
 
@@ -137,12 +152,25 @@ def build_attributed_lines(
     return flatten_blocks(build_attributed_blocks(export_rows))
 
 
-def filter_new_rows(
-    export_rows: List[Dict[str, Any]],
+def filter_new_blocks(
+    blocks: List[Tuple[Dict[str, Any], List[str]]],
     emitted_keys: set,
-) -> List[Dict[str, Any]]:
-    """Keep only rows whose unit_key was not already emitted in a prior batch."""
-    return [row for row in export_rows if unit_key(row) not in emitted_keys]
+) -> Tuple[List[Tuple[Dict[str, Any], List[str]]], int]:
+    """Keep blocks that emit at least one statement not already in a prior batch.
+
+    A block is retained when any of its diff keys is new. Already-emitted
+    statements it re-emits (e.g. a P749 to a parent added in an earlier batch)
+    are harmless: QuickStatements skips statements a Wikidata entity already has.
+    Returns (kept_blocks, skipped_count).
+    """
+    survivors: List[Tuple[Dict[str, Any], List[str]]] = []
+    skipped = 0
+    for row, block_lines in blocks:
+        if block_diff_keys(row, block_lines) - emitted_keys:
+            survivors.append((row, block_lines))
+        else:
+            skipped += 1
+    return survivors, skipped
 
 
 def aggregate_quickstatements(export_rows: List[Dict[str, Any]]) -> List[str]:
@@ -199,14 +227,18 @@ def load_local_export_rows(
 def _validate_batch_blocks(
     blocks: List[Tuple[Dict[str, Any], List[str]]],
 ) -> List[Tuple[Dict[str, Any], List[str]]]:
-    """Drop blocks that fail the ShEx schema, warning about each dropped unit."""
-    from wikidata_discover.shex_validation import parse_qs_blocks, validate_block
+    """Drop blocks with hard ShEx violations; strip only bad optional websites."""
+    from wikidata_discover.shex_validation import (
+        hard_violations,
+        parse_qs_blocks,
+        strip_bad_website_lines,
+    )
 
     survivors: List[Tuple[Dict[str, Any], List[str]]] = []
     dropped = 0
     for row, block_lines in blocks:
         parsed = parse_qs_blocks(block_lines)
-        violations = [v for block in parsed for v in validate_block(block)]
+        violations = [v for block in parsed for v in hard_violations(block)]
         if violations:
             dropped += 1
             describe = parsed[0].describe() if parsed else "(empty)"
@@ -215,7 +247,7 @@ def _validate_batch_blocks(
                 f"{'; '.join(violations)}[/yellow]"
             )
             continue
-        survivors.append((row, block_lines))
+        survivors.append((row, strip_bad_website_lines(block_lines)))
     if dropped:
         console.print(
             f"[yellow]ShEx validation dropped {dropped} of {len(blocks)} block(s).[/yellow]"
@@ -261,13 +293,15 @@ def generate_batch_quickstatements(
     """
     batch_id = str(uuid.uuid4())
     export_rows = load_export_rows(use_bq=use_bq)
+    blocks = build_attributed_blocks(export_rows)
+
+    if validate:
+        blocks = _validate_batch_blocks(blocks)
 
     skipped_existing = 0
     if diff and use_bq:
         emitted_keys = bq_helpers.try_get_emitted_unit_keys()
-        before = len(export_rows)
-        export_rows = filter_new_rows(export_rows, emitted_keys)
-        skipped_existing = before - len(export_rows)
+        blocks, skipped_existing = filter_new_blocks(blocks, emitted_keys)
         console.print(
             f"[dim]Diff mode: skipped {skipped_existing} unit(s) already emitted "
             f"in a previous batch.[/dim]"
@@ -278,17 +312,13 @@ def generate_batch_quickstatements(
             "ignoring --diff under --no-bq.[/yellow]"
         )
 
-    blocks = build_attributed_blocks(export_rows)
-
-    if validate:
-        blocks = _validate_batch_blocks(blocks)
     all_lines, attributed = flatten_blocks(blocks)
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     path = out_path or (RESULTS_DIR / f"quickstatements_batch_{batch_id}.qs")
     path.write_text("\n".join(all_lines))
     console.print(
-        f"[green]Aggregated {len(export_rows)} units into {len(all_lines)} "
+        f"[green]Aggregated {len(blocks)} units into {len(all_lines)} "
         f"QuickStatements lines: {path}[/green]"
     )
 
@@ -306,7 +336,7 @@ def generate_batch_quickstatements(
 
     return {
         "batch_id": batch_id,
-        "units": len(export_rows),
+        "units": len(blocks),
         "lines": len(all_lines),
         "skipped_existing": skipped_existing,
         "path": str(path),

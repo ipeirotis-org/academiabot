@@ -2,6 +2,7 @@
 
 from wikidata_discover.shex_validation import (
     filter_valid_quickstatements,
+    hard_violations,
     load_shex,
     parse_qs_blocks,
     validate_block,
@@ -50,7 +51,7 @@ def test_disallowed_p31_is_flagged():
     assert any("P31" in v for v in validate_block(block))
 
 
-def test_bad_website_is_flagged():
+def test_bad_website_is_flagged_but_not_hard():
     lines = [
         "CREATE",
         'LAST|Len|"School"',
@@ -60,7 +61,26 @@ def test_bad_website_is_flagged():
         "",
     ]
     block = parse_qs_blocks(lines)[0]
+    # It is reported as a (soft) violation ...
     assert any("website" in v for v in validate_block(block))
+    # ... but is not a hard violation that would drop the whole block.
+    assert not any("website" in v for v in hard_violations(block))
+
+
+def test_bad_website_strips_line_but_keeps_block():
+    lines = [
+        "CREATE",
+        'LAST|Len|"School"',
+        "LAST|P31|Q31855",
+        "LAST|P749|Q1",
+        'LAST|P856|"not-a-url"',
+        "",
+    ]
+    valid_lines, report = filter_valid_quickstatements(lines)
+    assert report.ok  # block kept
+    text = "\n".join(valid_lines)
+    assert "School" in text
+    assert "P856" not in text  # only the bad website line is dropped
 
 
 def test_existing_entity_link_block_passes():

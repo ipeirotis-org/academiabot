@@ -152,9 +152,9 @@ def create_entity_lines(
         f"LAST|P31|{type_qid}",
     ]
 
-    website = item.get("url") or item.get("website")
+    website = normalize_website(item.get("url") or item.get("website"))
     if website:
-        lines.append(f'LAST|P856|"{escape_qs_string(str(website))}"')
+        lines.append(f'LAST|P856|"{escape_qs_string(website)}"')
 
     for parent in parent_specs:
         lines.append(parent_statement("LAST", parent))
@@ -284,3 +284,22 @@ def format_qs_value(value: Any) -> str:
 
 def escape_qs_string(value: str) -> str:
     return value.replace('"', '\\"')
+
+
+def normalize_website(value: Any) -> Optional[str]:
+    """Return a schemed URL for a P856 statement, or None to omit it.
+
+    P856 is optional, so a scheme-less but host-like value (e.g.
+    "www.law.example.edu") is upgraded to https:// rather than dropped, and a
+    value that cannot be a URL is omitted entirely instead of poisoning an
+    otherwise valid CREATE/link block.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.startswith("http://") or text.startswith("https://"):
+        return text
+    # Host-like: at least one dot, a TLD, no spaces; optional path/query.
+    if re.fullmatch(r"[\w.-]+\.[A-Za-z]{2,}(/[^\s]*)?", text):
+        return "https://" + text
+    return None
