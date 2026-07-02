@@ -50,6 +50,7 @@ TABLE_SCHEMAS = {
         ("is_joint", "BOOLEAN", "NULLABLE"),
         ("parent_names", "STRING", "NULLABLE"),
         ("additional_parent_qids", "STRING", "NULLABLE"),
+        ("existing_parent_qids", "STRING", "NULLABLE"),
         ("unresolved_parent_names", "STRING", "NULLABLE"),
         ("evidence", "STRING", "NULLABLE"),
         ("level", "INTEGER", "NULLABLE"),
@@ -111,12 +112,27 @@ def ensure_dataset_and_tables() -> None:
 
     for table_name, fields in TABLE_SCHEMAS.items():
         table_ref = _table_id(table_name)
+        desired = _schema(fields)
         try:
-            client.get_table(table_ref)
+            table = client.get_table(table_ref)
         except NotFound:
-            table = bq.Table(table_ref, schema=_schema(fields))
+            table = bq.Table(table_ref, schema=desired)
             client.create_table(table)
             logger.info("Created BigQuery table %s", table_ref)
+            continue
+
+        # Reconcile: add any newly-defined NULLABLE columns to an existing table
+        # so inserts including new fields do not fail. BigQuery only allows
+        # adding NULLABLE/REPEATED columns, which is all this schema introduces.
+        existing_names = {field.name for field in table.schema}
+        additions = [field for field in desired if field.name not in existing_names]
+        if additions:
+            table.schema = list(table.schema) + additions
+            client.update_table(table, ["schema"])
+            logger.info(
+                "Added %d column(s) to %s: %s",
+                len(additions), table_ref, [field.name for field in additions],
+            )
 
 
 def _insert_rows(table_name: str, rows: List[Dict[str, Any]]) -> None:

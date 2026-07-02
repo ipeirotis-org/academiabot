@@ -81,6 +81,42 @@ def test_attribution_tags_lines_with_university():
     assert all(line.strip() for _, line in attributed)
 
 
+def test_local_row_without_parent_qid_falls_back_to_university():
+    # Older/top-level CSV rows have university_qid but no parent_qid; the batch
+    # builder must still emit LAST|P749|<university>.
+    row = {
+        "name": "School of Law",
+        "unit_type": "school",
+        "status": "missing",
+        "qid": "",
+        "university_qid": "Q49210",
+        "university_label": "NYU",
+        "level": 1,
+    }
+    lines = aggregate_quickstatements([row])
+    assert "LAST|P749|Q49210" in lines
+
+
+def test_bq_adapter_carries_existing_parent_qids_to_suppress_duplicates():
+    # A cross-listed orphan whose LLM-resolved joint parent (Q5) is already a
+    # parent must not re-emit that P749.
+    unit = {
+        "status": "exists_orphan",
+        "unit_name": "Joint Program",
+        "matched_qid": "Q99",
+        "parent_qid": "Q1",
+        "additional_parent_qids": "Q5",
+        "existing_parent_qids": "Q5",
+        "level": 2,
+        "university_qid": "Q1",
+    }
+    row = bq_unit_to_export_row(unit)
+    assert row["existing_parent_qids"] == "Q5"
+    lines = aggregate_quickstatements([row])
+    # Q5 is already a parent, so it should not appear as an added P749.
+    assert not any(line.endswith("|P749|Q5") for line in lines)
+
+
 def test_quickstatements_batch_rows_shape():
     attributed = [("Q1", "CREATE"), ("Q1", 'LAST|Len|"School A"')]
     rows = quickstatements_batch_rows("batch-123", attributed)

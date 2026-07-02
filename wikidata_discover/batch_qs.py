@@ -51,6 +51,9 @@ def bq_unit_to_export_row(unit: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "parent_qid": unit.get("parent_qid"),
         "parent_label": unit.get("parent_label"),
         "additional_parent_qids": additional,
+        # Carry the matched entity's existing parents so build_quickstatements
+        # suppresses joint parents it is already linked to (avoids duplicate P749).
+        "existing_parent_qids": unit.get("existing_parent_qids") or "",
         "level": unit.get("level"),
         "university_qid": unit.get("university_qid"),
         "university_label": unit.get("university_label"),
@@ -67,27 +70,51 @@ def _level_key(row: Dict[str, Any]) -> tuple:
     return (level_int, str(row.get("university_qid") or ""))
 
 
+def build_attributed_blocks(
+    export_rows: List[Dict[str, Any]],
+) -> List[Tuple[Optional[str], List[str]]]:
+    """Build the level-ordered QS batch as (university_qid, block_lines) pairs.
+
+    Rows are sorted by hierarchy level (schools before departments) and built one
+    at a time so each block keeps the university_qid it came from. Building per
+    row is equivalent to one ``build_quickstatements`` call because rows are
+    independent, and block-level attribution lets validation drop a bad block
+    without losing the university tag on the survivors.
+    """
+    ordered = sorted(export_rows, key=_level_key)
+    blocks: List[Tuple[Optional[str], List[str]]] = []
+    for row in ordered:
+        # Use the row's own university as the fallback parent so local CSVs that
+        # carry university_qid but no parent_qid still emit LAST|P749|<university>.
+        lines = build_quickstatements(
+            [row],
+            university_qid=str(row.get("university_qid") or ""),
+            university_label=str(row.get("university_label") or ""),
+        )
+        if any(line.strip() for line in lines):
+            blocks.append((row.get("university_qid"), lines))
+    return blocks
+
+
+def flatten_blocks(
+    blocks: List[Tuple[Optional[str], List[str]]],
+) -> Tuple[List[str], List[Tuple[Optional[str], str]]]:
+    """Flatten attributed blocks into (all_lines, [(university_qid, line), ...])."""
+    all_lines: List[str] = []
+    attributed: List[Tuple[Optional[str], str]] = []
+    for university_qid, block_lines in blocks:
+        for line in block_lines:
+            all_lines.append(line)
+            if line.strip():
+                attributed.append((university_qid, line))
+    return all_lines, attributed
+
+
 def build_attributed_lines(
     export_rows: List[Dict[str, Any]],
 ) -> Tuple[List[str], List[Tuple[Optional[str], str]]]:
-    """Build the level-ordered QS batch, keeping each line's source university.
-
-    Rows are sorted by hierarchy level (schools before departments) and built one
-    at a time so every non-blank line can be tagged with the university_qid it
-    came from. Returns (all_lines, [(university_qid, line), ...]). Building per
-    row is equivalent to a single ``build_quickstatements`` call because rows are
-    independent, and it preserves attribution for BigQuery recording.
-    """
-    ordered = sorted(export_rows, key=_level_key)
-    all_lines: List[str] = []
-    attributed: List[Tuple[Optional[str], str]] = []
-    for row in ordered:
-        lines = build_quickstatements([row], university_qid="", university_label="")
-        for line in lines:
-            all_lines.append(line)
-            if line.strip():
-                attributed.append((row.get("university_qid"), line))
-    return all_lines, attributed
+    """Build the level-ordered QS batch plus per-line university attribution."""
+    return flatten_blocks(build_attributed_blocks(export_rows))
 
 
 def aggregate_quickstatements(export_rows: List[Dict[str, Any]]) -> List[str]:
@@ -132,6 +159,33 @@ def load_local_export_rows() -> List[Dict[str, Any]]:
     return rows
 
 
+def _validate_batch_blocks(
+    blocks: List[Tuple[Optional[str], List[str]]],
+) -> List[Tuple[Optional[str], List[str]]]:
+    """Drop blocks that fail the ShEx schema, warning about each dropped unit."""
+    from wikidata_discover.shex_validation import parse_qs_blocks, validate_block
+
+    survivors: List[Tuple[Optional[str], List[str]]] = []
+    dropped = 0
+    for university_qid, block_lines in blocks:
+        parsed = parse_qs_blocks(block_lines)
+        violations = [v for block in parsed for v in validate_block(block)]
+        if violations:
+            dropped += 1
+            describe = parsed[0].describe() if parsed else "(empty)"
+            console.print(
+                f"[yellow]ShEx dropped {describe} ({university_qid}): "
+                f"{'; '.join(violations)}[/yellow]"
+            )
+            continue
+        survivors.append((university_qid, block_lines))
+    if dropped:
+        console.print(
+            f"[yellow]ShEx validation dropped {dropped} of {len(blocks)} block(s).[/yellow]"
+        )
+    return survivors
+
+
 def quickstatements_batch_rows(
     batch_id: str,
     attributed: List[Tuple[Optional[str], str]],
@@ -155,14 +209,21 @@ def quickstatements_batch_rows(
 def generate_batch_quickstatements(
     use_bq: bool = True,
     out_path: Optional[Path] = None,
+    validate: bool = True,
 ) -> Dict[str, Any]:
     """Generate a single aggregated QuickStatements batch across all universities.
 
     Returns a summary dict with the batch id, unit/line counts, and output path.
+    When ``validate`` is True, blocks failing the ShEx schema are dropped before
+    the file is written and recorded.
     """
     batch_id = str(uuid.uuid4())
     export_rows = load_export_rows(use_bq=use_bq)
-    all_lines, attributed = build_attributed_lines(export_rows)
+    blocks = build_attributed_blocks(export_rows)
+
+    if validate:
+        blocks = _validate_batch_blocks(blocks)
+    all_lines, attributed = flatten_blocks(blocks)
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     path = out_path or (RESULTS_DIR / f"quickstatements_batch_{batch_id}.qs")

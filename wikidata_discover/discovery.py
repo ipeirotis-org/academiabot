@@ -823,6 +823,7 @@ def flatten_discovered_units(
                 "is_joint": child.get("is_joint", False),
                 "parent_names": "|".join(child.get("parent_names") or []),
                 "additional_parent_qids": "|".join(child.get("additional_parent_qids") or []),
+                "existing_parent_qids": "|".join(child.get("existing_parent_qids") or []),
                 "unresolved_parent_names": "|".join(child.get("unresolved_parent_names") or []),
                 "evidence": child.get("evidence"),
                 "level": child.get("level"),
