@@ -21,6 +21,8 @@ TABLE_SCHEMAS = {
         ("website", "STRING", "NULLABLE"),
         ("country", "STRING", "NULLABLE"),
         ("ipeds_id", "STRING", "NULLABLE"),
+        ("identifier", "STRING", "NULLABLE"),
+        ("identifier_property", "STRING", "NULLABLE"),
         ("harvested_at", "TIMESTAMP", "NULLABLE"),
     ],
     "discovery_runs": [

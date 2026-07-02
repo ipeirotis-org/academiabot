@@ -1,7 +1,6 @@
 import argparse
 import logging
 from wikidata_discover.discovery import Discovery
-from wikidata_discover.harvester import fetch_us_universities
 import wikidata_discover.config as config
 
 
@@ -50,8 +49,13 @@ def run_cli():
     d.add_argument("--no-bq", action="store_true", help="Skip BigQuery writes")
 
     # harvest subcommand
-    h = sub.add_parser("harvest", help="Fetch all U.S. universities to JSON")
+    h = sub.add_parser("harvest", help="Fetch all universities in a country to JSON")
     h.add_argument("--no-bq", action="store_true", help="Skip BigQuery writes")
+    h.add_argument(
+        "--country",
+        default="Q30",
+        help="Country QID to harvest (default Q30 = United States).",
+    )
 
     # qs-batch subcommand: aggregate discovered units into one QuickStatements file
     q = sub.add_parser(
@@ -108,7 +112,8 @@ def run_cli():
                 Discovery(qid).discover_missing(depth=depth, write_bq=not args.no_bq)
 
     elif args.command == "harvest":
-        fetch_us_universities(write_bq=not args.no_bq)
+        from wikidata_discover.harvester import fetch_universities
+        fetch_universities(country_qid=args.country, write_bq=not args.no_bq)
 
     elif args.command == "qs-batch":
         if getattr(args, "debug", False):
