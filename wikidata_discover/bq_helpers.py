@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 from wikidata_discover.config import BQ_DATASET, GCP_PROJECT
 
@@ -141,6 +141,25 @@ def save_discovered_units(rows: List[Dict[str, Any]]) -> None:
     _insert_rows("discovered_units", rows)
 
 
+def get_universities() -> List[Dict[str, Any]]:
+    """Return the harvested universities (deduped by QID) from BigQuery."""
+    ensure_dataset_and_tables()
+    client = _client()
+    query = f"""
+    SELECT
+      qid,
+      ANY_VALUE(label) AS label,
+      ANY_VALUE(website) AS website,
+      ANY_VALUE(country) AS country,
+      ANY_VALUE(ipeds_id) AS ipeds_id
+    FROM `{_table_id("universities")}`
+    WHERE qid IS NOT NULL
+    GROUP BY qid
+    ORDER BY qid
+    """
+    return [dict(row.items()) for row in client.query(query).result()]
+
+
 def get_processed_qids() -> set[str]:
     ensure_dataset_and_tables()
     client = _client()
@@ -174,6 +193,24 @@ def get_coverage_summary() -> List[Dict[str, Any]]:
     ORDER BY last_run_at DESC
     """
     return [dict(row.items()) for row in client.query(query).result()]
+
+
+def try_get_universities() -> Optional[List[Dict[str, Any]]]:
+    """Best-effort read of the universities table; None if BigQuery is unavailable."""
+    try:
+        return get_universities()
+    except Exception as exc:
+        logger.warning("Could not read universities from BigQuery: %s", exc)
+        return None
+
+
+def try_get_processed_qids() -> set[str]:
+    """Best-effort read of already-processed QIDs; empty set if BigQuery is unavailable."""
+    try:
+        return get_processed_qids()
+    except Exception as exc:
+        logger.warning("Could not read processed QIDs from BigQuery: %s", exc)
+        return set()
 
 
 def try_save_universities(rows: List[Dict[str, Any]]) -> bool:
