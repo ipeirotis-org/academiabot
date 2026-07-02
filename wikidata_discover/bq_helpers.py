@@ -160,7 +160,55 @@ def get_universities() -> List[Dict[str, Any]]:
     return [dict(row.items()) for row in client.query(query).result()]
 
 
-def get_processed_qids() -> set[str]:
+def get_exportable_units() -> List[Dict[str, Any]]:
+    """Return exportable discovered units from the latest run per university.
+
+    Only rows that yield QuickStatements are returned: missing units (to create),
+    orphans (to link), and already-linked units that are cross-listed and still
+    need their remaining joint-parent links. Restricting to the latest run per
+    university avoids re-emitting CREATE lines from earlier re-runs. Ordered by
+    hierarchy level so schools come before departments in the aggregated batch.
+    """
+    ensure_dataset_and_tables()
+    client = _client()
+    query = f"""
+    WITH latest AS (
+      SELECT
+        university_qid,
+        run_id,
+        ROW_NUMBER() OVER (
+          PARTITION BY university_qid ORDER BY timestamp DESC
+        ) AS rn
+      FROM `{_table_id("discovery_runs")}`
+    )
+    SELECT u.*
+    FROM `{_table_id("discovered_units")}` AS u
+    JOIN latest AS l
+      ON u.run_id = l.run_id AND l.rn = 1
+    WHERE u.status IN ('missing', 'exists_orphan')
+       OR (
+         u.status = 'exists_linked'
+         AND u.additional_parent_qids IS NOT NULL
+         AND u.additional_parent_qids != ''
+       )
+    ORDER BY u.level, u.university_qid
+    """
+    return [dict(row.items()) for row in client.query(query).result()]
+
+
+def save_quickstatements_batch(rows: List[Dict[str, Any]]) -> None:
+    _insert_rows("quickstatements_batches", rows)
+
+
+def get_processed_qids(min_depth: Optional[int] = None) -> set[str]:
+    """Return QIDs already discovered.
+
+    When ``min_depth`` is given, only QIDs whose deepest prior run reached at
+    least that depth are considered processed. This lets batch resume re-run a
+    university that was previously discovered shallower than the depth now
+    requested (e.g. a depth-1 run must not skip a later ``--depth 3`` batch).
+    Runs predating the depth column (NULL depth) are treated as depth 1.
+    """
     ensure_dataset_and_tables()
     client = _client()
     query = f"""
@@ -168,6 +216,8 @@ def get_processed_qids() -> set[str]:
     FROM `{_table_id("discovery_runs")}`
     WHERE university_qid IS NOT NULL
     """
+    if min_depth is not None:
+        query += f"      AND COALESCE(depth, 1) >= {int(min_depth)}\n"
     return {
         row.university_qid
         for row in client.query(query).result()
@@ -204,10 +254,23 @@ def try_get_universities() -> Optional[List[Dict[str, Any]]]:
         return None
 
 
-def try_get_processed_qids() -> set[str]:
+def try_get_exportable_units() -> Optional[List[Dict[str, Any]]]:
+    """Best-effort read of exportable units; None if BigQuery is unavailable."""
+    try:
+        return get_exportable_units()
+    except Exception as exc:
+        logger.warning("Could not read exportable units from BigQuery: %s", exc)
+        return None
+
+
+def try_save_quickstatements_batch(rows: List[Dict[str, Any]]) -> bool:
+    return _try_save(lambda: save_quickstatements_batch(rows), "quickstatements batch")
+
+
+def try_get_processed_qids(min_depth: Optional[int] = None) -> set[str]:
     """Best-effort read of already-processed QIDs; empty set if BigQuery is unavailable."""
     try:
-        return get_processed_qids()
+        return get_processed_qids(min_depth=min_depth)
     except Exception as exc:
         logger.warning("Could not read processed QIDs from BigQuery: %s", exc)
         return set()

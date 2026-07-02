@@ -151,8 +151,12 @@ def run_batch_discovery(
         )
         return _empty_summary(depth, limit, resume)
 
+    # Only treat a university as done when a prior run reached at least the depth
+    # now requested; a shallower run must not skip a deeper batch.
     processed_qids = (
-        bq_helpers.try_get_processed_qids() if (resume and write_bq) else set()
+        bq_helpers.try_get_processed_qids(min_depth=depth)
+        if (resume and write_bq)
+        else set()
     )
     pending = select_pending(universities, processed_qids, limit=limit)
 
