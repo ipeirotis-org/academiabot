@@ -66,6 +66,16 @@ def run_cli():
     q.add_argument("--out", default=None, help="Output .qs file path (optional).")
     q.add_argument("--debug", action="store_true", help="Enable debug logging")
 
+    # ipeds subcommand: reconcile an IPEDS HD CSV against Wikidata by P1771
+    ip = sub.add_parser(
+        "ipeds",
+        help="Reconcile an IPEDS HD CSV against Wikidata (P1771 IPEDS ID).",
+    )
+    ip.add_argument("--csv", required=True, help="Path to an IPEDS HD CSV file.")
+    ip.add_argument("--no-bq", action="store_true", help="Skip BigQuery writes")
+    ip.add_argument("--out", default=None, help="Output CSV path (optional).")
+    ip.add_argument("--debug", action="store_true", help="Enable debug logging")
+
     args = parser.parse_args()
 
     if args.command == "discover":
@@ -102,5 +112,16 @@ def run_cli():
         from wikidata_discover.batch_qs import generate_batch_quickstatements
         generate_batch_quickstatements(
             use_bq=not args.no_bq,
+            out_path=Path(args.out) if args.out else None,
+        )
+
+    elif args.command == "ipeds":
+        if getattr(args, "debug", False):
+            logging.basicConfig(level=logging.DEBUG, force=True)
+        from pathlib import Path
+        from wikidata_discover.ipeds import run_ipeds_reconciliation
+        run_ipeds_reconciliation(
+            csv_path=args.csv,
+            write_bq=not args.no_bq,
             out_path=Path(args.out) if args.out else None,
         )

@@ -64,6 +64,14 @@ TABLE_SCHEMAS = {
         ("qs_line", "STRING", "NULLABLE"),
         ("uploaded_at", "TIMESTAMP", "NULLABLE"),
     ],
+    "ipeds_reconciliation": [
+        ("ipeds_id", "STRING", "REQUIRED"),
+        ("name", "STRING", "NULLABLE"),
+        ("website", "STRING", "NULLABLE"),
+        ("matched_qid", "STRING", "NULLABLE"),
+        ("status", "STRING", "NULLABLE"),
+        ("reconciled_at", "TIMESTAMP", "NULLABLE"),
+    ],
 }
 
 
@@ -214,6 +222,14 @@ def get_exportable_units() -> List[Dict[str, Any]]:
 
 def save_quickstatements_batch(rows: List[Dict[str, Any]]) -> None:
     _insert_rows("quickstatements_batches", rows)
+
+
+def save_ipeds_reconciliation(rows: List[Dict[str, Any]]) -> None:
+    _insert_rows("ipeds_reconciliation", rows)
+
+
+def try_save_ipeds_reconciliation(rows: List[Dict[str, Any]]) -> bool:
+    return _try_save(lambda: save_ipeds_reconciliation(rows), "ipeds reconciliation")
 
 
 def get_processed_qids(min_depth: Optional[int] = None) -> set[str]:
