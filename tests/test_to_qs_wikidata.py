@@ -2,9 +2,40 @@
 
 from wikidata_discover.to_qs_wikidata import (
     build_quickstatements,
+    normalize_website,
     parent_specs_for_item,
     type_qid_for,
 )
+
+
+def test_normalize_website_upgrades_bare_domain_and_omits_junk():
+    assert normalize_website("https://law.example.edu") == "https://law.example.edu"
+    assert normalize_website("www.law.example.edu") == "https://www.law.example.edu"
+    assert normalize_website("example.edu/law") == "https://example.edu/law"
+    assert normalize_website("not a url") is None
+    assert normalize_website("") is None
+    assert normalize_website(None) is None
+
+
+def test_normalize_website_rejects_malformed_schemed_urls():
+    assert normalize_website("https://not a url") is None  # whitespace
+    assert normalize_website("http://localhost") is None    # no dotted hostname
+    assert normalize_website("https://") is None            # no hostname
+    assert normalize_website("https://x.edu/a b") is None   # whitespace in path
+
+
+def test_create_omits_bad_website_but_keeps_unit():
+    rows = [{
+        "name": "School of Law",
+        "status": "missing",
+        "unit_type": "school",
+        "parent_qid": "Q1",
+        "url": "not a url",
+    }]
+    lines = build_quickstatements(rows, "Q0", "Example University")
+    text = "\n".join(lines)
+    assert "School of Law" in text
+    assert "P856" not in text  # malformed website omitted, unit still created
 
 
 def test_type_qid_for_phase_2_unit_types():

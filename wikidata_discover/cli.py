@@ -1,7 +1,7 @@
 import argparse
 import logging
+from pathlib import Path
 from wikidata_discover.discovery import Discovery
-from wikidata_discover.harvester import fetch_us_universities
 import wikidata_discover.config as config
 
 
@@ -15,11 +15,27 @@ def run_cli():
     d = sub.add_parser("discover", help="Find missing divisions for a university")
     d.add_argument(
     "university_qids",
-    nargs="+",
-    help="One or more Wikidata Q-IDs (e.g. Q49210 Q49115 ...)",
+    nargs="*",
+    help="One or more Wikidata Q-IDs (e.g. Q49210 Q49115 ...). Omit with --batch.",
     )
     d.add_argument("--llm", dest="llm_model", default=None)
     d.add_argument("--debug", action="store_true", help="Enable debug logging")
+    d.add_argument(
+        "--batch",
+        action="store_true",
+        help="Process every harvested university (from BigQuery or universities_us.json).",
+    )
+    d.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="In --batch mode, cap how many universities to process this run.",
+    )
+    d.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="In --batch mode, do not skip universities already in discovery_runs.",
+    )
     d.add_argument(
         "--recursive",
         action="store_true",
@@ -34,8 +50,41 @@ def run_cli():
     d.add_argument("--no-bq", action="store_true", help="Skip BigQuery writes")
 
     # harvest subcommand
-    h = sub.add_parser("harvest", help="Fetch all U.S. universities to JSON")
+    h = sub.add_parser("harvest", help="Fetch all universities in a country to JSON")
     h.add_argument("--no-bq", action="store_true", help="Skip BigQuery writes")
+    h.add_argument(
+        "--country",
+        default="Q30",
+        help="Country QID to harvest (default Q30 = United States).",
+    )
+
+    # qs-batch subcommand: aggregate discovered units into one QuickStatements file
+    q = sub.add_parser(
+        "qs-batch",
+        help="Aggregate all discovered units into a single QuickStatements batch",
+    )
+    q.add_argument(
+        "--no-bq",
+        action="store_true",
+        help="Aggregate from local missing_divisions_*.csv instead of BigQuery.",
+    )
+    q.add_argument("--out", default=None, help="Output .qs file path (optional).")
+    q.add_argument(
+        "--diff",
+        action="store_true",
+        help="Only emit units not already generated in a previous batch (needs BigQuery).",
+    )
+    q.add_argument("--debug", action="store_true", help="Enable debug logging")
+
+    # ipeds subcommand: reconcile an IPEDS HD CSV against Wikidata by P1771
+    ip = sub.add_parser(
+        "ipeds",
+        help="Reconcile an IPEDS HD CSV against Wikidata (P1771 IPEDS ID).",
+    )
+    ip.add_argument("--csv", required=True, help="Path to an IPEDS HD CSV file.")
+    ip.add_argument("--no-bq", action="store_true", help="Skip BigQuery writes")
+    ip.add_argument("--out", default=None, help="Output CSV path (optional).")
+    ip.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
 
@@ -47,8 +96,42 @@ def run_cli():
         depth = args.depth if args.depth is not None else (3 if args.recursive else 1)
         if depth < 1:
             parser.error("--depth must be 1 or greater")
-        for qid in args.university_qids:
-            Discovery(qid).discover_missing(depth=depth, write_bq=not args.no_bq)
+        if args.batch:
+            if args.university_qids:
+                parser.error("Do not pass QIDs together with --batch.")
+            from wikidata_discover.batch import run_batch_discovery
+            run_batch_discovery(
+                depth=depth,
+                write_bq=not args.no_bq,
+                limit=args.limit,
+                resume=not args.no_resume,
+            )
+        else:
+            if not args.university_qids:
+                parser.error("Provide at least one QID, or use --batch.")
+            for qid in args.university_qids:
+                Discovery(qid).discover_missing(depth=depth, write_bq=not args.no_bq)
 
     elif args.command == "harvest":
-        fetch_us_universities(write_bq=not args.no_bq)
+        from wikidata_discover.harvester import fetch_universities
+        fetch_universities(country_qid=args.country, write_bq=not args.no_bq)
+
+    elif args.command == "qs-batch":
+        if getattr(args, "debug", False):
+            logging.basicConfig(level=logging.DEBUG, force=True)
+        from wikidata_discover.batch_qs import generate_batch_quickstatements
+        generate_batch_quickstatements(
+            use_bq=not args.no_bq,
+            out_path=Path(args.out) if args.out else None,
+            diff=args.diff,
+        )
+
+    elif args.command == "ipeds":
+        if getattr(args, "debug", False):
+            logging.basicConfig(level=logging.DEBUG, force=True)
+        from wikidata_discover.ipeds import run_ipeds_reconciliation
+        run_ipeds_reconciliation(
+            csv_path=args.csv,
+            write_bq=not args.no_bq,
+            out_path=Path(args.out) if args.out else None,
+        )
