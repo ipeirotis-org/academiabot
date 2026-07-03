@@ -2,7 +2,7 @@
 
 from wikidata_discover.ipeds import (
     MATCHED,
-    MISSING,
+    NO_IPEDS_MATCH,
     normalize_ipeds_id,
     parse_ipeds_csv,
     reconcile_ipeds,
@@ -49,7 +49,8 @@ def test_reconcile_matches_by_normalized_id():
     results = reconcile_ipeds(ipeds_rows, wikidata_map)
     assert results[0]["status"] == MATCHED
     assert results[0]["matched_qid"] == "Q49210"
-    assert results[1]["status"] == MISSING
+    # No P1771 match is reported as no_ipeds_match, not an assertion of absence.
+    assert results[1]["status"] == NO_IPEDS_MATCH
     assert results[1]["matched_qid"] is None
 
 
@@ -57,10 +58,10 @@ def test_summarize_counts():
     results = [
         {"status": MATCHED},
         {"status": MATCHED},
-        {"status": MISSING},
+        {"status": NO_IPEDS_MATCH},
     ]
     assert summarize(results) == {
         "total": 3,
         "matched": 2,
-        "missing_from_wikidata": 1,
+        "no_ipeds_match": 1,
     }

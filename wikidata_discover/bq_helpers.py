@@ -146,14 +146,25 @@ def ensure_dataset_and_tables() -> None:
             )
 
 
+# BigQuery streaming inserts are capped (~50k rows / ~10 MB per request), so a
+# full-university batch must be chunked or the whole insert fails.
+_INSERT_CHUNK_SIZE = 500
+
+
 def _insert_rows(table_name: str, rows: List[Dict[str, Any]]) -> None:
     if not rows:
         return
     ensure_dataset_and_tables()
     client = _client()
-    errors = client.insert_rows_json(_table_id(table_name), rows)
-    if errors:
-        raise RuntimeError(f"BigQuery insert into {table_name} failed: {errors}")
+    table_id = _table_id(table_name)
+    for start in range(0, len(rows), _INSERT_CHUNK_SIZE):
+        chunk = rows[start:start + _INSERT_CHUNK_SIZE]
+        errors = client.insert_rows_json(table_id, chunk)
+        if errors:
+            raise RuntimeError(
+                f"BigQuery insert into {table_name} failed "
+                f"(rows {start}-{start + len(chunk)}): {errors}"
+            )
 
 
 def save_universities(rows: List[Dict[str, Any]]) -> None:

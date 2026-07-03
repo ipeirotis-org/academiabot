@@ -33,8 +33,15 @@ SELECT ?item ?ipeds WHERE {
 }
 """
 
+# A P1771 (IPEDS ID) match confirms the institution is in Wikidata. The absence
+# of a match only means no entity carries this IPEDS ID: the institution may
+# still exist in Wikidata without the identifier. We therefore report "no IPEDS
+# match" rather than asserting absence, so downstream steps corroborate by
+# name/website before creating a (possibly duplicate) university.
 MATCHED = "matched"
-MISSING = "missing_from_wikidata"
+NO_IPEDS_MATCH = "no_ipeds_match"
+# Backwards-compatible alias for the previous constant name.
+MISSING = NO_IPEDS_MATCH
 
 
 def normalize_ipeds_id(value: Any) -> Optional[str]:
@@ -121,7 +128,11 @@ def reconcile_ipeds(
     ipeds_rows: List[Dict[str, Any]],
     wikidata_ipeds_map: Dict[str, str],
 ) -> List[Dict[str, Any]]:
-    """Classify each IPEDS institution as matched or missing from Wikidata."""
+    """Classify each IPEDS institution by whether a Wikidata P1771 match exists.
+
+    A match is `matched`; no match is `no_ipeds_match` (not proof of absence:
+    the institution may exist without a P1771 claim).
+    """
     results: List[Dict[str, Any]] = []
     for row in ipeds_rows:
         ipeds_id = row["ipeds_id"]
@@ -132,7 +143,7 @@ def reconcile_ipeds(
                 "name": row.get("name"),
                 "website": row.get("website"),
                 "matched_qid": qid,
-                "status": MATCHED if qid else MISSING,
+                "status": MATCHED if qid else NO_IPEDS_MATCH,
             }
         )
     return results
@@ -143,7 +154,7 @@ def summarize(results: List[Dict[str, Any]]) -> Dict[str, int]:
     return {
         "total": len(results),
         "matched": matched,
-        "missing_from_wikidata": len(results) - matched,
+        "no_ipeds_match": len(results) - matched,
     }
 
 
@@ -172,7 +183,8 @@ def run_ipeds_reconciliation(
     )
     console.print(
         f"[green]Reconciliation: {counts['matched']} matched, "
-        f"{counts['missing_from_wikidata']} missing from Wikidata "
+        f"{counts['no_ipeds_match']} with no IPEDS-ID match "
+        f"(may exist without P1771; corroborate before creating) "
         f"(of {counts['total']}). Written to {path}[/green]"
     )
 

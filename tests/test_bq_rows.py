@@ -1,9 +1,28 @@
 """Unit tests for BigQuery row shaping."""
 
+from wikidata_discover import bq_helpers
 from wikidata_discover.harvester import (
     build_university_sparql,
     university_rows_for_bq,
 )
+
+
+def test_insert_rows_chunks_large_payloads(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def insert_rows_json(self, table_id, rows):
+            calls.append(len(rows))
+            return []
+
+    monkeypatch.setattr(bq_helpers, "ensure_dataset_and_tables", lambda: None)
+    monkeypatch.setattr(bq_helpers, "_client", lambda: FakeClient())
+    monkeypatch.setattr(bq_helpers, "_INSERT_CHUNK_SIZE", 500)
+
+    rows = [{"run_id": str(i)} for i in range(1200)]
+    bq_helpers._insert_rows("quickstatements_batches", rows)
+
+    assert calls == [500, 500, 200]  # chunked, not one 1200-row request
 
 
 def test_university_rows_for_bq_maps_wikidata_bindings():
