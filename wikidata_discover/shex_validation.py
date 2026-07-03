@@ -101,8 +101,11 @@ def parse_qs_blocks(lines: List[str]) -> List[QSBlock]:
 
 
 def _looks_like_url(value: str) -> bool:
-    text = _unquote(value)
-    return text.startswith("http://") or text.startswith("https://")
+    # Reuse the exporter's validity check so validation and export agree on what
+    # counts as a usable P856 (a bare scheme like "https://not a url" is invalid).
+    from wikidata_discover.to_qs_wikidata import is_valid_http_url
+
+    return is_valid_http_url(_unquote(value))
 
 
 def hard_violations(block: QSBlock) -> List[str]:

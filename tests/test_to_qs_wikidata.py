@@ -17,6 +17,13 @@ def test_normalize_website_upgrades_bare_domain_and_omits_junk():
     assert normalize_website(None) is None
 
 
+def test_normalize_website_rejects_malformed_schemed_urls():
+    assert normalize_website("https://not a url") is None  # whitespace
+    assert normalize_website("http://localhost") is None    # no dotted hostname
+    assert normalize_website("https://") is None            # no hostname
+    assert normalize_website("https://x.edu/a b") is None   # whitespace in path
+
+
 def test_create_omits_bad_website_but_keeps_unit():
     rows = [{
         "name": "School of Law",

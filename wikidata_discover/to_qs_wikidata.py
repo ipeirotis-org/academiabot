@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlparse
 
 from wikidata_discover.config import console
 
@@ -298,8 +299,22 @@ def normalize_website(value: Any) -> Optional[str]:
     if not text:
         return None
     if text.startswith("http://") or text.startswith("https://"):
-        return text
+        # A scheme alone is not enough: reject values with whitespace or no
+        # hostname (e.g. "https://not a url") so a malformed P856 is omitted.
+        return text if is_valid_http_url(text) else None
     # Host-like: at least one dot, a TLD, no spaces; optional path/query.
     if re.fullmatch(r"[\w.-]+\.[A-Za-z]{2,}(/[^\s]*)?", text):
         return "https://" + text
     return None
+
+
+def is_valid_http_url(text: str) -> bool:
+    """True if text is a well-formed http(s) URL with a dotted hostname."""
+    if not text or any(ch.isspace() for ch in text):
+        return False
+    parsed = urlparse(text)
+    return bool(
+        parsed.scheme in ("http", "https")
+        and parsed.hostname
+        and "." in parsed.hostname
+    )

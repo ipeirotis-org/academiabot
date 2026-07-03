@@ -225,8 +225,9 @@ class Discovery:
         missing = collect_missing(tree)
         counts = count_statuses(tree)
 
+        out_file = Path(f"missing_divisions_{self.university_qid}.csv")
+        qs_file = Path(f"quickstatements_{self.university_qid}.qs")
         if missing:
-            out_file = Path(f"missing_divisions_{self.university_qid}.csv")
             pd.DataFrame(missing).to_csv(out_file, index=False)
             console.print(
                 f"[green]{len(missing)} missing/orphan divisions written to {out_file}.[/green]"
@@ -236,11 +237,22 @@ class Discovery:
                 missing,
                 self.university_qid,
                 self.university_label,
+                out_path=qs_file,
             )
         else:
             console.print(
                 "[green]No missing divisions detected - Wikidata seems up to date![/green]"
             )
+            # Remove stale per-QID outputs from an earlier run so a later
+            # 'qs-batch --no-bq' does not re-emit statements for a university
+            # that no longer has anything missing.
+            for stale in (out_file, qs_file):
+                try:
+                    stale.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    logger.warning("Could not remove stale output %s: %s", stale, exc)
 
         reports_dir = RESULTS_DIR / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
