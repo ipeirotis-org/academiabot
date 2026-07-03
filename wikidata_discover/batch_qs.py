@@ -300,7 +300,25 @@ def generate_batch_quickstatements(
 
     skipped_existing = 0
     if diff and use_bq:
-        emitted_keys = bq_helpers.try_get_emitted_unit_keys()
+        # Fail closed: diff is a safety mechanism. If the prior-key read fails we
+        # must NOT fall back to an empty set (which would treat everything as new
+        # and re-emit duplicate CREATE/P749 statements). Abort and write nothing.
+        try:
+            emitted_keys = bq_helpers.get_emitted_unit_keys()
+        except Exception as exc:
+            console.print(
+                f"[red]Diff mode aborted: could not read prior batch keys from "
+                f"BigQuery ({exc}). Nothing written to avoid duplicate statements.[/red]"
+            )
+            return {
+                "batch_id": batch_id,
+                "units": 0,
+                "lines": 0,
+                "skipped_existing": 0,
+                "aborted": True,
+                "path": None,
+                "saved_to_bq": False,
+            }
         blocks, skipped_existing = filter_new_blocks(blocks, emitted_keys)
         console.print(
             f"[dim]Diff mode: skipped {skipped_existing} unit(s) already emitted "

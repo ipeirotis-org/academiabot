@@ -1,5 +1,6 @@
 """Unit tests for batch QuickStatements aggregation (pure logic, no network/BQ)."""
 
+from wikidata_discover import batch_qs
 from wikidata_discover.batch_qs import (
     aggregate_quickstatements,
     block_diff_keys,
@@ -7,6 +8,7 @@ from wikidata_discover.batch_qs import (
     build_attributed_blocks,
     build_attributed_lines,
     filter_new_blocks,
+    generate_batch_quickstatements,
     load_local_export_rows,
     quickstatements_batch_rows,
     unit_key,
@@ -120,6 +122,24 @@ def test_bq_adapter_carries_existing_parent_qids_to_suppress_duplicates():
     lines = aggregate_quickstatements([row])
     # Q5 is already a parent, so it should not appear as an added P749.
     assert not any(line.endswith("|P749|Q5") for line in lines)
+
+
+def test_diff_fails_closed_when_key_read_errors(tmp_path, monkeypatch):
+    # If the prior-key read fails, diff must abort and write nothing rather than
+    # treat every unit as new.
+    row = _missing_school("School A", "Q1", parent_qid="Q1")
+    monkeypatch.setattr(batch_qs, "load_export_rows", lambda use_bq=True: [row])
+
+    def boom():
+        raise RuntimeError("BigQuery unavailable")
+
+    monkeypatch.setattr(batch_qs.bq_helpers, "get_emitted_unit_keys", boom)
+
+    out = tmp_path / "batch.qs"
+    result = generate_batch_quickstatements(use_bq=True, out_path=out, diff=True)
+    assert result["aborted"] is True
+    assert result["lines"] == 0
+    assert not out.exists()  # nothing written
 
 
 def test_quickstatements_batch_rows_shape():
