@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from wikidata_discover.config import console
+from wikidata_discover.config import console, RESULTS_DIR
 
 TYPE_MAP = {
     "department": "Q2467461",
@@ -13,12 +13,13 @@ TYPE_MAP = {
     None: "Q2467461",
 }
 
-def export_quickstatements(missing, university_qid, university_label, max_items=None):
+def export_quickstatements(missing, university_qid, university_label, max_items=None, out_dir=None):
     """
     Export missing or orphan divisions into QuickStatements format.
 
     Args:
         max_items: Optional cap on how many items to export. None means all.
+        out_dir: Directory for the .qs file. Defaults to RESULTS_DIR.
     """
 
     qs_lines = []
@@ -47,7 +48,9 @@ def export_quickstatements(missing, university_qid, university_label, max_items=
             ""
         ])
 
-    out_path = Path(f"quickstatements_{university_qid}.qs")
+    out_dir = Path(out_dir) if out_dir else RESULTS_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"quickstatements_{university_qid}.qs"
     out_path.write_text("\n".join(qs_lines))
     console.print(f"[green]QuickStatements file written → {out_path}[/green]")
 

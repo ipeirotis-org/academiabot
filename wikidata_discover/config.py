@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 import os
+from pathlib import Path
 from rich.console import Console
 
 load_dotenv()
@@ -13,6 +14,9 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-6")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
+
+# All output files (CSV, QuickStatements, harvest JSON, reports, LLM cache) go here
+RESULTS_DIR = Path(__file__).parent / "results"
 
 console = Console()
 

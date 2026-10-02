@@ -6,7 +6,7 @@ from wikidata_discover.sparql_helpers import execute_sparql_bindings
 from wikidata_discover.wikidata_api import quick_wd_search
 from wikidata_discover.hierarchy       import all_descendants
 from wikidata_discover.llm_helpers import LLMHelper
-from wikidata_discover.config import console
+from wikidata_discover.config import console, RESULTS_DIR
 
 from rapidfuzz import fuzz
 import re
@@ -15,7 +15,6 @@ from rich.table import Table
 from pathlib import Path
 import pandas as pd
 
-RESULTS_DIR = Path(__file__).parent / "results"
 logger = logging.getLogger(__name__)
 
 CHILDREN_SPARQL_TEMPLATE = """
@@ -204,7 +203,8 @@ class Discovery:
         console.print(table)
 
         if missing:
-            out_file = Path(f"missing_divisions_{self.university_qid}.csv")
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            out_file = RESULTS_DIR / f"missing_divisions_{self.university_qid}.csv"
             pd.DataFrame(missing).to_csv(out_file, index=False)
             console.print(
                 f"[green]{len(missing)} missing divisions written to {out_file}.[/green]"

@@ -23,14 +23,17 @@ python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210
 That command:
 
 1. Looks up the university on Wikidata (name, website, existing child units).
-2. Asks several LLMs (OpenAI, Anthropic, Gemini), each with web search, to list the
-   university's schools and colleges.
-3. Has one LLM act as a judge to merge the lists and drop hallucinations.
+2. Asks an LLM to list the university's schools and colleges. It tries OpenAI first
+   (with web search), and falls back to Anthropic, then Gemini (without web search) only
+   if the earlier one fails or returns nothing.
+3. (Not yet in this command, see below.) The ensemble that runs several LLMs and has one
+   judge the merged list exists in the evaluation code, not in `discover`.
 4. Checks each school against what Wikidata already has (fuzzy name matching, then an
    LLM tie-breaker when names are ambiguous).
 5. Labels each school as already linked, existing but not linked to the university
    (an orphan), or missing from Wikidata entirely.
-6. Writes the missing ones to a CSV and a QuickStatements file in `wikidata_discover/results/`.
+6. Writes the missing ones to a CSV and a QuickStatements file in `wikidata_discover/results/`,
+   plus a small JSON report in `wikidata_discover/results/reports/`.
 
 **How good is it?** We hand-built the true list of schools for 12 universities
 (`wikidata_discover/eval/ground_truth.py`) and measured. The best configuration
@@ -43,6 +46,10 @@ python -m wikidata_discover.eval.run_eval
 
 **What does not exist yet:**
 
+- The `discover` command does not use the ensemble that the evaluation found best. It
+  uses one provider. Wiring the ensemble in is part of Milestone 2.
+- Web search is only on for OpenAI. Anthropic and Gemini answer from memory, so source
+  URLs they return are not verified.
 - Going one level deeper (school > department). The LLM prompt only knows about schools.
 - Running over many universities at once.
 - Anything about faculty.
@@ -142,6 +149,10 @@ We need "what are the sub-units of this unit?".
       of children wanted (schools, departments, programs), and return for each child a
       name, a website if known, a source URL, and a proposed type.
 - [ ] The response cache keyed by parent and level, so reruns are free.
+- [ ] `discover` wired to the evaluated ensemble (two generators plus a judge) instead of
+      the first provider that answers, with a flag to pick the judge.
+- [ ] Web search or grounding turned on for the Anthropic and Gemini calls too, so every
+      cited source URL comes from a real search result.
 
 **You do:**
 - [ ] Run extraction on each of your 3 schools. Score against your ground truth.
@@ -160,7 +171,8 @@ ground truth, and you have checked that cited source URLs point to real pages.
 - [ ] The same matching steps at every level (fuzzy match against existing Wikidata
       children, then the LLM tie-breaker for ambiguous names).
 - [ ] A nested JSON output of the whole tree, and QuickStatements output where each
-      department's proposed type maps to the right Wikidata class (table in AGENTS.md).
+      department's proposed type maps to the right Wikidata class (table in AGENTS.md)
+      and the parent link uses P749, not P361 as the exporter does today.
 
 **You do:**
 - [ ] Run `discover --depth 2 Q49210`. Open the tree. Spot-check 10 departments: right

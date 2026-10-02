@@ -44,8 +44,8 @@ python -m pytest tests -q
 ## Tech stack
 
 - Python 3.11+
-- Three LLM providers, each with web search and structured JSON output:
-  OpenAI Responses API, Anthropic Messages API, Google Gemini (`google-genai`)
+- Three LLM providers with structured JSON output: OpenAI Responses API (with `web_search_preview`),
+  Anthropic Messages API and Google Gemini (`google-genai`), both currently without web search or grounding
 - SPARQLWrapper for Wikidata SPARQL endpoint
 - rapidfuzz for fuzzy name matching
 - pandas for CSV I/O
@@ -92,8 +92,9 @@ Minimum statement set for any new item: label, English description, P31, P749, P
 1. `harvest`: SPARQL fetches all U.S. universities (P31/P279 -> Q3918, P17 -> Q30)
 2. `discover <QID>`: For a given university:
    a. Fetch university label + website from Wikidata
-   b. Each available LLM provider extracts candidate top-level units (schools/colleges) with web search
-   c. One provider acts as judge over the union of candidates (`judge_union`) to drop hallucinations
+   b. `extract_divisions_best_available()` tries OpenAI, then Anthropic, then Gemini, and returns the
+      first non-empty result. Only OpenAI has web search. The ensemble + judge is NOT used here yet.
+   c. (eval only) `extract_divisions_ensemble()` runs two generators and `judge_union()`; see known issue 9
    d. For each candidate: fuzzy-match against existing Wikidata children (rapidfuzz)
    e. Unmatched candidates go to LLM `choose_match` for disambiguation
    f. Results classified as: exists_linked, exists_orphan, or missing
@@ -101,8 +102,11 @@ Minimum statement set for any new item: label, English description, P31, P749, P
 
 ## LLM integration details
 
-- `extract_divisions_openai/anthropic/gemini()`: one per provider, same output shape, each with web search
-- `extract_divisions_best_available()`: runs every provider that has a key, then judges; falls back to single provider
+- `extract_divisions_openai/anthropic/gemini()`: one per provider, same output shape. Only the OpenAI call
+  enables a web search tool; the other two answer from model knowledge, so their cited URLs are unverified
+- `extract_divisions_best_available()`: first-success fallback (OpenAI, then Anthropic, then Gemini). This is
+  what `discover` calls. It does not run all providers and does not call the judge
+- `extract_divisions_ensemble()`: OpenAI + Anthropic generate, Gemini judges. Used by the eval harness only
 - `judge_union()`: one provider reviews the union of all candidates and keeps only real units
 - `choose_match()`: single-token classification (QID / ORPHAN:QID / NONE)
 - Responses are cached in `results/cache/`, keyed by (university, provider, model)
@@ -145,6 +149,11 @@ Students on this project direct agents; they do not write most of the code. So:
 6. ~~CLI `--llm` override is broken (imports `config` instead of `wikidata_discover.config`)~~ Fixed
 7. ~~No tests exist~~ Fixed: `tests/test_fuzzy.py` covers `normalize_name` and `is_fuzzy_match`
 8. Discovery only goes one level deep (schools). Departments are the current work; see TASKS.md
+9. `discover` uses `extract_divisions_best_available()` (first provider that answers), not the ensemble that
+   scored best in eval. Wiring the ensemble into `discover` is a Milestone 2 task
+10. Web search is enabled only for OpenAI. Anthropic and Gemini extraction has no search or grounding tool
+11. `to_qs_wikidata.py` links new items to the university with P361, but the data model says P749 is primary.
+    Fix when the exporter is reworked in Milestone 3
 
 ## Cloud Credentials
 
@@ -186,9 +195,9 @@ client = bigquery.Client()   # uses GOOGLE_APPLICATION_CREDENTIALS set by the Se
 rows = client.query("SELECT name FROM `nyu-datasets.academiabot.organization` WHERE parent_id = 1519").result()
 ```
 
-The SessionStart hook decrypts the service account key to a temp file and exports
-`GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `REQUESTS_CA_BUNDLE` for the
-session. If the client import fails on the container's system Python with a `_cffi_backend`
+The SessionStart hook decrypts the service account key to a private, uniquely named temp
+file for this session only, exports `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`,
+and `REQUESTS_CA_BUNDLE`, and the SessionEnd hook deletes the file. If the client import fails on the container's system Python with a `_cffi_backend`
 or `packaging` error, run this once, then `pip install -r wikidata_discover/requirements.txt`:
 
 ```bash

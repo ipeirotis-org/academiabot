@@ -4,7 +4,7 @@ A lightweight Python CLI suite for querying and synchronizing Wikidata entities.
 It provides two core commands:
 
 1. **`harvest`** – Fetch and persist a full list of all U.S. universities (Q-IDs, labels, and websites) from Wikidata to JSON for downstream analysis.
-2. **`discover`** – Identify missing top-level academic or administrative units (“divisions”) of a university by combining SPARQL queries, LLM prompts with web search (OpenAI, Anthropic, Gemini), and Wikidata API lookups, then output a CSV of items to add.
+2. **`discover`** – Identify missing top-level academic or administrative units (“divisions”) of a university by combining SPARQL queries, LLM extraction (OpenAI with web search; Anthropic and Gemini as fallbacks without web search), and Wikidata API lookups, then output a CSV of items to add.
 
 See `TASKS.md` for project status and what to work on next, and `AGENTS.md` for the code map and conventions.
 
@@ -16,7 +16,7 @@ See `TASKS.md` for project status and what to work on next, and `AGENTS.md` for 
 - **JSON export** of U.S. universities for offline reuse.
 - **Configurable** via environment variables (`.env`):
   - `OPENAI_API_KEY` – Your OpenAI API key (required)
-  - `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` – Optional; when set, all three providers run and one judges the union
+  - `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` – Optional fallbacks. `discover` uses the first provider that returns results (OpenAI first). The multi-provider ensemble with a judge is available in `eval/run_eval.py` and `LLMHelper.extract_divisions_ensemble`, but is not yet wired into `discover`.
   - `LLM_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL` – Override default models
   - `WD_BOT_USERAGENT` – Custom `User-Agent` for Wikidata/SPARQL requests (defaults to `AcademiaBot/1.0`)
 - **Rich** console output and tables for easy debugging.
