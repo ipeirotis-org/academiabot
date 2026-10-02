@@ -98,7 +98,8 @@ Minimum statement set for any new item: label, English description, P31, P749, P
    c. (eval only) `extract_divisions_ensemble()` runs two generators and `judge_union()`; see known issue 9
    d. For each candidate: fuzzy-match against existing Wikidata children (rapidfuzz)
    e. Unmatched candidates go to LLM `choose_match` for disambiguation
-   f. Results classified as: exists_linked, exists_orphan, or missing
+   f. Results classified as: exists_linked, exists_orphan, missing, or unresolved (Wikidata could not be
+      checked for that candidate; it is reported but never exported)
    g. Results exported to CSV + QuickStatements: missing entities as CREATE blocks, orphans as a single
       statement linking the existing QID to the university
 
@@ -199,7 +200,7 @@ tracks build to the same shape.
 | `runs` | command invocation | run_id, who, git commit, the exact command and arguments (subcommand, QIDs, flags), config (providers, models, depth), start and end time, outcome |
 | `llm_calls` | API call | llm_call_id, run_id, provider, model, purpose (extract, judge, match, verify), prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
 | `evidence` | web page fetched | evidence_id, run_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
-| `candidates` | unit proposed | candidate_id, run_id, parent_qid, name, unit_type, status (linked, orphan, missing), matched_qid, source_url, llm_call_ids, evidence_ids |
+| `candidates` | unit proposed | candidate_id, run_id, parent_qid, name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, llm_call_ids, evidence_ids |
 | `reviews` | one reviewer's verdict on one candidate | review_id, candidate_id, reviewer, source (expert, prolific), verdict (accept, reject, fix), corrected_value, url_checked, notes, reviewed_at |
 
 Every table has its own stable id so that a candidate's `llm_call_ids` and `evidence_ids`
