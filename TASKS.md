@@ -149,7 +149,9 @@ We need "what are the sub-units of this unit?".
 **Agent builds:**
 - [ ] Extraction functions that take any parent unit (name, website, QID) and the kind
       of children wanted (schools, departments, programs), and return for each child a
-      name, a website if known, a source URL, and a proposed type.
+      name, a website if known, a source URL, and a proposed type. One source URL per
+      unit (today the schema asks for one per response and then discards it). A unit
+      with no source URL is kept but flagged.
 - [ ] The response cache keyed by parent and level, so reruns are free.
 - [ ] `discover` wired to the evaluated ensemble (two generators plus a judge) instead of
       the first provider that answers, with a flag to pick the judge.
@@ -175,6 +177,8 @@ ground truth, and you have checked that cited source URLs point to real pages.
 - [ ] A nested JSON output of the whole tree, and QuickStatements output where each
       department's proposed type maps to the right Wikidata class (table in AGENTS.md)
       and the parent link uses P749, not P361 as the exporter does today.
+- [ ] Every exported statement carries a reference: reference URL (S854) and retrieved
+      date (S813). The exporter refuses to emit a statement that has no source URL.
 
 **You do:**
 - [ ] Run `discover --depth 2 Q49210`. Open the tree. Spot-check 10 departments: right
@@ -238,7 +242,8 @@ and then uses it.
       rows. Rejected rows are remembered so they are never proposed again.
 
 **You do:**
-- [ ] Review NYU's department proposals. Time yourself.
+- [ ] Review NYU's department proposals. Time yourself. An "accept" or "fix" verdict
+      requires a URL on the row where you saw the fact. If the LLM's URL is wrong, replace it.
 - [ ] Have Panos review the same sheet independently. Compare verdicts. Every
       disagreement is a sentence that belongs in the review guide.
 - [ ] Write the one-page review guide: what counts as a department, how to handle renamed
@@ -271,6 +276,40 @@ procedure is written down.
 
 ---
 
+## 4b. Evaluation track (Shuo): sources, LLM validation, human review
+
+This track runs in parallel with the milestones above and feeds them. Its owner is
+responsible for one question: **for every fact we propose, how do we know it is true?**
+Three answers, built in this order: a web page says so, an LLM confirms the page says so,
+a person confirms it. Nothing enters Wikidata without the third.
+
+Weekly plan, Oct 2 to Dec 10. Each week names what you ask the agent to build, what you
+do by hand, and what you hand to Panos.
+
+| Week | Dates | Agent builds | You do by hand | Deliverable |
+|---|---|---|---|---|
+| 1 | Oct 2 to 8 | Nothing yet. Setup only. | Install, run tests, run the eval harness, read `docs/BACKGROUND.md` and the 12-university ground truth. | One paragraph: what the eval harness measures and what it does not. |
+| 2 | Oct 9 to 15 | A loader for a department ground-truth CSV with a `source_url` column (Milestone 1). | Build the ground truth for Stern, Courant, Steinhardt from their websites, one URL per department. Pull the old BigQuery rows as a starting list. | Ground-truth CSV, about 40 to 60 rows, every row with a URL. |
+| 3 | Oct 16 to 22 | **Source checker.** Given a unit name and a URL: fetch the page, record HTTP status, and report whether the name (normalized) appears in the page text. Store a snapshot of the page. | Run it on every URL the LLMs cited for the 12 universities. Read 20 failures and classify them: dead link, wrong page, right page but name differs, hallucinated URL. | Table: share of cited URLs that exist and support the claim, per provider. |
+| 4 | Oct 23 to 29 | **LLM verifier.** Given a claim ("X is a department of Y") and the page text, return supported / not supported / unclear with a quoted passage. | Label 100 claim-page pairs yourself, then compare the verifier's answers to yours. | Verifier accuracy against your labels, with the confusion matrix. |
+| 5 | Oct 30 to Nov 5 | Eval harness extended to department level and per provider, plus the judge configurations (Milestone 5). | Decide, with numbers, which generator and judge combination to use for departments. | Midpoint report to Panos: precision, recall, source-support rate, verifier accuracy. |
+| 6 | Nov 6 to 12 | **Review sheet and export** (Milestone 6): review command, doubtful rows first, URL required for accept, export honors verdicts. | Review NYU's department sheet. Panos reviews the same sheet independently. Compare. | `docs/REVIEW_GUIDE.md`, one page, written from the disagreements. |
+| 7 | Nov 13 to 19 | A Prolific task template for the review sheet: 50 rows, qualification question, two workers per row, and a script that computes agreement with your verdicts. | Run the pilot on Prolific. Budget guide: about 20 cents per entity in the old project. | Pilot results: agreement with expert verdicts, time per row, cost per row, and a go or no-go on scaling. |
+| 8 | Nov 20 to 26 | Fixes for the top failure modes found in weeks 3 to 7. Light week, Thanksgiving. | Write the review protocol: who reviews what, how many reviewers, what agreement is required. | `docs/REVIEW_PROTOCOL.md`. |
+| 9 | Nov 27 to Dec 3 | QuickStatements references (S854, S813) on every statement. A pre-upload check that refuses any statement without a human-checked URL. | Verify every row of the first upload batch (Milestone 7) with the other student and Panos. Watch the uploaded items for reverts. | The first referenced, human-verified batch live on Wikidata. |
+| 10 | Dec 4 to 10 | Nothing new. Cleanup and tests. | Write the final report. | Report: all the numbers above in one place, plus what the next person should do first. |
+
+**Done when:** Every statement in the first Wikidata upload has a URL that a person has
+checked, the acceptance rate and inter-reviewer agreement are recorded, and a second
+person could run the review process from the two docs alone.
+
+**Dependencies on the other track.** Week 5 needs depth-2 discovery output (Milestone 3).
+If it is late, run the department eval on the three ground-truth schools only. Week 9
+needs the exporter rework (Milestone 3). If it is late, add references with a small
+post-processing script and fold it into the exporter afterwards.
+
+---
+
 ## 5. Stretch goals (after Milestone 7)
 
 Pick one. Each is a self-contained project with the same shape: you define the rule and
@@ -283,8 +322,9 @@ check the data, the agent builds the code.
   (employer). Start with one department before generalizing.
 - **Automated checks before upload.** A checker that rejects a QuickStatements file if
   any line is malformed, points to a nonexistent QID, or would create a duplicate.
-- **Scale up human review.** Turn the review sheet into a small web page so several
-  reviewers can work in parallel, and measure agreement between them.
+- **Scale up human review.** If the Prolific pilot (evaluation track, week 7) says go,
+  run review at scale: a small web page or a Prolific task per batch, several reviewers
+  per row, agreement measured and recorded with every upload.
 - **Beyond the U.S.** Make the country a parameter of `harvest`.
 
 ---

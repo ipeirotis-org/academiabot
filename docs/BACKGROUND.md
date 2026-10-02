@@ -80,6 +80,12 @@ the "fix" verdict with a corrected value is task 4.
 
 ## Decisions that still hold
 
+**No fact enters Wikidata without a written source that a person has checked.** The
+LLMs must cite a URL for every unit they propose, the code checks that the page exists
+and names the unit, and a reviewer confirms it before export. The reference goes into
+Wikidata with the statement (reference URL, retrieved date). Unreferenced bulk additions
+are the ones editors revert.
+
 **P749 (parent organization) is the primary link, not P361 (part of).** The earliest notes
 used P361 because it reads naturally ("Harvard College is part of Harvard"). We switched to
 P749 because it is the recommended inverse of P355 (has subsidiary), it is what Wikidata's
