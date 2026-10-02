@@ -1,10 +1,14 @@
-"""Batch runner helpers, importable without cloud access."""
+"""Batch runner helpers and run_batch itself, against a fake bucket. No network."""
 
 import json
 import os
 import time
+from pathlib import Path
 
-from wikidata_discover.batch import artifact_paths, load_done, parse_done
+import pytest
+
+import wikidata_discover.batch as batch
+from wikidata_discover.batch import artifact_paths, load_done, object_name, parse_done
 
 
 def test_artifact_paths_exact_names_and_freshness(tmp_path):
@@ -38,8 +42,139 @@ def test_parse_done_handles_garbage_lines():
     assert parse_done(text) == {"Q1"}
 
 
+def test_parse_done_last_record_wins():
+    recs = [{"qid": "Q1", "status": "ok", "uploaded": True},
+            {"qid": "Q1", "status": "ok", "uploaded": False},   # run log upload failed later
+            {"qid": "Q2", "status": "failed"},
+            {"qid": "Q2", "status": "ok", "uploaded": True}]    # retried successfully
+    assert parse_done("\n".join(json.dumps(r) for r in recs)) == {"Q2"}
+
+
+def test_object_name_never_doubles_run_prefix(tmp_path):
+    results, run_dir = tmp_path, tmp_path / "runs" / "r1"
+    assert object_name("r1", run_dir / "log.jsonl", results, run_dir) == "runs/r1/log.jsonl"
+    assert object_name("r1", results / "reports" / "Q1_report.json", results, run_dir) == "runs/r1/reports/Q1_report.json"
+    assert object_name("r1", results / "missing_divisions_Q1.csv", results, run_dir) == "runs/r1/missing_divisions_Q1.csv"
+
+
 def test_pick_qids_skips_done_and_duplicates():
     from wikidata_discover.cloud.collect_function import pick_qids
     rows = [["Q1", "a"], ["Q2", "b"], ["Q2", "b"], ["Q3", "c"], ["Q4", "d"]]
     assert pick_qids(rows, done={"Q2"}, limit=2) == ["Q1", "Q3"]
     assert pick_qids(rows, done={"Q1", "Q2", "Q3", "Q4"}, limit=5) == []
+
+
+def test_pick_qids_accepts_every_list_shape():
+    from wikidata_discover.cloud.collect_function import pick_qids, row_qid
+    binding = {"university": {"type": "uri", "value": "http://www.wikidata.org/entity/Q5"},
+               "universityLabel": {"type": "literal", "value": "Five U"}}
+    assert row_qid(binding) == "Q5"
+    assert row_qid({"univ": {"value": "http://www.wikidata.org/entity/Q6"}}) == "Q6"
+    assert pick_qids([binding, "Q7", ("Q8", "Eight"), {}], done=set(), limit=10) == ["Q5", "Q7", "Q8"]
+
+
+def test_secret_manager_keys_reach_config(monkeypatch):
+    from wikidata_discover import config
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", None)
+    monkeypatch.setattr(config, "GOOGLE_API_KEY", None)
+
+    class Payload:
+        def __init__(self, d): self.data = d
+    class Resp:
+        def __init__(self, d): self.payload = Payload(d)
+    class FakeSM:
+        def access_secret_version(self, request):
+            return Resp(f"secret-for-{request['name'].split('/')[3]}\n".encode())
+
+    batch.load_keys_from_secret_manager(client=FakeSM())
+    assert config.OPENAI_API_KEY == "sk-from-env"                     # env wins, config updated
+    assert config.ANTHROPIC_API_KEY == "secret-for-anthropic-api-key"  # stripped
+    assert os.environ["GOOGLE_API_KEY"] == "secret-for-gemini-api-key"
+
+
+def test_llm_clients_read_keys_at_call_time(monkeypatch):
+    from wikidata_discover import config, llm_helpers
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "sk-late")
+    monkeypatch.setattr(llm_helpers, "_openai_client", None)
+    assert llm_helpers._get_openai_client().api_key == "sk-late"
+
+
+# ---- run_batch against a fake bucket -------------------------------------------------
+
+class FakeBlob:
+    def __init__(self, store, name, fail_on=()):
+        self.store, self.name, self.fail_on = store, name, fail_on
+    def exists(self):
+        return self.name in self.store
+    def download_as_text(self):
+        return self.store[self.name]
+    def upload_from_filename(self, path):
+        if any(self.name.endswith(s) for s in self.fail_on):
+            raise OSError(f"simulated upload failure for {self.name}")
+        self.store[self.name] = Path(path).read_text()
+
+
+class FakeBucket:
+    def __init__(self, store=None, fail_on=()):
+        self.store = {} if store is None else store
+        self.fail_on = fail_on
+    def blob(self, name):
+        return FakeBlob(self.store, name, self.fail_on)
+
+
+class StubDiscovery:
+    """Writes the report a real Discovery would, nothing else."""
+    results_dir = None
+    def __init__(self, qid):
+        self.university_qid, self.university_label = qid, f"University {qid}"
+    def discover_missing(self):
+        d = self.results_dir / "reports"; d.mkdir(parents=True, exist_ok=True)
+        (d / f"{self.university_qid}_report.json").write_text(json.dumps({"missing": 1, "exists_orphan": 0, "unresolved": 0}))
+        return []
+
+
+@pytest.fixture
+def stub(monkeypatch, tmp_path):
+    import wikidata_discover.discovery as disc
+    StubDiscovery.results_dir = tmp_path
+    monkeypatch.setattr(disc, "Discovery", StubDiscovery)
+    monkeypatch.setattr(batch, "git_commit", lambda: "abc123")
+    return tmp_path
+
+
+def test_run_batch_uploads_log_under_run_prefix_and_dedupes(stub):
+    bucket = FakeBucket()
+    s = batch.run_batch("r1", ["Q1", "Q2", "Q1"], bucket, results_dir=stub, report=lambda m: None,
+                        invocation_args={"request": {"qids": ["Q1", "Q2", "Q1"]}})
+    assert (s["requested"], s["processed"], s["ok"], s["failed"]) == (2, 2, 2, 0)
+    assert "runs/r1/log.jsonl" in bucket.store and "runs/r1/run.json" in bucket.store
+    assert not any(k.startswith("runs/r1/runs/") for k in bucket.store)
+    assert "runs/r1/reports/Q1_report.json" in bucket.store
+    assert parse_done(bucket.store["runs/r1/log.jsonl"]) == {"Q1", "Q2"}
+    run = json.loads(bucket.store["runs/r1/run.json"])
+    assert run["args"] == {"request": {"qids": ["Q1", "Q2", "Q1"]}} and run["qids"] == ["Q1", "Q2"]
+
+
+def test_run_batch_resumes_from_bucket_and_keeps_invocation_history(stub):
+    prior_log = json.dumps({"qid": "Q1", "status": "ok", "uploaded": True}) + "\n"
+    prior_inv = json.dumps({"started": "earlier", "qids": ["Q1"]}) + "\n"
+    bucket = FakeBucket({"runs/r2/log.jsonl": prior_log, "runs/r2/invocations.jsonl": prior_inv,
+                         "runs/r2/run.json": "{}"})
+    s = batch.run_batch("r2", ["Q1", "Q2"], bucket, results_dir=stub, report=lambda m: None)
+    assert (s["skipped_done"], s["processed"]) == (1, 1)
+    assert bucket.store["runs/r2/run.json"] == "{}"                       # never rewritten on resume
+    lines = bucket.store["runs/r2/invocations.jsonl"].splitlines()
+    assert len(lines) == 2 and json.loads(lines[0])["started"] == "earlier"
+    assert json.loads(lines[1])["resumed"] is True
+
+
+def test_run_batch_run_log_upload_failure_requeues_qid(stub):
+    bucket = FakeBucket(fail_on=("log.jsonl",))
+    s = batch.run_batch("r3", ["Q1"], bucket, results_dir=stub, report=lambda m: None)
+    assert s["failed"] == 1 and s["ok"] == 1
+    assert load_done(stub / "runs" / "r3" / "log.jsonl") == set()         # local log agrees: not done
+    assert "runs/r3/log.jsonl" not in bucket.store

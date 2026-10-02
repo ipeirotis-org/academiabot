@@ -19,6 +19,16 @@ def test_search_returns_id_label_pairs(monkeypatch):
     assert wa.quick_wd_search("A") == [("Q1", "A")]
 
 
+def test_search_language_is_passed_through(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(wa.time, "sleep", lambda s: None)
+    monkeypatch.setattr(wa.requests, "get", lambda *a, **k: seen.update(k["params"]) or FakeResp(200, {"search": []}))
+    wa.quick_wd_search("A", language="es")
+    assert seen["language"] == "es"
+    wa.quick_wd_search("A")
+    assert seen["language"] == "en"
+
+
 def test_429_waits_then_retries(monkeypatch):
     sleeps, calls = [], []
     monkeypatch.setattr(wa.time, "sleep", lambda s: sleeps.append(s))

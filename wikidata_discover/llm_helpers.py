@@ -7,12 +7,10 @@ import hashlib
 from pathlib import Path
 
 from wikidata_discover import config
-from wikidata_discover.config import (
-    OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY,
-    require_key,
-)
-# Model names are read from config at call time (config.LLM_MODEL etc.), never
-# captured at import, so that the CLI --llm override and tests can change them.
+from wikidata_discover.config import require_key
+# Model names and API keys are read from config at call time (config.LLM_MODEL,
+# config.OPENAI_API_KEY etc.), never captured at import, so that the CLI --llm
+# override, Secret Manager loading in batch.py, and tests can change them.
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -98,7 +96,7 @@ def _get_openai_client():
     global _openai_client
     if _openai_client is None:
         from openai import OpenAI
-        _openai_client = OpenAI(api_key=require_key("OPENAI_API_KEY", OPENAI_API_KEY))
+        _openai_client = OpenAI(api_key=require_key("OPENAI_API_KEY", config.OPENAI_API_KEY))
     return _openai_client
 
 
@@ -107,7 +105,7 @@ def _get_anthropic_client():
     if _anthropic_client is None:
         import anthropic
         _anthropic_client = anthropic.Anthropic(
-            api_key=require_key("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY)
+            api_key=require_key("ANTHROPIC_API_KEY", config.ANTHROPIC_API_KEY)
         )
     return _anthropic_client
 
@@ -116,7 +114,7 @@ def _get_gemini_client():
     global _gemini_client
     if _gemini_client is None:
         from google import genai
-        _gemini_client = genai.Client(api_key=require_key("GOOGLE_API_KEY", GOOGLE_API_KEY))
+        _gemini_client = genai.Client(api_key=require_key("GOOGLE_API_KEY", config.GOOGLE_API_KEY))
     return _gemini_client
 
 # ─────────────────────────  NAME MATCHING  ─────────────────────────

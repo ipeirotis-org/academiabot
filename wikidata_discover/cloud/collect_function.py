@@ -7,7 +7,8 @@ upload everything, and return a JSON summary. Cloud Scheduler calls it on a sche
 
 Request JSON (all optional):
   run_id            default "cloud-<yyyy-mm-dd>"; keep it fixed for a multi-day run
-  list_object       default "universities_us.json" (bucket object: [[qid, label], ...])
+  list_object       default "universities_us.json" (bucket object: [[qid, label], ...],
+                    [qid, ...], or the SPARQL binding rows that `harvest` writes)
   max_universities  default 60, cap per invocation independent of the time budget
   time_budget_s     default 3000 (50 minutes; the function timeout is 60)
   qids              explicit list, overrides list_object
@@ -28,13 +29,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def row_qid(row) -> str:
+    """QID of one university-list row. Accepts the three shapes we have used:
+    "Q1", ["Q1", "label"], and the SPARQL binding dict that `harvest` writes
+    ({"university": {"value": "http://www.wikidata.org/entity/Q1"}, ...})."""
+    if isinstance(row, dict):
+        value = (row.get("university") or row.get("univ") or {}).get("value", "")
+    elif isinstance(row, (list, tuple)):
+        value = row[0]
+    else:
+        value = row
+    return str(value).rsplit("/", 1)[-1]
+
+
 def pick_qids(list_rows, done: set, limit: int):
     """First `limit` QIDs from the bucket list that are not done, in list order,
-    de-duplicated. list_rows is [[qid, label], ...] or [qid, ...]."""
+    de-duplicated. Rows may be any shape row_qid() accepts."""
     seen, out = set(), []
     for row in list_rows:
-        qid = row[0] if isinstance(row, (list, tuple)) else row
-        if qid in seen or qid in done:
+        qid = row_qid(row)
+        if not qid or qid in seen or qid in done:
             continue
         seen.add(qid)
         out.append(qid)
@@ -57,9 +71,12 @@ def collect(request):
     from google.cloud import storage
     bucket = storage.Client(project=PROJECT).bucket(BUCKET)
 
+    args = {"request": body, "run_id": run_id, "list_object": None, "max_universities": limit,
+            "time_budget_s": budget, "explicit_qids": bool(body.get("qids"))}
     if body.get("qids"):
         qids = list(body["qids"])
     else:
+        args["list_object"] = list_object
         rows = json.loads(bucket.blob(list_object).download_as_text())
         log_blob = bucket.blob(f"runs/{run_id}/log.jsonl")
         done = parse_done(log_blob.download_as_text()) if log_blob.exists() else set()
@@ -67,5 +84,5 @@ def collect(request):
         if not qids:
             return jsonify({"run_id": run_id, "message": "nothing left to do", "done": len(done)})
 
-    summary = run_batch(run_id, qids, bucket, time_budget_s=budget, report=logger.info)
+    summary = run_batch(run_id, qids, bucket, time_budget_s=budget, report=logger.info, invocation_args=args)
     return jsonify(summary), (200 if summary["failed"] == 0 else 207)

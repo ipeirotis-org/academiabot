@@ -25,12 +25,13 @@ class WikidataRateLimited(Exception):
         "Wikidata search retry #%d after %s", rs.attempt_number, rs.outcome.exception()
     ),
 )
-def quick_wd_search(label: str) -> List[Tuple[str, str]]:
-    """Search Wikidata labels. Honors Retry-After on 429 instead of failing fast."""
+def quick_wd_search(label: str, language: str = "en") -> List[Tuple[str, str]]:
+    """Search Wikidata labels and aliases in `language`. Honors Retry-After on 429
+    instead of failing fast."""
     time.sleep(_WD_API_DELAY)
     resp = requests.get(
         _SEARCH_URL,
-        params={"action": "wbsearchentities", "format": "json", "language": "en", "limit": 10, "search": label},
+        params={"action": "wbsearchentities", "format": "json", "language": language, "limit": 10, "search": label},
         headers={"User-Agent": USER_AGENT},
         timeout=30,
     )

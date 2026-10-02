@@ -28,7 +28,8 @@ def main(argv=None) -> int:
                         handlers=[logging.FileHandler(run_dir / "pipeline.log"), logging.StreamHandler()])
     from google.cloud import storage
     bucket = storage.Client(project=PROJECT).bucket(BUCKET)
-    summary = run_batch(run_id, qids, bucket, report=lambda s: print(s, flush=True))
+    summary = run_batch(run_id, qids, bucket, report=lambda s: print(s, flush=True),
+                        invocation_args={"argv": ["batch_collect", *argv]})
     print("BATCH DONE" + (" WITH FAILURES" if summary["failed"] else ""), summary, flush=True)
     return 1 if summary["failed"] else 0
 

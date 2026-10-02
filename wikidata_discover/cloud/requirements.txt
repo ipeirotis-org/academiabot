@@ -1,4 +1,6 @@
-functions-framework>=3.0\nflask\nopenai
+functions-framework>=3.0
+flask
+openai
 python-dotenv
 rich
 pandas
