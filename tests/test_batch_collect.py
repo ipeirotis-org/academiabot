@@ -66,6 +66,20 @@ def test_parse_done_gives_up_on_repeated_failures():
     failed = {"qid": "Q1", "started": "t", "status": "failed", "error": "ValueError: no units"}
     assert parse_done("\n".join(json.dumps(r) for r in [failed, failed])) == set()       # retry
     assert parse_done("\n".join(json.dumps(r) for r in [failed, failed, failed])) == {"Q1"}  # leave it
+    three = "\n".join(json.dumps(r) for r in [failed, failed, failed,
+                                              {"qid": "Q2", "started": "t", "status": "ok", "uploaded": True}])
+    assert batch.parse_states(three) == {"Q1": "exhausted", "Q2": "done"}
+    assert batch.parse_exhausted(three) == {"Q1"}                                        # distinct from done
+
+
+def test_summary_counts_universities_that_need_a_person(stub):
+    failed = {"qid": "QFAIL", "started": "t", "status": "failed", "error": "x"}
+    log = "\n".join(json.dumps(failed) for _ in range(3)) + "\n"
+    bucket = FakeBucket({"runs/r23/log.jsonl": log, "runs/r23/run.json": "{}"})
+    s = batch.run_batch("r23", ["QFAIL"], bucket, results_dir=stub, report=lambda m: None)
+    assert s["skipped_done"] == 1 and s["needs_review"] == 1
+    end = json.loads(bucket.store["runs/r23/invocations.jsonl"].splitlines()[-1])
+    assert end["summary"]["needs_review"] == 1
 
 
 def test_empty_llm_answers_raise_instead_of_an_empty_report(monkeypatch):
@@ -206,10 +220,15 @@ def test_parse_request_rejects_non_objects_and_bad_lists():
 def test_caller_identity_from_scheduler_header_or_verified_token():
     import base64, json
     import wikidata_discover.cloud.collect_function as cf
-    assert cf.caller_identity({"X-CloudScheduler-JobName": "academiabot-collect-slice"}) == "cloud-scheduler:academiabot-collect-slice"
-    payload = base64.urlsafe_b64encode(json.dumps({"email": "panos@example.org"}).encode()).decode().rstrip("=")
-    token = f"aaa.{payload}.sig"
-    assert cf.caller_identity({"Authorization": f"Bearer {token}"}) == "manual:panos@example.org"
+    def bearer(email):
+        payload = base64.urlsafe_b64encode(json.dumps({"email": email}).encode()).decode().rstrip("=")
+        return f"Bearer aaa.{payload}.sig"
+    job = {"X-CloudScheduler-JobName": "academiabot-collect-slice"}
+    # the job header counts only with the scheduler account's own verified token
+    assert cf.caller_identity({**job, "Authorization": bearer(cf.SCHEDULER_SA)}) == "cloud-scheduler:academiabot-collect-slice"
+    assert cf.caller_identity({**job, "Authorization": bearer("panos@example.org")}) == "manual:panos@example.org"
+    assert cf.caller_identity(job) == "manual:unknown caller"
+    assert cf.caller_identity({"Authorization": bearer("panos@example.org")}) == "manual:panos@example.org"
     assert cf.caller_identity({"Authorization": "Bearer not-a-jwt"}) == "manual:unknown caller"
     assert cf.caller_identity({"X-Goog-Authenticated-User-Email": "forged@example.org"}) == "manual:unknown caller"
 

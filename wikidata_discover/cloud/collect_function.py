@@ -70,24 +70,34 @@ def pick_qids(list_rows, done: set, limit: int):
     return out
 
 
-def caller_identity(headers) -> str:
-    """Who made this request. The scheduler names its job in a header. Any other
-    caller reached us with a Google ID token that Cloud Run IAM already verified
-    before the request was delivered, so its `email` claim can be read from the
-    token's payload without a second verification. Nothing else is trusted."""
-    job = headers.get("X-CloudScheduler-JobName")
-    if job:
-        return f"cloud-scheduler:{job}"
+# The account Cloud Scheduler calls with (deploy script: --oidc-service-account-email).
+SCHEDULER_SA = os.getenv("SCHEDULER_SA", "claude-agent@wikidata-academia.iam.gserviceaccount.com")
+
+
+def token_email(headers) -> str:
+    """Email claim of the bearer ID token, or "". Cloud Run IAM verified the token
+    before delivering the request, so the claim can be read without a second
+    signature check. Anything else in the request is not trusted for identity."""
     auth = headers.get("Authorization", "")
     if auth.startswith("Bearer ") and auth.count(".") == 2:
         try:
             payload = auth.split(" ", 1)[1].split(".")[1]
             claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-            if claims.get("email"):
-                return f"manual:{claims['email']}"
+            return str(claims.get("email") or "")
         except Exception:  # noqa: BLE001 - an unreadable token is just an unknown caller
             pass
-    return "manual:unknown caller"
+    return ""
+
+
+def caller_identity(headers) -> str:
+    """Who made this request: "cloud-scheduler:<job>" only when the verified token
+    belongs to the scheduler's account and the scheduler's job header is present;
+    otherwise "manual:<email>" from the verified token, or "manual:unknown caller"."""
+    email = token_email(headers)
+    job = headers.get("X-CloudScheduler-JobName")
+    if job and email == SCHEDULER_SA:
+        return f"cloud-scheduler:{job}"
+    return f"manual:{email}" if email else "manual:unknown caller"
 
 
 def parse_request(body) -> dict:
@@ -169,4 +179,6 @@ def collect(request):
         summary["message"] = "preflight failed: " + args["preflight_error"]
     elif not qids:
         summary["message"] = "nothing left to do" if "list_done" in args else "no QIDs requested"
+        if summary.get("needs_review"):
+            summary["message"] += f"; {summary['needs_review']} universities were given up on and need a person"
     return jsonify(summary), (200 if summary["failed"] == 0 else 207)

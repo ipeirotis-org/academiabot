@@ -43,16 +43,17 @@ def artifact_paths(results_dir: Path, run_dir: Path, qid: str, since: float, ext
 MAX_ATTEMPTS = 3  # attempts at a university before it is left for a person to look at
 
 
-def parse_done(log_text: str, max_attempts: int = MAX_ATTEMPTS) -> set:
-    """QIDs that need no further attempt: discovery succeeded, the files reached the
-    bucket, and every candidate was checked against Wikidata.
+def parse_states(log_text: str, max_attempts: int = MAX_ATTEMPTS) -> dict:
+    """State of every QID in a run log: "done", "exhausted", or "pending".
 
-    The last record for a QID wins, so a later record with uploaded=false (written
-    when the run log itself failed to upload) puts the QID back in the queue. A
-    university with unresolved candidates (Wikidata could not be searched) or a
-    failed attempt is retried, up to max_attempts attempts in total; after that it is
-    left alone and its log records are for a person to read (a QID that fails three
-    times is usually not a university, or the LLM found nothing for it)."""
+    done: discovery succeeded, the files reached the bucket, and every candidate was
+    checked against Wikidata. The last record for a QID wins, so a later record with
+    uploaded=false (written when the run log itself failed to upload) puts the QID
+    back to pending. A university with unresolved candidates (Wikidata could not be
+    searched) or a failed attempt is pending, and retried, until it has had
+    max_attempts attempts; then it is exhausted: no more attempts, and its log
+    records are for a person to read (a QID that fails three times is usually not a
+    university, or the LLM found nothing for it)."""
     last, attempts = {}, {}
     for line in log_text.splitlines():
         try:
@@ -62,10 +63,21 @@ def parse_done(log_text: str, max_attempts: int = MAX_ATTEMPTS) -> set:
                 attempts[qid] = attempts.get(qid, 0) + 1
             complete = rec.get("status") == "ok" and bool(rec.get("uploaded"))
             unresolved = rec.get("unresolved_rows") or 0
-            last[qid] = (complete and unresolved == 0) or attempts.get(qid, 0) >= max_attempts
+            last[qid] = "done" if (complete and unresolved == 0) else "pending"
         except Exception:
             pass
-    return {qid for qid, ok in last.items() if ok}
+    return {qid: ("exhausted" if state == "pending" and attempts.get(qid, 0) >= max_attempts else state)
+            for qid, state in last.items()}
+
+
+def parse_done(log_text: str, max_attempts: int = MAX_ATTEMPTS) -> set:
+    """QIDs that need no further attempt: done, or exhausted (left for a person)."""
+    return {qid for qid, state in parse_states(log_text, max_attempts).items() if state != "pending"}
+
+
+def parse_exhausted(log_text: str, max_attempts: int = MAX_ATTEMPTS) -> set:
+    """QIDs given up on after max_attempts attempts. A person has to look at them."""
+    return {qid for qid, state in parse_states(log_text, max_attempts).items() if state == "exhausted"}
 
 
 def load_done(log_path: Path) -> set:
@@ -314,6 +326,9 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
             return summary
         report(f"bucket sync failed, continuing from local state: {sync_error}")
     done = load_done(log_path)
+    # Universities given up on (3 attempts) are not retried, but they are not finished
+    # either: the summary and the end record carry the count so a person looks at them.
+    summary["needs_review"] = len(parse_exhausted(log_path.read_text())) if log_path.exists() else 0
 
     invocation = {"started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "git_commit": git_commit(),
                   "operator": operator_identity(),

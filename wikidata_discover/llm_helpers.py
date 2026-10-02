@@ -91,6 +91,20 @@ _openai_client = None
 _anthropic_client = None
 _gemini_client = None
 LLM_TIMEOUT_S = 180  # one LLM request; the SDK defaults (10 minutes) are too long for a timed slice
+_MIN_TIME_FOR_LLM_CALL_S = 30  # below this much time before config.DEADLINE, no LLM call is started
+
+
+def llm_timeout() -> float:
+    """Timeout for one LLM request: LLM_TIMEOUT_S, or less when config.DEADLINE is
+    closer (never below 5 seconds)."""
+    left = config.seconds_left()
+    return LLM_TIMEOUT_S if left is None else max(5.0, min(LLM_TIMEOUT_S, left))
+
+
+def enough_time_for_llm_call() -> bool:
+    """False once config.DEADLINE is too close to start another LLM request."""
+    left = config.seconds_left()
+    return left is None or left >= _MIN_TIME_FOR_LLM_CALL_S
 
 
 def reset_clients() -> None:
@@ -122,7 +136,9 @@ def _get_gemini_client():
     global _gemini_client
     if _gemini_client is None:
         from google import genai
-        _gemini_client = genai.Client(api_key=require_key("GOOGLE_API_KEY", config.GOOGLE_API_KEY))
+        from google.genai import types as genai_types
+        _gemini_client = genai.Client(api_key=require_key("GOOGLE_API_KEY", config.GOOGLE_API_KEY),
+                                      http_options=genai_types.HttpOptions(timeout=int(LLM_TIMEOUT_S * 1000)))
     return _gemini_client
 
 # ─────────────────────────  NAME MATCHING  ─────────────────────────
@@ -238,8 +254,11 @@ class LLMHelper:
         client = _get_openai_client()
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
+            if not enough_time_for_llm_call():
+                logger.warning("extract_divisions_openai: deadline too close, not calling for %s", univ_label)
+                break
             try:
-                resp = client.responses.create(
+                resp = client.with_options(timeout=llm_timeout()).responses.create(
                     model=model,
                     input=[
                         {"role": "system", "content": SYSTEM_EXTRACT},
@@ -302,8 +321,11 @@ class LLMHelper:
         client = _get_anthropic_client()
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
+            if not enough_time_for_llm_call():
+                logger.warning("extract_divisions_anthropic: deadline too close, not calling for %s", univ_label)
+                break
             try:
-                resp = client.messages.create(
+                resp = client.with_options(timeout=llm_timeout()).messages.create(
                     model=model,
                     max_tokens=2048,
                     system=SYSTEM_EXTRACT,
@@ -368,6 +390,9 @@ class LLMHelper:
         client = _get_gemini_client()
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
+            if not enough_time_for_llm_call():
+                logger.warning("extract_divisions_gemini: deadline too close, not calling for %s", univ_label)
+                break
             try:
                 from google.genai import types as genai_types
 
@@ -376,11 +401,11 @@ class LLMHelper:
                     contents=[
                         genai_types.Content(
                             parts=[
-                                genai_types.Part.from_text(f"System: {SYSTEM_EXTRACT}\n\nInput: {univ_label} -- {website}")
+                                genai_types.Part.from_text(text=f"System: {SYSTEM_EXTRACT}\n\nInput: {univ_label} -- {website}")
                             ]
                         )
                     ],
-                    generation_config=genai_types.GenerationConfig(
+                    config=genai_types.GenerateContentConfig(
                         temperature=0.7,
                         max_output_tokens=2048,
                     ),
@@ -564,8 +589,8 @@ class LLMHelper:
                 from google.genai import types as genai_types
                 resp = client.models.generate_content(
                     model=config.GEMINI_MODEL,
-                    contents=[genai_types.Content(parts=[genai_types.Part.from_text(prompt)])],
-                    generation_config=genai_types.GenerationConfig(max_output_tokens=1024),
+                    contents=[genai_types.Content(parts=[genai_types.Part.from_text(text=prompt)])],
+                    config=genai_types.GenerateContentConfig(max_output_tokens=1024),
                 )
                 raw_text = resp.text if resp.text else None
                 # Extract JSON if wrapped in markdown
@@ -631,9 +656,12 @@ class LLMHelper:
             return parse_match_answer(cached["answer"], children)
 
         for provider_name, get_client, model in providers:
+            if not enough_time_for_llm_call():
+                logger.warning("choose_match: deadline too close, not calling for candidate '%s'", candidate)
+                break
             try:
                 if provider_name == "openai":
-                    client = get_client()
+                    client = get_client().with_options(timeout=llm_timeout())
                     resp = client.responses.create(
                         model=model,
                         input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
@@ -642,7 +670,7 @@ class LLMHelper:
                     answer = (resp.output_text or "").strip()
 
                 elif provider_name == "anthropic":
-                    client = get_client()
+                    client = get_client().with_options(timeout=llm_timeout())
                     resp = client.messages.create(
                         model=model,
                         max_tokens=16,
@@ -655,7 +683,7 @@ class LLMHelper:
                     from google.genai import types as genai_types
                     resp = client.models.generate_content(
                         model=model,
-                        contents=[genai_types.Content(parts=[genai_types.Part.from_text(prompt)])],
+                        contents=[genai_types.Content(parts=[genai_types.Part.from_text(text=prompt)])],
                     )
                     answer = (resp.text or "").strip()
 

@@ -59,6 +59,31 @@ def test_search_retry_stops_at_the_deadline(monkeypatch):
     assert calls and all(t <= 12 for t in calls)                 # timeout capped by the deadline
 
 
+def test_llm_calls_respect_the_deadline(monkeypatch):
+    import wikidata_discover.llm_helpers as lh
+    from wikidata_discover.llm_helpers import LLMHelper
+    monkeypatch.setattr(config, "DEADLINE", None)
+    assert lh.llm_timeout() == lh.LLM_TIMEOUT_S and lh.enough_time_for_llm_call()
+    monkeypatch.setattr(config, "DEADLINE", time.time() + 50)
+    assert 40 <= lh.llm_timeout() <= 50 and lh.enough_time_for_llm_call()
+    monkeypatch.setattr(config, "DEADLINE", time.time() + 10)      # under the 30 s floor
+    assert not lh.enough_time_for_llm_call()
+
+    calls = []
+    class Client:
+        def with_options(self, **kw):
+            calls.append(kw); return self
+        class responses:
+            @staticmethod
+            def create(**kw):
+                raise AssertionError("must not be called this close to the deadline")
+    monkeypatch.setattr(lh, "_get_openai_client", lambda: Client())
+    monkeypatch.setattr(lh, "_load_cache", lambda key: None)
+    assert LLMHelper.extract_divisions_openai("Some University", "https://x.edu") == []
+    assert LLMHelper.choose_match("Law School", "Some University", [("Q1", "School of Law")]) is None
+    assert calls == []                                               # no request was even prepared
+
+
 def test_run_batch_sets_and_clears_the_deadline(monkeypatch, tmp_path):
     import wikidata_discover.batch as batch
     import wikidata_discover.discovery as disc

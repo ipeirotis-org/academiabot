@@ -26,12 +26,18 @@ def test_choose_match_reuses_a_cached_decision(monkeypatch, tmp_path):
         class R:
             output_text = "ORPHAN:Q2"
         class Client:
+            def with_options(self, **kw):
+                return self
             class responses:
                 @staticmethod
                 def create(**kw):
                     calls.append(1); return R()
         return Client()
+    def unavailable():
+        raise ValueError("not configured in this test")
     monkeypatch.setattr(lh, "_get_openai_client", fake_client)
+    monkeypatch.setattr(lh, "_get_anthropic_client", unavailable)
+    monkeypatch.setattr(lh, "_get_gemini_client", unavailable)
 
     first = LLMHelper.choose_match("Law School", "NYU", children)
     second = LLMHelper.choose_match("Law School", "NYU", children)

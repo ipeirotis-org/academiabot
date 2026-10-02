@@ -183,6 +183,9 @@ checks and the human review (section 5). So:
     Fix when the exporter is reworked in Milestone 3
 12. ~~`choose_match()` could never return an orphan: it compared the whole `ORPHAN:QID` token to bare QIDs~~
     Fixed: `parse_match_answer()` handles QID, ORPHAN:QID, and NONE, with tests
+13. ~~Every Gemini call failed with `Part.from_text() takes 1 positional argument`: the code used an
+    old `google-genai` signature~~ Fixed: `Part.from_text(text=...)` and `config=GenerateContentConfig(...)`.
+    Gemini had silently never worked as a fallback or judge
 
 ## Cloud Credentials
 
@@ -276,7 +279,10 @@ flowchart LR
   LLM answers.
 - Hard deadline: the function passes its own timeout (1800 s) to the batch runner, which sets
   `config.DEADLINE` 90 s before it. Wikidata requests, retries, and 429 waits stop at that
-  point, and LLM requests time out after 180 s, so the attempt's records are always written.
+  point; LLM requests time out after 180 s (or sooner, at the deadline) and no LLM call starts
+  in the last 30 s, so the attempt's records are always written.
+- `needs_review` in every summary and end record: universities given up on after 3 attempts.
+  They are skipped by later slices, not finished. Their log records say why.
 - Deployed 2026-10-02: function `academiabot-collect` (us-east1), scheduler job
   `academiabot-collect-slice` (paused). The Cloud Functions, Run, Build, Artifact Registry,
   Scheduler, Eventarc, and Resource Manager APIs are enabled. The service account cannot
