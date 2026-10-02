@@ -114,7 +114,7 @@ def test_run_batch_sets_and_clears_the_deadline(monkeypatch, tmp_path):
         def __init__(self, store, name): self.store, self.name = store, name
         def exists(self): return self.name in self.store
         def download_as_text(self): return self.store[self.name]
-        def upload_from_filename(self, p): self.store[self.name] = open(p).read()
+        def upload_from_filename(self, p, **kw): self.store[self.name] = open(p).read()
         def delete(self): self.store.pop(self.name, None)
     class Bucket:
         store = {}

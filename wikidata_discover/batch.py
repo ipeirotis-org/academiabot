@@ -306,9 +306,15 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     log_path = run_dir / "log.jsonl"
 
     def upload(paths) -> int:
+        # Each upload is bounded by the process deadline, like every other network
+        # call, and none starts after it: a stalled bucket must not eat the shutdown
+        # buffer in which the attempt's records get written.
+        from wikidata_discover.sparql_helpers import check_deadline, request_timeout
         n = 0
         for p in paths:
-            bucket.blob(object_name(run_id, p, results_dir, run_dir)).upload_from_filename(str(p)); n += 1
+            check_deadline("an upload")
+            bucket.blob(object_name(run_id, p, results_dir, run_dir)).upload_from_filename(
+                str(p), timeout=request_timeout(60)); n += 1
         return n
 
     summary = {"run_id": run_id, "requested": len(qids), "skipped_done": 0, "processed": 0, "ok": 0,
@@ -327,14 +333,16 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     except Exception as e:  # noqa: BLE001
         sync_error = f"{type(e).__name__}: {str(e)[:120]}"
         summary["failed"] += 1
-        if not log_path.exists():
-            # Cold start with no local state: nothing is known about the run, so doing
-            # work would re-run finished universities and a later upload would wipe the
-            # bucket's history. Record the failed invocation locally and stop.
+        if not (log_path.exists() and (run_dir / "invocations.jsonl").exists()):
+            # Cold start with incomplete local state: one of the append-only files is
+            # unknown, so doing work would re-run finished universities, and a later
+            # upload of a fresh file would wipe the bucket's history of it. Record the
+            # refused invocation in a file of its own (never one that could replace
+            # bucket history) and stop.
             report(f"bucket sync failed on a cold start; refusing to run blind: {sync_error}")
             summary.update({"outcome": "failed", "sync_error": sync_error})
             ended = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            with (run_dir / "invocations.jsonl").open("a") as f:
+            with (run_dir / "refused.jsonl").open("a") as f:
                 f.write(json.dumps({"invocation_id": invocation_id, "started": ended, "ended": ended,
                                     "host": os.getenv("K_SERVICE", "local"),
                                     "operator": operator_identity(), "qids": qids, "outcome": "failed",

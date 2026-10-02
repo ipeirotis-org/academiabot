@@ -271,7 +271,9 @@ flowchart LR
   units, and that counts as a failure).
   `invocations.jsonl` has a start record and an end record (end time, outcome, summary)
   for every invocation; both carry an `invocation_id`, and so does every QID record that
-  invocation wrote, so the history can be reconstructed exactly.
+  invocation wrote, so the history can be reconstructed exactly. An invocation that refused
+  to run (cold instance, bucket unreachable) is recorded in `refused.jsonl` instead, a file
+  that can never replace bucket history.
 - A run id is one safe path component (letters, digits, `.`, `-`, `_`, max 100). Anything
   else is refused, because it names a folder under `results/runs` and a bucket prefix.
 - Request body (all optional): `run_id`, `list_object`, `max_universities` (60), `time_budget_s`

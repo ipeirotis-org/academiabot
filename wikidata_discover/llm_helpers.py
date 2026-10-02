@@ -106,6 +106,12 @@ def llm_timeout() -> float:
     return LLM_TIMEOUT_S if left is None else max(5.0, min(LLM_TIMEOUT_S, left))
 
 
+def _gemini_http_options():
+    """Per-request Gemini timeout, capped at the deadline like the other providers."""
+    from google.genai import types as genai_types
+    return genai_types.HttpOptions(timeout=int(llm_timeout() * 1000))
+
+
 def enough_time_for_llm_call() -> bool:
     """False once config.DEADLINE is too close to start another LLM request."""
     left = config.seconds_left()
@@ -413,6 +419,7 @@ class LLMHelper:
                     config=genai_types.GenerateContentConfig(
                         temperature=0.7,
                         max_output_tokens=2048,
+                        http_options=_gemini_http_options(),
                     ),
                 )
 
@@ -595,7 +602,7 @@ class LLMHelper:
                 resp = client.models.generate_content(
                     model=config.GEMINI_MODEL,
                     contents=[genai_types.Content(parts=[genai_types.Part.from_text(text=prompt)])],
-                    config=genai_types.GenerateContentConfig(max_output_tokens=1024),
+                    config=genai_types.GenerateContentConfig(max_output_tokens=1024, http_options=_gemini_http_options()),
                 )
                 raw_text = resp.text if resp.text else None
                 # Extract JSON if wrapped in markdown
@@ -691,6 +698,7 @@ class LLMHelper:
                     resp = client.models.generate_content(
                         model=model,
                         contents=[genai_types.Content(parts=[genai_types.Part.from_text(text=prompt)])],
+                        config=genai_types.GenerateContentConfig(max_output_tokens=16, http_options=_gemini_http_options()),
                     )
                     answer = (resp.text or "").strip()
 

@@ -77,8 +77,10 @@ SCHEDULER_SA = os.getenv("SCHEDULER_SA", "claude-agent@wikidata-academia.iam.gse
 def token_email(headers) -> str:
     """Email claim of the bearer ID token, or "". Cloud Run IAM verified the token
     before delivering the request, so the claim can be read without a second
-    signature check. Anything else in the request is not trusted for identity."""
-    auth = headers.get("Authorization", "")
+    signature check. When both headers are present Cloud Run checks only
+    X-Serverless-Authorization, so that one is read first; Authorization is used
+    only when it is the sole header. Nothing else is trusted for identity."""
+    auth = headers.get("X-Serverless-Authorization") or headers.get("Authorization", "")
     if auth.startswith("Bearer ") and auth.count(".") == 2:
         try:
             payload = auth.split(" ", 1)[1].split(".")[1]
@@ -124,6 +126,7 @@ def parse_request(body) -> dict:
 
 @functions_framework.http
 def collect(request):
+    entered = time.time()   # the platform's timeout counts from here, not from run_batch
     headers = getattr(request, "headers", {}) or {}
     os.environ["ACADEMIABOT_OPERATOR"] = caller_identity(headers)
     raw = request.get_json(silent=True)
@@ -175,7 +178,7 @@ def collect(request):
     # An empty list still goes through run_batch so the invocation is recorded; a
     # preflight failure is passed in so the recorded outcome is failed, not ok.
     summary = run_batch(run_id, qids, bucket, time_budget_s=budget, reserve_s=reserve,
-                        hard_deadline_s=FUNCTION_TIMEOUT_S, report=logger.info,
+                        hard_deadline_s=FUNCTION_TIMEOUT_S - (time.time() - entered), report=logger.info,
                         invocation_args=args, fail_reason=args.get("preflight_error"))
     if "preflight_error" in args:
         summary["message"] = "preflight failed: " + args["preflight_error"]

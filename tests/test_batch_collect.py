@@ -237,7 +237,7 @@ def test_collect_records_a_bad_request(monkeypatch):
         resp, status = cf.collect(Req())
     assert status == 207 and calls["qids"] == []
     assert calls["fail_reason"].startswith("bad request: max_universities must be a number")
-    assert calls["hard_deadline_s"] == 1800
+    assert 1790 < calls["hard_deadline_s"] <= 1800                 # measured from handler entry
 
 
 def test_parse_request_rejects_non_objects_and_bad_lists():
@@ -264,6 +264,35 @@ def test_caller_identity_from_scheduler_header_or_verified_token():
     assert cf.caller_identity({"Authorization": bearer("panos@example.org")}) == "manual:panos@example.org"
     assert cf.caller_identity({"Authorization": "Bearer not-a-jwt"}) == "manual:unknown caller"
     assert cf.caller_identity({"X-Goog-Authenticated-User-Email": "forged@example.org"}) == "manual:unknown caller"
+    # with both headers Cloud Run verified only X-Serverless-Authorization: Authorization is ignored
+    both = {"X-Serverless-Authorization": bearer("real@example.org"), "Authorization": bearer(cf.SCHEDULER_SA), **job}
+    assert cf.caller_identity(both) == "manual:real@example.org"
+
+
+def test_uploads_are_bounded_by_the_deadline(stub, monkeypatch):
+    import wikidata_discover.config as config
+    bucket = FakeBucket()
+    batch.run_batch("r26", ["Q1"], bucket, results_dir=stub, report=lambda m: None, hard_deadline_s=1800)
+    assert all(t is not None and t <= 60 for t in bucket.store["__timeouts__"])     # every upload has a timeout
+    # deadline already passed: no upload starts, the QID is not marked uploaded, the run is failed
+    class Stuck:
+        def __init__(self, qid): self.university_qid, self.university_label = qid, qid
+        def discover_missing(self):
+            config.DEADLINE = time.time() - 1; return []
+    import wikidata_discover.discovery as disc
+    monkeypatch.setattr(disc, "Discovery", Stuck)
+    bucket = FakeBucket()
+    s = batch.run_batch("r27", ["Q1"], bucket, results_dir=stub, report=lambda m: None, hard_deadline_s=1800)
+    rec = json.loads((stub / "runs" / "r27" / "log.jsonl").read_text().splitlines()[0])
+    assert rec["uploaded"] is False and s["outcome"] == "failed"
+    assert "runs/r27/reports/Q1_report.json" not in bucket.store
+
+
+def test_batch_collect_refuses_a_bad_run_id_before_touching_disk(monkeypatch, tmp_path):
+    import wikidata_discover.scripts.batch_collect as bc
+    monkeypatch.setattr(bc, "RESULTS_DIR", tmp_path)
+    assert bc.main(["../escape", "Q1"]) == 2
+    assert not (tmp_path.parent / "escape").exists() and not list(tmp_path.iterdir())
 
 
 def test_batch_collect_records_an_initialisation_failure(monkeypatch, tmp_path):
@@ -420,10 +449,11 @@ class FakeBlob:
         return self.name in self.store
     def download_as_text(self):
         return self.store[self.name]
-    def upload_from_filename(self, path):
+    def upload_from_filename(self, path, timeout=None, **kw):
         if any(self.name.endswith(s) for s in self.fail_on):
             raise OSError(f"simulated upload failure for {self.name}")
         self.store[self.name] = Path(path).read_text()
+        self.store.setdefault("__timeouts__", []).append(timeout) if isinstance(self.store.get("__timeouts__", []), list) else None
     def delete(self):
         del self.store[self.name]
 
@@ -615,14 +645,31 @@ def test_run_batch_survives_an_unreachable_bucket(stub):
     # Cold start (no local log): refuse to run, record the failure, touch nothing else.
     s = batch.run_batch("r15", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
     assert s["outcome"] == "failed" and s["processed"] == 0 and s["sync_error"].startswith("OSError")
-    lines = [json.loads(l) for l in (stub / "runs" / "r15" / "invocations.jsonl").read_text().splitlines()]
+    lines = [json.loads(l) for l in (stub / "runs" / "r15" / "refused.jsonl").read_text().splitlines()]
     assert len(lines) == 1 and lines[0]["outcome"] == "failed" and lines[0]["operator"]
-    assert not (stub / "runs" / "r15" / "run.json").exists()
-    assert not (stub / "runs" / "r15" / "log.jsonl").exists()
+    for name in ("run.json", "log.jsonl", "invocations.jsonl"):
+        assert not (stub / "runs" / "r15" / name).exists()          # nothing that could replace history
 
-    # Warm instance (local log exists): continue from local state and record the error.
+    # Partial sync: log.jsonl came down but invocations.jsonl did not. Still refuse.
+    class HalfDeadBlob(FakeBlob):
+        def exists(self):
+            if self.name.endswith("invocations.jsonl"): raise OSError("bucket unreachable")
+            return super().exists()
+    class HalfDeadBucket(FakeBucket):
+        def blob(self, name): return HalfDeadBlob(self.store, name)
+    prior = json.dumps({"qid": "Q1", "started": "t", "status": "ok", "uploaded": True}) + "\n"
+    s = batch.run_batch("r15b", ["Q1", "Q2"], HalfDeadBucket({"runs/r15b/log.jsonl": prior}),
+                        results_dir=stub, report=lambda m: None)
+    assert s["outcome"] == "failed" and s["processed"] == 0
+    assert not (stub / "runs" / "r15b" / "invocations.jsonl").exists()
+
+    # Warm instance (both local histories exist): continue from local state and record the error.
+    # A local log without invocations.jsonl is a half-synced cold start, not a warm instance.
     (stub / "runs" / "r16").mkdir(parents=True)
     (stub / "runs" / "r16" / "log.jsonl").write_text("")
+    s = batch.run_batch("r16", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
+    assert s["outcome"] == "failed" and s["processed"] == 0
+    (stub / "runs" / "r16" / "invocations.jsonl").write_text("")
     s = batch.run_batch("r16", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
     assert s["outcome"] == "failed" and s["processed"] == 1
     lines = [json.loads(l) for l in (stub / "runs" / "r16" / "invocations.jsonl").read_text().splitlines()]

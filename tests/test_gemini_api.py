@@ -44,3 +44,11 @@ def test_extract_gemini_call_shape(monkeypatch):
     assert LLMHelper.extract_divisions_gemini("X University", "https://x.edu") == [{"name": "School of Law"}]
     model, contents, config = models.calls[0]
     assert config.max_output_tokens == 2048 and "X University" in contents[0].parts[0].text
+    assert config.http_options.timeout == lh.LLM_TIMEOUT_S * 1000      # no deadline: the full timeout
+
+
+def test_gemini_timeout_shrinks_near_the_deadline(monkeypatch):
+    import time
+    import wikidata_discover.config as cfg
+    monkeypatch.setattr(cfg, "DEADLINE", time.time() + 45)
+    assert 35_000 <= lh._gemini_http_options().timeout <= 45_000
