@@ -134,7 +134,7 @@ def test_collect_records_a_preflight_failure(monkeypatch):
     monkeypatch.setattr(cf, "load_keys_from_secret_manager", lambda: None)
     monkeypatch.setattr(cf, "ensure_user_agent", lambda: None)
     monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), **kw) or
-                        {"run_id": run_id, "failed": 0, "outcome": "ok"})
+                        {"run_id": run_id, "failed": 1, "outcome": "failed"})
     class DeadBlob:
         def exists(self): raise OSError("bucket unreachable")
     class DeadBucket:
@@ -152,6 +152,7 @@ def test_collect_records_a_preflight_failure(monkeypatch):
         resp, status = cf.collect(Req())
     assert status == 207 and calls["qids"] == []                      # run_batch still records it
     assert calls["invocation_args"]["preflight_error"].startswith("OSError")
+    assert calls["fail_reason"].startswith("OSError")                  # so its end record says failed
     assert resp.get_json()["outcome"] == "failed"
 
 
@@ -505,6 +506,35 @@ def test_run_batch_survives_an_unreachable_bucket(stub):
     assert lines[0]["sync_error"].startswith("OSError") and lines[0]["operator"]
     assert lines[-1]["outcome"] == "failed"
     assert json.loads((stub / "runs" / "r16" / "run.json").read_text())["operator"]
+
+
+def test_fail_reason_marks_the_invocation_failed(stub):
+    bucket = FakeBucket()
+    s = batch.run_batch("r18", [], bucket, results_dir=stub, report=lambda m: None, fail_reason="list unreadable")
+    assert s["outcome"] == "failed" and s["failed"] == 1 and s["fail_reason"] == "list unreadable"
+    end = json.loads(bucket.store["runs/r18/invocations.jsonl"].splitlines()[-1])
+    assert end["outcome"] == "failed"
+
+
+def test_failed_beats_stopped_for_time(stub):
+    # the first metadata upload fails, then the (tiny) time budget stops the loop
+    bucket = FakeBucket(fail_on=("invocations.jsonl",))
+    s = batch.run_batch("r19", ["Q1"], bucket, results_dir=stub, report=lambda m: None, time_budget_s=1e-9)
+    assert s["stopped_for_time"] is True and s["failed"] >= 1 and s["outcome"] == "failed"
+
+
+def test_secret_manager_client_is_built_only_when_needed(monkeypatch):
+    from wikidata_discover import config
+    def boom():
+        raise RuntimeError("no Google credentials here")
+    monkeypatch.setattr(batch, "_new_secret_manager_client", boom)
+    monkeypatch.setattr(batch, "_injected", {})
+    for env in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.setenv(env, f"{env}-from-dotenv")
+    assert set(batch.load_keys_from_secret_manager().values()) == {"env"}      # never touched Secret Manager
+    monkeypatch.delenv("GOOGLE_API_KEY"); monkeypatch.setattr(config, "GOOGLE_API_KEY", None)
+    assert batch.load_keys_from_secret_manager()["GOOGLE_API_KEY"] == "missing"  # construction failure tolerated
+    assert config.OPENAI_API_KEY == "OPENAI_API_KEY-from-dotenv"
 
 
 def test_operator_identity_prefers_env(monkeypatch):

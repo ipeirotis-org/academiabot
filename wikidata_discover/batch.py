@@ -75,6 +75,11 @@ def load_done(log_path: Path) -> set:
 _injected: dict = {}  # env var -> value we copied in from Secret Manager (not a deployment setting)
 
 
+def _new_secret_manager_client():
+    from google.cloud import secretmanager
+    return secretmanager.SecretManagerServiceClient()
+
+
 def load_keys_from_secret_manager(client=None) -> dict:
     """Fill in any missing LLM key from Secret Manager, into this process only.
 
@@ -87,9 +92,6 @@ def load_keys_from_secret_manager(client=None) -> dict:
     setup. Raises RuntimeError only when no key is available at all.
     Returns {env_name: "env" | "secret_manager" | "missing"}."""
     from wikidata_discover import config, llm_helpers
-    if client is None:
-        from google.cloud import secretmanager
-        client = secretmanager.SecretManagerServiceClient()
     sources, changed = {}, False
     for env, secret in SECRETS:
         value = os.getenv(env)
@@ -97,6 +99,10 @@ def load_keys_from_secret_manager(client=None) -> dict:
         if not value or (env in _injected and value == _injected[env]):
             name = f"projects/{PROJECT}/secrets/{secret}/versions/latest"
             try:
+                # The client is built only when a key really has to be fetched, so a
+                # laptop with keys in .env and no Google credentials still works.
+                if client is None:
+                    client = _new_secret_manager_client()
                 value = client.access_secret_version(request={"name": name}).payload.data.decode().strip()
                 sources[env] = "secret_manager"
             except Exception as e:  # noqa: BLE001 - one missing optional key must not stop a run
@@ -232,7 +238,8 @@ def git_commit() -> str:
 
 def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[float] = None,
               results_dir: Path = RESULTS_DIR, report: Callable[[str], None] = print,
-              invocation_args: Optional[dict] = None, reserve_s: float = 0) -> dict:
+              invocation_args: Optional[dict] = None, reserve_s: float = 0,
+              fail_reason: Optional[str] = None) -> dict:
     """Run discovery for each QID not already done, uploading as it goes.
 
     bucket: a google.cloud.storage Bucket. time_budget_s: stop starting new QIDs once
@@ -240,8 +247,11 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     Function with a hard timeout). The reserve is reserve_s or the longest university
     so far in this invocation, whichever is larger. invocation_args: what selected
     this run (the CLI arguments, or the HTTP request body and the values resolved from
-    it), recorded in run.json and invocations.jsonl so the run can be repeated. Returns
-    a summary dict with counts; 'failed' > 0 means something needs attention.
+    it), recorded in run.json and invocations.jsonl so the run can be repeated.
+    fail_reason: set by a caller whose own preparation failed (for example the
+    university list could not be read), so the invocation is recorded as failed even
+    though nothing was processed. Returns a summary dict with counts; 'failed' > 0
+    means something needs attention.
     """
     from wikidata_discover import config, llm_helpers
     from wikidata_discover.discovery import Discovery
@@ -372,8 +382,11 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         report(f"[{i}/{len(qids)}] {qid} {rec['status']} {rec.get('label', '')} {rec['seconds']}s")
         report(f"   {note}")
     summary["seconds"] = round(time.time() - started, 1)
-    summary["outcome"] = ("stopped_for_time" if summary["stopped_for_time"] else
-                          "failed" if summary["failed"] else "ok")
+    if fail_reason:
+        summary["failed"] = max(summary["failed"], 1)
+        summary["fail_reason"] = fail_reason
+    summary["outcome"] = ("failed" if summary["failed"] else
+                          "stopped_for_time" if summary["stopped_for_time"] else "ok")
     # Close the invocation record: end time and outcome, then push the run folder once more.
     with (run_dir / "invocations.jsonl").open("a") as f:
         f.write(json.dumps({"started": invocation["started"], "host": invocation["host"],

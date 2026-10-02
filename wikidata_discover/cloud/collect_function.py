@@ -108,13 +108,12 @@ def collect(request):
         args["preflight_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         logger.error("preflight failed, nothing selected: %s", args["preflight_error"])
 
-    # An empty list still goes through run_batch so the invocation is recorded.
+    # An empty list still goes through run_batch so the invocation is recorded; a
+    # preflight failure is passed in so the recorded outcome is failed, not ok.
     summary = run_batch(run_id, qids, bucket, time_budget_s=budget, reserve_s=reserve,
-                        report=logger.info, invocation_args=args)
+                        report=logger.info, invocation_args=args, fail_reason=args.get("preflight_error"))
     if "preflight_error" in args:
-        summary["failed"] = max(summary["failed"], 1)
-        summary["outcome"] = "failed"
-        summary["message"] = "bucket unreachable during preflight: " + args["preflight_error"]
+        summary["message"] = "preflight failed: " + args["preflight_error"]
     elif not qids:
         summary["message"] = "nothing left to do" if "list_done" in args else "no QIDs requested"
     return jsonify(summary), (200 if summary["failed"] == 0 else 207)

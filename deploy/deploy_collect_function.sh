@@ -29,6 +29,19 @@ RUN_ID=${RUN_ID:-cloud-$(date -u +%Y-%m-%d)}
 MAX_PER_SLICE=${MAX_PER_SLICE:-60}
 SCHEDULE="7,37 * * * *"
 
+# The deployed code must be the committed code, so that GIT_COMMIT in every run record
+# names exactly what ran. Set ALLOW_DIRTY=1 to deploy anyway; the commit is then marked.
+GIT_COMMIT=$(git rev-parse --short HEAD)
+if [ -n "$(git status --porcelain -- wikidata_discover deploy)" ]; then
+  if [ "${ALLOW_DIRTY:-}" = "1" ]; then
+    GIT_COMMIT="${GIT_COMMIT}-dirty"
+    echo "WARNING: uncommitted changes are being deployed; recorded as $GIT_COMMIT."
+  else
+    echo "Refusing to deploy: uncommitted changes in wikidata_discover/ or deploy/. Commit first, or set ALLOW_DIRTY=1." >&2
+    exit 1
+  fi
+fi
+
 # Source directory for the build: the package (minus generated data) and a root main.py.
 SRC=$(mktemp -d)
 cp -r wikidata_discover "$SRC/"
@@ -61,7 +74,7 @@ gcloud functions deploy "$FUNCTION" \
   --trigger-http $AUTH_FLAG \
   --service-account="$SA" \
   --memory=1Gi --timeout=1800s --max-instances=1 --concurrency=1 \
-  --update-env-vars="GIT_COMMIT=$(git rev-parse --short HEAD)"   # keeps any other variables set on the function
+  --update-env-vars="GIT_COMMIT=$GIT_COMMIT"   # keeps any other variables set on the function
 
 URL=$(gcloud functions describe "$FUNCTION" --project="$PROJECT" --region="$REGION" --gen2 --format="value(serviceConfig.uri)")
 echo "Function URL: $URL"
