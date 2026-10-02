@@ -1,0 +1,14 @@
+functions-framework>=3.0\nflask\nopenai
+python-dotenv
+rich
+pandas
+questionary
+SPARQLWrapper
+requests
+tenacity
+rapidfuzz
+anthropic>=0.40.0
+google-genai
+google-cloud-bigquery
+google-cloud-storage
+google-cloud-secret-manager

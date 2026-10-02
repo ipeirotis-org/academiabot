@@ -4,7 +4,7 @@ import json
 import os
 import time
 
-from wikidata_discover.scripts.batch_collect import artifact_paths, load_done
+from wikidata_discover.batch import artifact_paths, load_done, parse_done
 
 
 def test_artifact_paths_exact_names_and_freshness(tmp_path):
@@ -31,3 +31,15 @@ def test_load_done_requires_ok_and_uploaded(tmp_path):
         {"qid": "Q3", "status": "failed", "uploaded": True},
     ]))
     assert load_done(log) == {"Q1"}
+
+
+def test_parse_done_handles_garbage_lines():
+    text = "not json\n" + json.dumps({"qid": "Q1", "status": "ok", "uploaded": True}) + "\n"
+    assert parse_done(text) == {"Q1"}
+
+
+def test_pick_qids_skips_done_and_duplicates():
+    from wikidata_discover.cloud.collect_function import pick_qids
+    rows = [["Q1", "a"], ["Q2", "b"], ["Q2", "b"], ["Q3", "c"], ["Q4", "d"]]
+    assert pick_qids(rows, done={"Q2"}, limit=2) == ["Q1", "Q3"]
+    assert pick_qids(rows, done={"Q1", "Q2", "Q3", "Q4"}, limit=5) == []

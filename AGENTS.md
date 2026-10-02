@@ -20,12 +20,15 @@ academiabot/
 │   ├── sparql_helpers.py        # Thin wrapper around SPARQLWrapper
 │   ├── wikidata_api.py          # wbsearchentities wrapper
 │   ├── to_qs_wikidata.py        # Export missing entities as QuickStatements
+│   ├── batch.py                 # Resumable batch over many QIDs; uploads every artifact to the bucket
+│   ├── cloud/collect_function.py # Cloud Function (gen 2) entry point: one time slice of a run, on a schedule
 │   ├── requirements.txt
 │   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness
 │   ├── results/                 # Output CSVs, universities_us.json, LLM cache
 │   └── scripts/
 │       ├── wikidata_division_discover.py   # Entrypoint
-│       └── batch_collect.py                # Interim batch runner: many QIDs, log per university, upload to GCS
+│       └── batch_collect.py                # CLI wrapper around batch.py
+├── deploy/                      # deploy_collect_function.sh: Cloud Function + paused hourly Scheduler job
 ├── docs/                        # BACKGROUND.md (origins, decisions); later REVIEW_GUIDE.md, MODELING_RULES.md
 ├── tests/                       # pytest unit tests (fuzzy matching)
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
@@ -211,6 +214,26 @@ reviews a protocol says it should (for example, two accepts and no reject).
 Rules: write the raw LLM response to storage before parsing it. Cache keys include the prompt
 hash. Local JSON under `results/runs/` is the fallback when GCP is unreachable. Keys come from
 Secret Manager when `.env` has none (see "Secret Manager" below).
+
+## Running collection in the cloud
+
+Collection runs should not depend on a laptop or a sandbox session. `wikidata_discover/batch.py`
+holds the resumable batch logic; `scripts/batch_collect.py` runs it from a terminal and
+`cloud/collect_function.py` runs it as a Cloud Function (gen 2, HTTP, 60 minute timeout) that
+processes one time slice per invocation and resumes from the run log in the bucket. Cloud
+Scheduler calls it hourly. State and artifacts live only in `gs://academiabot/runs/<run_id>/`.
+
+- Deploy or update: `bash deploy/deploy_collect_function.sh` (creates the scheduler job PAUSED).
+- Start collecting: `gcloud scheduler jobs resume academiabot-collect-hourly --location=us-east1`.
+  Only a person does this; it spends LLM credit.
+- Stop: `gcloud scheduler jobs pause academiabot-collect-hourly --location=us-east1`.
+- Progress: read `runs/<run_id>/log.jsonl` in the bucket. One line per university attempt.
+- One-time prerequisite for a project owner: enable the Cloud Functions, Cloud Run, Cloud Build,
+  Artifact Registry, Cloud Scheduler, and Eventarc APIs. The service account cannot enable APIs.
+- The `gcloud` CLI in a Claude Code cloud session needs `env -u CLOUDSDK_AUTH_ACCESS_TOKEN` in
+  front of it, because the session proxy sets that variable to a placeholder.
+- Wikidata rate limits are per IP, so one instance at a time (`--max-instances=1`), about 60
+  universities per hour. The full U.S. list is roughly two days of hourly slices.
 
 ## BigQuery access
 
