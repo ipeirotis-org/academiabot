@@ -67,9 +67,12 @@ python -m wikidata_discover.eval.run_eval
 
 ## 3. The work, in order
 
-Each milestone has a "done when" line. Do them in order. Milestones 1 through 5 are the
-core of a 10-week project. Milestone 6 is the goal we are aiming for. Later items are
+Each milestone has a "done when" line. Do them in order. Milestones 1 through 6 are the
+core of a 10-week project. Milestone 7 is the goal we are aiming for. Later items are
 stretch goals.
+
+One rule runs through all of them: **nothing goes into Wikidata without a human looking
+at it first.** The LLMs propose, the code checks, a person decides.
 
 ### Milestone 1: Build the department ground truth
 
@@ -128,6 +131,8 @@ are represented.
 ### Milestone 5: Measure across many universities
 
 - [ ] Run depth-2 discovery on the 12 universities in the existing ground truth.
+- [ ] For universities without department ground truth, have a person spot-check a random
+      sample of 20 proposed departments each. This is a preview of Milestone 6.
 - [ ] Extend the evaluation harness (`eval/run_eval.py`) to report precision and recall
       per level (schools vs. departments) and per LLM provider.
 - [ ] Write down the top 3 ways it fails. Fix the ones that are fixable.
@@ -135,22 +140,49 @@ are represented.
 **Done when:** A results table for 12 universities exists in `eval/`, and the top failure
 modes are either fixed or documented as known issues in this file.
 
-### Milestone 6: Upload to Wikidata
+### Milestone 6: Human review before upload
+
+The LLM pipeline is about 95% accurate at the school level and will be worse for
+departments. The remaining errors have to be caught by a person. This milestone builds
+the tool for that.
+
+- [ ] Add a `review` command that takes a discovery run and writes a review sheet (CSV,
+      or a Google Sheet if that is easier to share). One row per proposed statement:
+      parent unit, proposed name, proposed type, website, the source URL the LLM cited,
+      and which providers agreed on it. Leave three empty columns for the reviewer:
+      `verdict` (accept / reject / fix), `corrected_value`, and `notes`.
+- [ ] Sort the sheet so the doubtful rows come first: proposals that only one provider
+      found, that have no source URL, or whose fuzzy-match score was borderline.
+- [ ] Make the QuickStatements export read the review sheet and emit only rows marked
+      accept or fix. Rows marked reject are kept in a file so they are not proposed again.
+- [ ] Review NYU's department proposals yourself, then have Panos review the same sheet.
+      Compare: where you disagree tells us what the review instructions need to say.
+- [ ] Write a one-page review guide: what counts as a department, how to handle renamed
+      or merged units, when to reject. Save it as `docs/REVIEW_GUIDE.md`.
+- [ ] Use the review results as measurement: the share of accepted rows is the true
+      precision of the pipeline on data we are about to publish. Record it per run.
+
+**Done when:** A second person can take a review sheet and the guide, review 50 rows in
+under 30 minutes without asking questions, and the export honors their verdicts.
+
+### Milestone 7: Upload to Wikidata
 
 This is what the whole project is for. Everything before this is preparation.
 
-- [ ] Pick the one or two universities with the cleanest results.
-- [ ] Review every proposed statement by hand with Panos. Remove anything doubtful.
+- [ ] Pick the one or two universities with the cleanest reviewed results.
+- [ ] Export the accepted rows to a QuickStatements file. Spot-check ten lines by hand.
 - [ ] Upload through the QuickStatements web tool. Record the batch ID and date here.
 - [ ] Check the result on Wikidata. Query it back with SPARQL to confirm the hierarchy
       is visible (see the queries at the bottom of this file).
+- [ ] Watch the items for two weeks. If a Wikidata editor reverts or changes anything,
+      note why. That is the most valuable feedback we can get.
 
 **Done when:** At least one university's departments are live on Wikidata, and the upload
 steps are written down so the next person can repeat them.
 
 ---
 
-## 4. Stretch goals (after Milestone 6)
+## 4. Stretch goals (after Milestone 7)
 
 Pick one. Each is a self-contained project.
 
@@ -159,8 +191,10 @@ Pick one. Each is a self-contained project.
 - **Faculty linking.** For one department, find the faculty page, extract names and
   titles, and match them to existing Wikidata people and ORCID records. Link via P108
   (employer). Start with one department before generalizing.
-- **Validation before upload.** Write a checker that rejects a QuickStatements file if any
-  line is malformed, points to a nonexistent QID, or would create a duplicate.
+- **Automated checks before upload.** Write a checker that rejects a QuickStatements file
+  if any line is malformed, points to a nonexistent QID, or would create a duplicate.
+- **Scale up human review.** Turn the review sheet into a small web page so several
+  reviewers can work in parallel, and measure agreement between them.
 - **Beyond the U.S.** Make the country a parameter of `harvest`.
 
 ---
