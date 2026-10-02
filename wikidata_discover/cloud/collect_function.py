@@ -50,6 +50,8 @@ def pick_qids(list_rows, done: set, limit: int):
     """First `limit` QIDs from the bucket list that are not done, in list order,
     de-duplicated. Rows may be any shape row_qid() accepts."""
     seen, out = set(), []
+    if limit <= 0:
+        return out
     for row in list_rows:
         qid = row_qid(row)
         if not qid or qid in seen or qid in done:

@@ -340,4 +340,11 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         report(f"final run metadata upload failed: {type(e).__name__}: {str(e)[:120]}")
         summary["outcome"] = "failed"
         summary["failed"] = max(summary["failed"], 1)  # usually the same outage already counted
+        # The end record above says the earlier outcome; correct it locally so that a
+        # later upload (same instance, next slice) carries the true outcome.
+        with (run_dir / "invocations.jsonl").open("a") as f:
+            f.write(json.dumps({"started": invocation["started"], "host": invocation["host"],
+                                "ended": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "outcome": "failed", "summary": summary,
+                                "note": f"final run metadata upload failed: {type(e).__name__}"}) + "\n")
     return summary

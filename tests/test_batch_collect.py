@@ -162,6 +162,8 @@ def test_pick_qids_skips_done_and_duplicates():
     rows = [["Q1", "a"], ["Q2", "b"], ["Q2", "b"], ["Q3", "c"], ["Q4", "d"]]
     assert pick_qids(rows, done={"Q2"}, limit=2) == ["Q1", "Q3"]
     assert pick_qids(rows, done={"Q1", "Q2", "Q3", "Q4"}, limit=5) == []
+    assert pick_qids(rows, done=set(), limit=0) == []
+    assert pick_qids(rows, done=set(), limit=-3) == []
 
 
 def test_pick_qids_accepts_every_list_shape():
@@ -335,6 +337,11 @@ def test_run_batch_resumes_from_bucket_and_keeps_invocation_history(stub):
 def test_run_batch_outcome_reflects_failures_and_time(stub):
     bucket = FakeBucket(fail_on=("log.jsonl",))
     assert batch.run_batch("r7", ["Q1"], bucket, results_dir=stub, report=lambda m: None)["outcome"] == "failed"
+    # only the final metadata upload fails: the local history ends with a failed record
+    bucket = FakeBucket(fail_on=("invocations.jsonl",))
+    s = batch.run_batch("r7b", ["Q1"], bucket, results_dir=stub, report=lambda m: None)
+    last = json.loads((stub / "runs" / "r7b" / "invocations.jsonl").read_text().splitlines()[-1])
+    assert s["outcome"] == "failed" and last["outcome"] == "failed" and "note" in last
     s = batch.run_batch("r8", ["Q1"], FakeBucket(), results_dir=stub, report=lambda m: None,
                         time_budget_s=1, reserve_s=10)
     assert s["outcome"] == "stopped_for_time"
