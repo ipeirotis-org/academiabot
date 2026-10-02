@@ -87,6 +87,30 @@ def test_collect_treats_empty_qids_as_explicit(monkeypatch):
     assert status == 200 and calls["qids"] == [] and calls["invocation_args"]["explicit_qids"] is True
 
 
+def test_collect_records_invocation_when_list_is_exhausted(monkeypatch):
+    import flask
+    import wikidata_discover.cloud.collect_function as cf
+    calls = {}
+    monkeypatch.setattr(cf, "load_keys_from_secret_manager", lambda: None)
+    monkeypatch.setattr(cf, "ensure_user_agent", lambda: None)
+    monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), **kw) or
+                        {"run_id": run_id, "failed": 0})
+    store = {"universities_us.json": json.dumps([["Q1", "a"]]),
+             "runs/r11/log.jsonl": json.dumps({"qid": "Q1", "started": "t", "status": "ok", "uploaded": True}) + "\n"}
+    class FakeClient:
+        def __init__(self, project=None): pass
+        def bucket(self, name): return FakeBucket(store)
+    import google.cloud.storage as gcs
+    monkeypatch.setattr(gcs, "Client", FakeClient)
+
+    class Req:
+        def get_json(self, silent=True): return {"run_id": "r11"}
+    with flask.Flask(__name__).app_context():
+        resp, status = cf.collect(Req())
+    assert calls["qids"] == [] and calls["invocation_args"]["list_done"] == 1
+    assert resp.get_json()["message"] == "nothing left to do"
+
+
 def test_object_name_never_doubles_run_prefix(tmp_path):
     results, run_dir = tmp_path, tmp_path / "runs" / "r1"
     assert object_name("r1", run_dir / "log.jsonl", results, run_dir) == "runs/r1/log.jsonl"
@@ -137,6 +161,7 @@ def test_missing_optional_secret_is_tolerated(monkeypatch):
     from wikidata_discover import config
     for env in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(env, raising=False); monkeypatch.setattr(config, env, None)
+    monkeypatch.setattr(batch, "_injected", {})
 
     class Payload:
         def __init__(self, d): self.data = d
@@ -157,6 +182,7 @@ def test_missing_optional_secret_is_tolerated(monkeypatch):
             raise PermissionError("denied")
     monkeypatch.setattr(config, "OPENAI_API_KEY", None)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)   # the first call exported it
+    monkeypatch.setattr(batch, "_injected", {})           # and remembered it as last good value
     with pytest.raises(RuntimeError):
         batch.load_keys_from_secret_manager(client=Nothing())
 
@@ -205,6 +231,8 @@ class FakeBlob:
         if any(self.name.endswith(s) for s in self.fail_on):
             raise OSError(f"simulated upload failure for {self.name}")
         self.store[self.name] = Path(path).read_text()
+    def delete(self):
+        del self.store[self.name]
 
 
 class FakeBucket:
@@ -303,6 +331,48 @@ def test_run_batch_restores_caches_for_pending_qids(stub):
     batch.run_batch("r6", ["Q1", "Q2"], bucket, results_dir=stub, report=lambda m: None)
     assert (stub / "cache" / "c1.json").read_text() == '{"cached": 1}'
     assert not (stub / "cache" / "c2.json").exists()
+
+
+def test_run_batch_removes_stale_exports_on_retry(stub):
+    # An earlier attempt at Q1 uploaded a CSV and a QuickStatements file; this attempt
+    # (the stub writes neither) finds nothing missing, so they must go.
+    log = json.dumps({"qid": "Q1", "started": "t", "status": "ok", "uploaded": False}) + "\n"
+    bucket = FakeBucket({"runs/r10/log.jsonl": log, "runs/r10/run.json": "{}",
+                         "runs/r10/missing_divisions_Q1.csv": "old", "runs/r10/quickstatements_Q1.qs": "old",
+                         "runs/r10/missing_divisions_Q2.csv": "other university, untouched"})
+    (stub / "missing_divisions_Q1.csv").write_text("left over locally too")
+    batch.run_batch("r10", ["Q1"], bucket, results_dir=stub, report=lambda m: None)
+    assert "runs/r10/missing_divisions_Q1.csv" not in bucket.store
+    assert "runs/r10/quickstatements_Q1.qs" not in bucket.store
+    assert bucket.store["runs/r10/missing_divisions_Q2.csv"] == "other university, untouched"
+    assert not (stub / "missing_divisions_Q1.csv").exists()
+
+
+def test_rotated_secret_is_picked_up_on_a_warm_instance(monkeypatch):
+    from wikidata_discover import config, llm_helpers
+    for env in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(env, raising=False); monkeypatch.setattr(config, env, None)
+    monkeypatch.setenv("GOOGLE_API_KEY", "deploy-time-setting")
+    monkeypatch.setattr(batch, "_injected", {})
+
+    class Payload:
+        def __init__(self, d): self.data = d
+    class Resp:
+        def __init__(self, d): self.payload = Payload(d)
+    class Rotating:
+        version = 1
+        def access_secret_version(self, request):
+            return Resp(f"v{self.version}-{request['name'].split('/')[3]}".encode())
+
+    sm = Rotating()
+    batch.load_keys_from_secret_manager(client=sm)
+    llm_helpers._openai_client = "client built with v1"
+    assert config.OPENAI_API_KEY == "v1-openai-api-key"
+    sm.version = 2                                     # key rotated between invocations
+    batch.load_keys_from_secret_manager(client=sm)
+    assert config.OPENAI_API_KEY == "v2-openai-api-key" == os.environ["OPENAI_API_KEY"]
+    assert llm_helpers._openai_client is None          # cached client dropped
+    assert config.GOOGLE_API_KEY == "deploy-time-setting"   # a real env setting is kept
 
 
 def test_run_batch_run_log_upload_failure_requeues_qid(stub):

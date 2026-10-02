@@ -71,33 +71,45 @@ def load_done(log_path: Path) -> set:
     return parse_done(log_path.read_text()) if log_path.exists() else set()
 
 
+_injected: dict = {}  # env var -> value we copied in from Secret Manager (not a deployment setting)
+
+
 def load_keys_from_secret_manager(client=None) -> dict:
     """Fill in any missing LLM key from Secret Manager, into this process only.
 
     Sets both the environment variable and the matching config attribute, because
-    config has usually been imported (and read os.environ) before this runs. A secret
-    that is missing or inaccessible is logged and skipped: one working provider is a
-    supported setup. Raises RuntimeError only when no key is available at all.
+    config has usually been imported (and read os.environ) before this runs. A value
+    this function itself copied in earlier is not treated as a deployment setting:
+    it is fetched again on every call, so a warm instance picks up a rotated key, and
+    the cached provider clients are reset when a key changes. A secret that is
+    missing or inaccessible is logged and skipped: one working provider is a supported
+    setup. Raises RuntimeError only when no key is available at all.
     Returns {env_name: "env" | "secret_manager" | "missing"}."""
-    from wikidata_discover import config
+    from wikidata_discover import config, llm_helpers
     if client is None:
         from google.cloud import secretmanager
         client = secretmanager.SecretManagerServiceClient()
-    sources = {}
+    sources, changed = {}, False
     for env, secret in SECRETS:
         value = os.getenv(env)
         sources[env] = "env"
-        if not value:
+        if not value or (env in _injected and value == _injected[env]):
             name = f"projects/{PROJECT}/secrets/{secret}/versions/latest"
             try:
                 value = client.access_secret_version(request={"name": name}).payload.data.decode().strip()
                 sources[env] = "secret_manager"
             except Exception as e:  # noqa: BLE001 - one missing optional key must not stop a run
                 logger.warning("Secret %s not available (%s: %s); provider %s disabled", secret, type(e).__name__, str(e)[:120], env)
-                value, sources[env] = None, "missing"
+                value = _injected.get(env)  # keep the last good value, if any
+                sources[env] = "secret_manager" if value else "missing"
             if value:
                 os.environ[env] = value
+                _injected[env] = value
+        if getattr(config, env, None) != (value or None):
+            changed = True
         setattr(config, env, value or None)
+    if changed:
+        llm_helpers.reset_clients()
     if not any(getattr(config, env) for env, _ in SECRETS):
         raise RuntimeError("No LLM API key available from the environment or Secret Manager: " + ", ".join(s for _, s in SECRETS))
     return sources
@@ -110,6 +122,26 @@ def ensure_user_agent(default: str = "AcademiaBot/1.0 (ipeirotis@gmail.com)") ->
     from wikidata_discover import config
     config.set_user_agent(os.getenv("WD_BOT_USERAGENT") or default)
     return config.USER_AGENT
+
+
+def export_paths(results_dir: Path, qid: str) -> list:
+    """The two files discovery writes only when something is missing or orphaned."""
+    return [results_dir / f"missing_divisions_{qid}.csv", results_dir / f"quickstatements_{qid}.qs"]
+
+
+def clear_stale_exports(bucket, run_id: str, results_dir: Path, run_dir: Path, qid: str) -> int:
+    """After an attempt that produced no CSV or QuickStatements file for `qid`, delete the
+    ones an earlier attempt may have uploaded, so the bucket never offers statements
+    that the latest report contradicts. Returns how many objects were deleted."""
+    deleted = 0
+    for p in export_paths(results_dir, qid):
+        if p.exists():
+            continue
+        blob = bucket.blob(object_name(run_id, p, results_dir, run_dir))
+        if blob.exists():
+            blob.delete()
+            deleted += 1
+    return deleted
 
 
 def restore_caches(bucket, run_id: str, log_path: Path, results_dir: Path, done: set) -> int:
@@ -236,6 +268,9 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         t = time.time()
         rec = {"qid": qid, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": invocation["host"]}
         llm_helpers.cache_paths_touched.clear()
+        for p in export_paths(results_dir, qid):   # outputs of an earlier attempt must not survive
+            if p.exists():
+                p.unlink()
         try:
             d = Discovery(qid)
             d.discover_missing()
@@ -254,8 +289,9 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         rec["cache_files"] = sorted(p.name for p in llm_helpers.cache_paths_touched)
         try:
             n = upload(artifact_paths(results_dir, run_dir, qid, since=t, extra=list(llm_helpers.cache_paths_touched)))
+            stale = clear_stale_exports(bucket, run_id, results_dir, run_dir, qid) if rec["status"] == "ok" else 0
             rec["uploaded"] = True
-            note = f"uploaded {n} files to gs://{BUCKET}/runs/{run_id}/"
+            note = f"uploaded {n} files to gs://{BUCKET}/runs/{run_id}/" + (f", removed {stale} stale export(s)" if stale else "")
         except Exception as e:  # noqa: BLE001
             rec["uploaded"] = False
             note = f"upload failed: {type(e).__name__}: {str(e)[:120]} (QID will be retried on resume)"

@@ -92,6 +92,13 @@ _anthropic_client = None
 _gemini_client = None
 
 
+def reset_clients() -> None:
+    """Forget the cached provider clients so the next call builds them from the
+    current keys in config (used after a key is loaded or rotated)."""
+    global _openai_client, _anthropic_client, _gemini_client
+    _openai_client = _anthropic_client = _gemini_client = None
+
+
 def _get_openai_client():
     global _openai_client
     if _openai_client is None:

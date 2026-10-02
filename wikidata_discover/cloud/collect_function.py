@@ -86,9 +86,11 @@ def collect(request):
         log_blob = bucket.blob(f"runs/{run_id}/log.jsonl")
         done = parse_done(log_blob.download_as_text()) if log_blob.exists() else set()
         qids = pick_qids(rows, done, limit)
-        if not qids:
-            return jsonify({"run_id": run_id, "message": "nothing left to do", "done": len(done)})
+        args["list_done"] = len(done)
 
+    # An empty list still goes through run_batch so the invocation is recorded.
     summary = run_batch(run_id, qids, bucket, time_budget_s=budget, reserve_s=reserve,
                         report=logger.info, invocation_args=args)
+    if not qids:
+        summary["message"] = "nothing left to do" if "list_done" in args else "no QIDs requested"
     return jsonify(summary), (200 if summary["failed"] == 0 else 207)
