@@ -21,11 +21,31 @@ if [ -z "$USER_EMAIL" ] || [ ! -f "$ENC_FILE" ]; then exit 0; fi
 KEY="${GCP_CREDENTIALS_KEY:-$CLOUD_CREDENTIALS_KEY}"
 if [ -z "$KEY" ]; then exit 0; fi
 
+# One private, uniquely named file per session so overlapping sessions never
+# share or overwrite each other's key. Removed by cloud-cleanup.sh at SessionEnd.
+SA_KEY_FILE="$(mktemp "${TMPDIR:-/tmp}/gcp-sa-XXXXXXXX.json")" || exit 0
+# Until setup has fully succeeded, any exit (set -e, a failed decrypt or gcloud
+# call) removes the key file. The trap is cleared only once the path has been
+# handed to the SessionEnd hook via CLAUDE_ENV_FILE.
+trap 'rm -f "$SA_KEY_FILE"' EXIT
 echo "$KEY" | openssl enc -d -aes-256-cbc -pbkdf2 \
-  -pass stdin -in "$ENC_FILE" -out /tmp/credentials.json 2>/dev/null || exit 0
+  -pass stdin -in "$ENC_FILE" -out "$SA_KEY_FILE" 2>/dev/null || exit 0
+chmod 600 "$SA_KEY_FILE"
 
-gcloud auth activate-service-account --key-file=/tmp/credentials.json 2>/dev/null
+gcloud auth activate-service-account --key-file="$SA_KEY_FILE" 2>/dev/null
 gcloud config set project "$(jq -r .project_id "$CONFIG")" 2>/dev/null
-rm -f /tmp/credentials.json
+
+# Keep the key file for the session so Google client libraries (BigQuery, GCS,
+# Secret Manager) can authenticate. The bq CLI does not work behind the session
+# proxy, but the Python clients do when these variables are set.
+if [ -n "$CLAUDE_ENV_FILE" ]; then
+  {
+    echo "export GOOGLE_APPLICATION_CREDENTIALS='$SA_KEY_FILE'"
+    echo "export GOOGLE_CLOUD_PROJECT='$(jq -r .project_id "$CONFIG")'"
+    [ -f /root/.ccr/ca-bundle.crt ] && echo "export REQUESTS_CA_BUNDLE=/root/.ccr/ca-bundle.crt"
+  } >> "$CLAUDE_ENV_FILE"
+  # Cleanup is now the SessionEnd hook's job (cloud-cleanup.sh).
+  trap - EXIT
+fi
 
 echo "GCP credentials activated for $USER_EMAIL"
