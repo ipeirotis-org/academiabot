@@ -7,9 +7,11 @@ Stern School of Business, that Stern has a Department of Finance, or who teaches
 This project fills that gap: university, then school, then department, then faculty, all
 as linked Wikidata entities that anyone can query.
 
-We use large language models to propose the units, code to check them against Wikidata
-and against the universities' own websites, and people to approve every fact before it is
-published. Nothing goes into Wikidata without a written source that a person has checked.
+We use large language models to propose the units, code to check them against what
+Wikidata already has, and people to approve every fact before it is published. Checking
+each proposal against the university's own website is being built now (see TASKS.md).
+The rule we are building toward: nothing goes into Wikidata without a written source that
+a person has checked.
 
 ## Who this is for
 
@@ -40,10 +42,12 @@ python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210  
 ```
 
 The last command asks an LLM for NYU's schools, checks each one against Wikidata, and
-prints a table: already linked, exists but not linked (an "orphan"), or missing. It also
-writes two files to `wikidata_discover/results/`: a CSV of the missing units and a
-QuickStatements file that could create them. **Do not upload that file.** Uploading is a
-human step, after review, described in TASKS.md Milestone 7.
+prints a table: already linked, exists but not linked (an "orphan"), or missing. If any
+unit is missing or orphaned, it also writes two files to `wikidata_discover/results/`: a
+CSV of those units and a QuickStatements file that could create them. For NYU today
+nothing is missing, so only the JSON report is written. **Do not upload a QuickStatements
+file.** Uploading is a human step, after review, described in TASKS.md (Anya's weeks 8
+and 9, Shuo's week 9).
 
 Or ask your agent to do all of this for you and explain the output. That is the normal
 way to work here.
@@ -52,12 +56,13 @@ way to work here.
 
 | Command | What it does | Output |
 |---|---|---|
-| `discover <QID>` | Finds the schools and colleges of one university | `results/missing_divisions_<QID>.csv`, `results/quickstatements_<QID>.qs`, `results/reports/<QID>_report.json` |
+| `discover <QID>` | Finds the schools and colleges of one university | Always `results/reports/<QID>_report.json`. If anything is missing or orphaned, also `results/missing_divisions_<QID>.csv` and `results/quickstatements_<QID>.qs` |
 | `harvest` | Lists every U.S. university in Wikidata | `results/universities_us.json` |
-| `eval.run_eval` | Scores each LLM provider and judge setup against a hand-built answer key for 12 universities | `eval/results_summary.csv` |
+| evaluation | Scores each LLM provider and judge setup against a hand-built answer key for 12 universities | `eval/results_summary.csv` |
 
-All paths are under `wikidata_discover/`. Run any command as
-`python -m wikidata_discover.scripts.wikidata_division_discover <command>`.
+All paths are under `wikidata_discover/`. The first two run as
+`python -m wikidata_discover.scripts.wikidata_division_discover <command>`. The evaluation
+is its own module: `python -m wikidata_discover.eval.run_eval`.
 
 **Accuracy so far:** at the school level, the best configuration reaches about 95%
 precision and 95% recall on the 12 evaluated universities. Departments are the current

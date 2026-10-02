@@ -194,9 +194,15 @@ Every run must be reproducible. Four BigQuery tables in dataset `academiabot` of
 | Table | One row per | Must contain |
 |---|---|---|
 | `runs` | command invocation | run_id, who, git commit, config (providers, models, depth), start and end time |
-| `llm_calls` | API call | run_id, provider, model, purpose (extract, judge, match, verify), prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
-| `evidence` | web page fetched | run_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
-| `candidates` | unit proposed | run_id, parent_qid, name, unit_type, status (linked, orphan, missing), matched_qid, source_url, llm_call_ids, evidence_ids, verdict, reviewer, reviewed_at |
+| `llm_calls` | API call | llm_call_id, run_id, provider, model, purpose (extract, judge, match, verify), prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
+| `evidence` | web page fetched | evidence_id, run_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
+| `candidates` | unit proposed | candidate_id, run_id, parent_qid, name, unit_type, status (linked, orphan, missing), matched_qid, source_url, llm_call_ids, evidence_ids |
+| `reviews` | one reviewer's verdict on one candidate | review_id, candidate_id, reviewer, source (expert, prolific), verdict (accept, reject, fix), corrected_value, url_checked, notes, reviewed_at |
+
+Every table has its own stable id so that a candidate's `llm_call_ids` and `evidence_ids`
+resolve to exact rows. Reviews are append-only: a second reviewer adds a row, never
+overwrites one, so agreement between reviewers can be computed. The export honors the
+reviews a protocol says it should (for example, two accepts and no reject).
 
 Rules: write the raw LLM response to storage before parsing it. Cache keys include the prompt
 hash. Local JSON under `results/runs/` is the fallback when GCP is unreachable. Keys come from
