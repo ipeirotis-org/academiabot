@@ -36,10 +36,17 @@ rm -rf "$SRC"/wikidata_discover/results/cache "$SRC"/wikidata_discover/results/r
 cp wikidata_discover/cloud/requirements.txt "$SRC/requirements.txt"
 printf 'from wikidata_discover.cloud.collect_function import collect  # noqa: F401\n' > "$SRC/main.py"
 
+# The invoker policy (authenticated callers only) is set when the function is first
+# created. On a redeploy the flag is omitted: the policy is kept, and setting it again
+# needs run.services.setIamPolicy, which the deploying service account does not have.
+AUTH_FLAG=--no-allow-unauthenticated
+if gcloud functions describe "$FUNCTION" --project="$PROJECT" --region="$REGION" --gen2 >/dev/null 2>&1; then
+  AUTH_FLAG=""
+fi
 gcloud functions deploy "$FUNCTION" \
   --project="$PROJECT" --region="$REGION" --gen2 \
   --runtime=python311 --source="$SRC" --entry-point=collect \
-  --trigger-http --no-allow-unauthenticated \
+  --trigger-http $AUTH_FLAG \
   --service-account="$SA" \
   --memory=1Gi --timeout=1800s --max-instances=1 --concurrency=1 \
   --set-env-vars="GIT_COMMIT=$(git rev-parse --short HEAD)"
