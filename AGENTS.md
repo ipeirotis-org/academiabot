@@ -25,6 +25,7 @@ academiabot/
 │   ├── results/                 # Output CSVs, universities_us.json, LLM cache
 │   └── scripts/
 │       └── wikidata_division_discover.py   # Entrypoint
+├── docs/                        # BACKGROUND.md (origins, decisions); later REVIEW_GUIDE.md, MODELING_RULES.md
 ├── tests/                       # pytest unit tests (fuzzy matching)
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
 ```
@@ -68,6 +69,9 @@ python -m pytest tests -q
 | P101 | field of work | Department/researcher discipline |
 | P3418 | academic discipline | More specific than P101 |
 | P1960 | Google Scholar author ID | Researcher profile link |
+| P496 | ORCID iD | Researcher identifier |
+| P6782 | ROR ID | Research Organization Registry identifier for institutions |
+| P571 | inception | When a unit was founded (optional) |
 
 ## Data model (target hierarchy)
 
@@ -80,6 +84,8 @@ University (Q3918)
 ```
 
 Use **P749 (parent organization)** as the primary relationship. Add P361 as supplementary only. For dual-parent units (joint departments), add a second P749 with rank=normal and qualifiers.
+
+Minimum statement set for any new item: label, English description, P31, P749, P17, and P856 if known. Universities also get P1771. One QuickStatements file per hierarchy level. Reasoning for these choices is in `docs/BACKGROUND.md`.
 
 ## Current pipeline
 

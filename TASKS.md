@@ -48,6 +48,9 @@ python -m wikidata_discover.eval.run_eval
 - Anything about faculty.
 - Nothing has been uploaded to Wikidata yet. All output is files on disk.
 
+For where the project came from and why we model things the way we do, read
+`docs/BACKGROUND.md` once. It is short.
+
 ---
 
 ## 2. How to work on this project
