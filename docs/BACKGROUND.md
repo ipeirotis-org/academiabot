@@ -22,16 +22,42 @@ the time:
 | Author profiles collected | about 100,000 |
 | Amortized cost per entity, all tasks | about 20 cents |
 
-That dataset still exists. The organizations are in BigQuery:
+That dataset still exists, in BigQuery:
 
 ```
 nyu-datasets.academiabot.organization
 ```
 
-Query it with the project's service account (BigQuery read access is already granted) or
-ask Panos for access. It is a ready-made seed and a partial ground truth for Milestones 1
-and 5 in TASKS.md. Before relying on it, check how current it is: it was collected over
-several years starting in 2015, and units get renamed and reorganized.
+The project's service account has read access to it. See "BigQuery access" in AGENTS.md
+for how to query it from a Claude Code session (use the Python client, not the bq tool).
+
+**What is in it.** One table of about 16,000 organizations, each with an integer id, a
+name, a parent id, a location, a website, the URL of the page that listed its children or
+faculty, and (for 15 rows only) a Google Scholar organization id. The hierarchy is up to
+five levels deep:
+
+| Depth | Rows | Typically |
+|---|---|---|
+| 0 | 170 | universities |
+| 1 | 1,189 | schools and colleges |
+| 2 | 6,982 | departments |
+| 3 | 5,380 | divisions, centers, programs |
+| 4 | 1,990 | sub-units of those |
+
+**What NYU looks like in it.** NYU (id 32) has 24 children. Some are real schools (Stern,
+Courant, Steinhardt, Tisch, Law, Tandon, Wagner, Dentistry, Nursing, Medicine, Arts and
+Sciences, School of Professional Studies). Others are administrative rows that are not
+academic units (Office of the Provost, President, University Life, Libraries), and some
+are abbreviations (TSOA for Tisch, IFA, ISAW, Silver SSW). Stern has 9 children, of which
+7 are departments, 1 is a program, and 1 is a duplicate row for the school itself.
+Courant has only 3 children. Steinhardt has 11, which looks close to complete.
+
+**How to use it.** It is a good starting list for a school's departments and for finding
+the faculty-listing page (the children source URL column is mostly faculty pages). It is
+not a ground truth: it was collected by crowd workers over several years starting in
+2015, it mixes administrative and academic units, names are sometimes abbreviations, and
+most website URLs are plain http and may have moved. Treat every row as a candidate that
+still needs a person to confirm it against the school's current website.
 
 ## The human task design we started from
 

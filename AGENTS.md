@@ -166,9 +166,34 @@ Students on this project direct agents; they do not write most of the code. So:
   - `roles/pubsub.editor` -- event-driven pipelines between collection, verification, and writing stages
   - `roles/cloudfunctions.invoker` -- allow scheduler and other functions to trigger Cloud Functions
 - **Multi-user setup:** Each team member has their own `.cloud-credentials.<email>.enc` file, encrypted with their personal passphrase
-- **Authentication:** Handled automatically via the `cloud-bootstrap` skill and SessionStart hook (`.claude/hooks/cloud-auth.sh`)
+- **Authentication:** Handled automatically via the `cloud-bootstrap` skill and SessionStart hook (`.claude/hooks/cloud-auth.sh`). The hook matches the credentials file to `git config user.email`, so that must be set to the team member's email.
+- **Cross-project access:** The service account also has READER on dataset `nyu-datasets.academiabot` (granted 2026-10-02). See "BigQuery access" below.
 - **New team members:** The agent handles onboarding via the cloud-bootstrap "Add Team Member" flow
 - **Permission escalation:** Ask the agent to escalate; it will propose roles and ask you to approve via `gcloud`
+
+## BigQuery access
+
+The earlier crowdsourced hierarchy (about 16,000 organizations) lives in
+`nyu-datasets.academiabot.organization`. The service account has READER on that dataset.
+Schema and caveats are in `docs/BACKGROUND.md`.
+
+Query it with the Python client. The `bq` command-line tool returns "Invalid Credentials"
+behind the cloud session proxy, so do not use it here.
+
+```python
+from google.cloud import bigquery
+client = bigquery.Client()   # uses GOOGLE_APPLICATION_CREDENTIALS set by the SessionStart hook
+rows = client.query("SELECT name FROM `nyu-datasets.academiabot.organization` WHERE parent_id = 1519").result()
+```
+
+The SessionStart hook decrypts the service account key to a temp file and exports
+`GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `REQUESTS_CA_BUNDLE` for the
+session. If the client import fails on the container's system Python with a `_cffi_backend`
+or `packaging` error, run this once, then `pip install -r wikidata_discover/requirements.txt`:
+
+```bash
+pip install --ignore-installed packaging cffi cryptography
+```
 
 ## Secret Manager (API keys)
 
