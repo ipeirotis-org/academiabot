@@ -73,3 +73,5 @@ credentials_clean.json
 wikidata_discover/results/runs/
 wikidata_discover/results/cache/
 wikidata_discover/results/reports/
+wikidata_discover/results/missing_divisions_*.csv
+wikidata_discover/results/quickstatements_*.qs
