@@ -117,11 +117,13 @@ Minimum statement set for any new item: label, English description, P31, P749, P
 
 ## Working norms (read first)
 
-Students on this project direct agents; they do not write most of the code. So:
+Students on this project direct agents; they do not write most of the code. There are two
+students with two tracks in `TASKS.md`: Anya builds the pipeline (section 4), Shuo builds the
+checks and the human review (section 5). So:
 
-- Work on exactly the milestone in `TASKS.md` that the student names. Do not start the next one.
+- Work on exactly the track and week in `TASKS.md` that the student names. Do not start the next one.
+- The "you check it by" cell for that week is the acceptance test. Make it pass and show it passing.
 - Before writing code, give a short plan (five lines or fewer) and wait for a go-ahead.
-- The milestone's "done when" line is the acceptance test. Show it passing, with the command and its output.
 - Explain what you did in plain language. Assume the reader can run a command and open a CSV but will not read a diff.
 - Run `python -m pytest tests -q` before saying anything is done. Add a test for every behavior you add.
 - At the end of a session: tick the boxes you completed in `TASKS.md`, add anything a future agent needs to this file, and leave the student a three-line summary.
@@ -183,6 +185,22 @@ Students on this project direct agents; they do not write most of the code. So:
 - **Cross-project access:** The service account also has READER on dataset `nyu-datasets.academiabot` (granted 2026-10-02). See "BigQuery access" below.
 - **New team members:** The agent handles onboarding via the cloud-bootstrap "Add Team Member" flow
 - **Permission escalation:** Ask the agent to escalate; it will propose roles and ask you to approve via `gcloud`
+
+## Run log (planned, Anya week 2)
+
+Every run must be reproducible. Four BigQuery tables in dataset `academiabot` of project
+`wikidata-academia`, with large text in Cloud Storage and the GCS path kept in the row:
+
+| Table | One row per | Must contain |
+|---|---|---|
+| `runs` | command invocation | run_id, who, git commit, config (providers, models, depth), start and end time |
+| `llm_calls` | API call | run_id, provider, model, purpose (extract, judge, match, verify), prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
+| `evidence` | web page fetched | run_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
+| `candidates` | unit proposed | run_id, parent_qid, name, unit_type, status (linked, orphan, missing), matched_qid, source_url, llm_call_ids, evidence_ids, verdict, reviewer, reviewed_at |
+
+Rules: write the raw LLM response to storage before parsing it. Cache keys include the prompt
+hash. Local JSON under `results/runs/` is the fallback when GCP is unreachable. Keys come from
+Secret Manager when `.env` has none (see "Secret Manager" below).
 
 ## BigQuery access
 
