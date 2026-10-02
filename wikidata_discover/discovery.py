@@ -34,11 +34,17 @@ SELECT ?child (GROUP_CONCAT(DISTINCT ?alt; separator="|") AS ?altLabels) WHERE {
 GROUP BY ?child
 """
 
+# English label preferred; any language as a fallback (a few hundred U.S.
+# institutions on Wikidata have labels only in other languages).
 UNIV_INFO_SPARQL = """
 SELECT ?label ?website WHERE {
-  wd:%s rdfs:label   ?label     . FILTER(LANG(?label)="en")
-  OPTIONAL { wd:%s wdt:P856  ?website }
+  OPTIONAL { wd:%s rdfs:label ?en . FILTER(LANG(?en)="en") }
+  OPTIONAL { wd:%s rdfs:label ?any }
+  OPTIONAL { wd:%s wdt:P856 ?website }
+  BIND(COALESCE(?en, ?any) AS ?label)
 }
+ORDER BY DESC(BOUND(?en))
+LIMIT 1
 """
 
 
@@ -53,9 +59,9 @@ class Discovery:
         Website will be None if there's no P856 claim.
         """
         bindings = execute_sparql_bindings(
-            UNIV_INFO_SPARQL % (self.university_qid, self.university_qid)
+            UNIV_INFO_SPARQL % (self.university_qid, self.university_qid, self.university_qid)
         )
-        if not bindings:
+        if not bindings or "label" not in bindings[0]:
             console.print(f"[red]Could not find info for {self.university_qid}[/red]")
             raise ValueError(f"Info not found for {self.university_qid}")
 
