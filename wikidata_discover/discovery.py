@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Tuple
 from wikidata_discover.sparql_helpers import run_sparql
 from wikidata_discover.sparql_helpers import execute_sparql_bindings
 from wikidata_discover.wikidata_api import quick_wd_search
-from wikidata_discover.hierarchy       import all_descendants
+from wikidata_discover.hierarchy import descendant_qids
 from wikidata_discover.llm_helpers import LLMHelper
 from wikidata_discover.config import console, RESULTS_DIR
 
@@ -82,9 +82,8 @@ class Discovery:
 
 
     def get_all_descendants_qids(self) -> set[str]:
-        # fetch every descendant (for filtering deeper nodes)
-        edges, _ = all_descendants(self.university_qid)
-        return {child for _, child, _, _ in edges}
+        # fetch every descendant (for filtering deeper nodes), one query
+        return descendant_qids(self.university_qid)
 
     def find_potential_orphans_for(
         self, candidate_name: str, existing_qids: set

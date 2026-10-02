@@ -1,9 +1,12 @@
+import logging
 from collections import deque, defaultdict
 from time import sleep
 from typing import Dict, List, Tuple
 
 from .sparql_helpers import execute_sparql_bindings
-from .config import USER_AGENT  
+from .config import USER_AGENT
+
+logger = logging.getLogger(__name__)
 
 # SPARQL template for crawling hierarchy
 SPARQL_TEMPLATE = """
@@ -23,6 +26,31 @@ PREDICATES_UP = ["P361", "P749"]  # part of, parent org
 
 # polite pause between SPARQL requests
 time_sleep = 0.3
+
+# One query for the whole subtree: everything reachable downward through
+# "has part", "has subsidiary", "business division", or upward links pointing
+# at the root ("part of", "parent organization"), to any depth.
+DESCENDANTS_SPARQL = """
+SELECT DISTINCT ?d WHERE {{
+  wd:{root} (wdt:P527|wdt:P355|wdt:P199|^wdt:P361|^wdt:P749)+ ?d .
+}}
+"""
+
+
+def descendant_qids(root_qid: str) -> set:
+    """Return the QIDs of every descendant of root_qid.
+
+    Uses a single property-path query (one request instead of three per node).
+    If that query fails, for example a timeout on a very large institution,
+    falls back to the node-by-node crawl in all_descendants().
+    """
+    try:
+        rows = execute_sparql_bindings(DESCENDANTS_SPARQL.format(root=root_qid))
+        return {b["d"]["value"].rsplit("/", 1)[-1] for b in rows}
+    except Exception as e:  # noqa: BLE001 - any SPARQL failure means fall back
+        logger.warning("descendant_qids: single query failed for %s (%s); crawling instead", root_qid, e)
+        edges, _ = all_descendants(root_qid)
+        return {child for _, child, _, _ in edges}
 
 
 def all_descendants(
