@@ -4,7 +4,7 @@ import requests
 from typing import List, Tuple
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from . import config
-from .sparql_helpers import _retry_after_seconds, bounded_wait, past_deadline, request_timeout
+from .sparql_helpers import _retry_after_seconds, bounded_wait, check_deadline, past_deadline, request_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ class WikidataRateLimited(Exception):
 def quick_wd_search(label: str, language: str = "en") -> List[Tuple[str, str]]:
     """Search Wikidata labels and aliases in `language`. Honors Retry-After on 429
     instead of failing fast."""
+    check_deadline("a Wikidata search")
     time.sleep(_WD_API_DELAY)
     resp = requests.get(
         _SEARCH_URL,

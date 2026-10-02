@@ -270,7 +270,10 @@ flowchart LR
   person. Three failures usually mean the item is not a university (the LLM returns no
   units, and that counts as a failure).
   `invocations.jsonl` has a start record and an end record (end time, outcome, summary)
-  for every invocation.
+  for every invocation; both carry an `invocation_id`, and so does every QID record that
+  invocation wrote, so the history can be reconstructed exactly.
+- A run id is one safe path component (letters, digits, `.`, `-`, `_`, max 100). Anything
+  else is refused, because it names a folder under `results/runs` and a bucket prefix.
 - Request body (all optional): `run_id`, `list_object`, `max_universities` (60), `time_budget_s`
   (1500), `reserve_s` (420: no university starts unless that much budget, or the longest
   university so far, is left), `qids` (explicit list, still de-duplicated and capped).
@@ -279,8 +282,10 @@ flowchart LR
   LLM answers.
 - Hard deadline: the function passes its own timeout (1800 s) to the batch runner, which sets
   `config.DEADLINE` 90 s before it. Wikidata requests, retries, and 429 waits stop at that
-  point; LLM requests time out after 180 s (or sooner, at the deadline) and no LLM call starts
-  in the last 30 s, so the attempt's records are always written.
+  point and no new Wikidata request starts after it; LLM requests time out after 180 s (or
+  sooner, at the deadline) and no LLM call starts in the last 30 s. A university caught by
+  the deadline fails that attempt (never "missing") and is retried in a later slice, so the
+  attempt's records are always written.
 - `needs_review` in every summary and end record: universities given up on after 3 attempts.
   They are skipped by later slices, not finished. Their log records say why.
 - Deployed 2026-10-02: function `academiabot-collect` (us-east1), scheduler job

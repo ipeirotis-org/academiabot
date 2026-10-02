@@ -94,6 +94,11 @@ LLM_TIMEOUT_S = 180  # one LLM request; the SDK defaults (10 minutes) are too lo
 _MIN_TIME_FOR_LLM_CALL_S = 30  # below this much time before config.DEADLINE, no LLM call is started
 
 
+class LLMDeadline(RuntimeError):
+    """Raised when a decision could not be asked for because the process deadline
+    is too close. The attempt fails and is retried; it is never an answer."""
+
+
 def llm_timeout() -> float:
     """Timeout for one LLM request: LLM_TIMEOUT_S, or less when config.DEADLINE is
     closer (never below 5 seconds)."""
@@ -655,9 +660,11 @@ class LLMHelper:
         if isinstance(cached, dict) and "answer" in cached:
             return parse_match_answer(cached["answer"], children)
 
+        deadline_hit = False
         for provider_name, get_client, model in providers:
             if not enough_time_for_llm_call():
                 logger.warning("choose_match: deadline too close, not calling for candidate '%s'", candidate)
+                deadline_hit = True
                 break
             try:
                 if provider_name == "openai":
@@ -712,6 +719,11 @@ class LLMHelper:
                 logger.warning("choose_match: %s failed (%s), trying next provider", provider_name, e)
                 continue
 
+        if deadline_hit:
+            # Not an answer: nobody was asked. Returning None here would make the
+            # candidate "missing" and export a possible duplicate. Fail the attempt
+            # instead; the university is retried in a later slice.
+            raise LLMDeadline(f"no time left to match candidate {candidate!r} before the deadline")
         logger.warning("choose_match: all providers failed for candidate '%s'", candidate)
         return None
 

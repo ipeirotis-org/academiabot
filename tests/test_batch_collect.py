@@ -80,6 +80,39 @@ def test_summary_counts_universities_that_need_a_person(stub):
     assert s["skipped_done"] == 1 and s["needs_review"] == 1
     end = json.loads(bucket.store["runs/r23/invocations.jsonl"].splitlines()[-1])
     assert end["summary"]["needs_review"] == 1
+    # this invocation makes the third failed attempt: the count is recomputed at the end
+    log2 = "\n".join(json.dumps(failed) for _ in range(2)) + "\n"
+    bucket = FakeBucket({"runs/r24/log.jsonl": log2, "runs/r24/run.json": "{}"})
+    s = batch.run_batch("r24", ["QFAIL"], bucket, results_dir=stub, report=lambda m: None)
+    assert s["processed"] == 1 and s["needs_review"] == 1
+    end = json.loads(bucket.store["runs/r24/invocations.jsonl"].splitlines()[-1])
+    assert end["summary"]["needs_review"] == 1
+
+
+def test_invocation_id_ties_records_together(stub):
+    bucket = FakeBucket()
+    batch.run_batch("r25", ["Q1"], bucket, results_dir=stub, report=lambda m: None)
+    start, end = [json.loads(l) for l in bucket.store["runs/r25/invocations.jsonl"].splitlines()]
+    qid_rec = json.loads(bucket.store["runs/r25/log.jsonl"].splitlines()[0])
+    assert start["invocation_id"] == end["invocation_id"] == qid_rec["invocation_id"]
+    assert len(start["invocation_id"]) == 12
+    batch.run_batch("r25", ["Q2"], bucket, results_dir=stub, report=lambda m: None)
+    ids = {json.loads(l)["invocation_id"] for l in bucket.store["runs/r25/invocations.jsonl"].splitlines()}
+    assert len(ids) == 2                                              # a second invocation gets its own id
+
+
+def test_run_id_must_be_a_safe_path_component(stub):
+    import wikidata_discover.cloud.collect_function as cf
+    for bad in ("..", ".", "../x", "a/b", "/abs", ".hidden", "", "x" * 101, None):
+        with pytest.raises(ValueError):
+            batch.validate_run_id(bad)
+    assert batch.validate_run_id("cloud-2026-10-02_v1.2") == "cloud-2026-10-02_v1.2"
+    with pytest.raises(ValueError):
+        batch.run_batch("../escape", ["Q1"], FakeBucket(), results_dir=stub, report=lambda m: None)
+    with pytest.raises(ValueError):
+        cf.parse_request({"run_id": "../escape"})
+    with pytest.raises(ValueError):
+        cf.parse_request({"list_object": "../other-bucket-path.json"})
 
 
 def test_empty_llm_answers_raise_instead_of_an_empty_report(monkeypatch):

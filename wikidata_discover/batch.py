@@ -8,10 +8,12 @@ university counts as done only when discovery succeeded and its files were uploa
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
 import traceback
+import uuid
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -219,6 +221,18 @@ def object_name(run_id: str, path: Path, results_dir: Path, run_dir: Path) -> st
     return f"runs/{run_id}/{path.relative_to(base).as_posix()}"
 
 
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+
+def validate_run_id(run_id) -> str:
+    """A run id is one safe path component: letters, digits, dot, dash, underscore,
+    at most 100 characters, not starting with a dot. It names a folder under
+    results/runs and a prefix in the bucket, so nothing else is allowed."""
+    if not isinstance(run_id, str) or not _RUN_ID_RE.match(run_id) or run_id in (".", ".."):
+        raise ValueError(f"invalid run_id {run_id!r}: use letters, digits, '.', '-' or '_' (max 100)")
+    return run_id
+
+
 class UnreachableBucket:
     """Stands in for the bucket when the storage client could not be built, so
     run_batch can still record the failed invocation locally."""
@@ -282,9 +296,11 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     from wikidata_discover import config, llm_helpers
     from wikidata_discover.discovery import Discovery
 
+    validate_run_id(run_id)
     qids = list(dict.fromkeys(qids))  # de-duplicate, keeping order
     started = time.time()
     config.DEADLINE = (started + hard_deadline_s - 90) if hard_deadline_s else None
+    invocation_id = uuid.uuid4().hex[:12]  # ties this invocation's start, end, and QID records together
     run_dir = results_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "log.jsonl"
@@ -319,7 +335,8 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
             summary.update({"outcome": "failed", "sync_error": sync_error})
             ended = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             with (run_dir / "invocations.jsonl").open("a") as f:
-                f.write(json.dumps({"started": ended, "ended": ended, "host": os.getenv("K_SERVICE", "local"),
+                f.write(json.dumps({"invocation_id": invocation_id, "started": ended, "ended": ended,
+                                    "host": os.getenv("K_SERVICE", "local"),
                                     "operator": operator_identity(), "qids": qids, "outcome": "failed",
                                     "sync_error": sync_error, "summary": summary}) + "\n")
             config.DEADLINE = None
@@ -330,7 +347,8 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     # either: the summary and the end record carry the count so a person looks at them.
     summary["needs_review"] = len(parse_exhausted(log_path.read_text())) if log_path.exists() else 0
 
-    invocation = {"started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "git_commit": git_commit(),
+    invocation = {"invocation_id": invocation_id,
+                  "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "git_commit": git_commit(),
                   "operator": operator_identity(),
                   "args": invocation_args if invocation_args is not None else {"argv": sys.argv},
                   "host": os.getenv("K_SERVICE", "local"),
@@ -359,7 +377,8 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
             report(f"time budget reached after {summary['processed']} universities; stopping")
             break
         t = time.time()
-        rec = {"qid": qid, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": invocation["host"]}
+        rec = {"qid": qid, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": invocation["host"],
+               "invocation_id": invocation_id}
         llm_helpers.cache_paths_touched.clear()
         for p in export_paths(results_dir, qid):   # outputs of an earlier attempt must not survive
             if p.exists():
@@ -399,7 +418,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
             # uploaded=false puts the QID back in the queue here too.
             note += f"; run log upload failed: {type(e).__name__} (QID will be retried on resume)"
             if rec["uploaded"]:
-                correction = {"qid": qid, "status": rec["status"], "uploaded": False,
+                correction = {"qid": qid, "status": rec["status"], "uploaded": False, "invocation_id": invocation_id,
                               "note": f"run log upload failed: {type(e).__name__}"}
                 if "error" in rec:
                     correction["error"] = rec["error"]
@@ -418,9 +437,11 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         summary["fail_reason"] = fail_reason
     summary["outcome"] = ("failed" if summary["failed"] else
                           "stopped_for_time" if summary["stopped_for_time"] else "ok")
+    # This invocation's own attempts may have been a university's third: recount.
+    summary["needs_review"] = len(parse_exhausted(log_path.read_text())) if log_path.exists() else 0
     # Close the invocation record: end time and outcome, then push the run folder once more.
     with (run_dir / "invocations.jsonl").open("a") as f:
-        f.write(json.dumps({"started": invocation["started"], "host": invocation["host"],
+        f.write(json.dumps({"invocation_id": invocation_id, "started": invocation["started"], "host": invocation["host"],
                             "ended": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                             "outcome": summary["outcome"], "summary": summary}) + "\n")
     try:
@@ -432,7 +453,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         # The end record above says the earlier outcome; correct it locally so that a
         # later upload (same instance, next slice) carries the true outcome.
         with (run_dir / "invocations.jsonl").open("a") as f:
-            f.write(json.dumps({"started": invocation["started"], "host": invocation["host"],
+            f.write(json.dumps({"invocation_id": invocation_id, "started": invocation["started"], "host": invocation["host"],
                                 "ended": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                 "outcome": "failed", "summary": summary,
                                 "note": f"final run metadata upload failed: {type(e).__name__}"}) + "\n")

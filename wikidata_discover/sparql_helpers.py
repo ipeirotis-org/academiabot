@@ -70,8 +70,19 @@ def past_deadline(_retry_state=None) -> bool:
     return left is not None and left <= 0
 
 
+class DeadlineExceeded(RuntimeError):
+    """Raised instead of starting a Wikidata request once the process deadline has
+    passed. Not retried: the current attempt fails and is retried in a later slice."""
+
+
+def check_deadline(what: str) -> None:
+    if past_deadline():
+        raise DeadlineExceeded(f"process deadline passed; not starting {what}")
+
+
 def _get(query: str) -> requests.Response:
     global _last_call
+    check_deadline("a SPARQL request")
     gap = time.time() - _last_call
     if gap < _SPARQL_DELAY:
         time.sleep(_SPARQL_DELAY - gap)

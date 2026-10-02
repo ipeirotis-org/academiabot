@@ -80,8 +80,22 @@ def test_llm_calls_respect_the_deadline(monkeypatch):
     monkeypatch.setattr(lh, "_get_openai_client", lambda: Client())
     monkeypatch.setattr(lh, "_load_cache", lambda key: None)
     assert LLMHelper.extract_divisions_openai("Some University", "https://x.edu") == []
-    assert LLMHelper.choose_match("Law School", "Some University", [("Q1", "School of Law")]) is None
+    import pytest
+    with pytest.raises(lh.LLMDeadline):                              # a refusal is never "NONE"
+        LLMHelper.choose_match("Law School", "Some University", [("Q1", "School of Law")])
     assert calls == []                                               # no request was even prepared
+
+
+def test_no_wikidata_request_starts_after_the_deadline(monkeypatch):
+    import pytest
+    monkeypatch.setattr(config, "DEADLINE", time.time() - 1)
+    monkeypatch.setattr(sh.requests, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not be called")))
+    monkeypatch.setattr(wa.requests, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not be called")))
+    monkeypatch.setattr(wa.time, "sleep", lambda s: None)
+    with pytest.raises(sh.DeadlineExceeded):
+        sh._get("SELECT 1")
+    with pytest.raises(sh.DeadlineExceeded):
+        wa.quick_wd_search("x")                                      # not retried either
 
 
 def test_run_batch_sets_and_clears_the_deadline(monkeypatch, tmp_path):

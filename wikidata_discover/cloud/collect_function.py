@@ -30,7 +30,7 @@ import functions_framework
 from flask import jsonify
 
 from wikidata_discover.batch import (BUCKET, PROJECT, UnreachableBucket, ensure_user_agent,
-                                     load_keys_from_secret_manager, parse_done, run_batch)
+                                     load_keys_from_secret_manager, parse_done, run_batch, validate_run_id)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -106,8 +106,10 @@ def parse_request(body) -> dict:
         body = {}
     if not isinstance(body, dict):
         raise ValueError(f"request body must be a JSON object, got {type(body).__name__}")
-    p = {"run_id": str(body.get("run_id") or f"cloud-{time.strftime('%Y-%m-%d', time.gmtime())}"),
+    p = {"run_id": validate_run_id(body.get("run_id") or f"cloud-{time.strftime('%Y-%m-%d', time.gmtime())}"),
          "list_object": str(body.get("list_object", "universities_us.json"))}
+    if p["list_object"].startswith("/") or ".." in p["list_object"].split("/"):
+        raise ValueError(f"invalid list_object {p['list_object']!r}")
     for key, default, cast in (("max_universities", 60, int), ("time_budget_s", 1500.0, float), ("reserve_s", 420.0, float)):
         try:
             p[key] = cast(body.get(key, default))
