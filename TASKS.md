@@ -91,10 +91,12 @@ Working rules that keep the project manageable:
 
 ## 3. Your first week: get set up
 
-- [ ] Clone the repo. Ask the agent to install dependencies and run the tests. All 22 should pass.
+- [ ] Clone the repo. Ask the agent to install dependencies and run the tests. All of them
+      should pass (25 at the time of writing).
 - [ ] Get API keys from Panos (or from GCP Secret Manager, see AGENTS.md) and put them in
-      `.env`, copying `env.example`. You need at least `OPENAI_API_KEY`; the full ensemble
-      also needs `ANTHROPIC_API_KEY` and `GOOGLE_API_KEY`. Never commit `.env`.
+      `.env`, copying `env.example`. At least one of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+      or `GOOGLE_API_KEY` is required. Prefer OpenAI, the only one with web search today, and
+      set all three for the evaluation harness. Never commit `.env`.
 - [ ] Run discovery on NYU (Q49210) and open the CSV it produces in `wikidata_discover/results/`.
 - [ ] Run it on a university you know well. Is the list of schools right? Note what is wrong.
 - [ ] Ask the agent to walk you through the pipeline, step by step, using `discovery.py`

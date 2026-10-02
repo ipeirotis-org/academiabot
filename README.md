@@ -15,7 +15,7 @@ See `TASKS.md` for project status and what to work on next, and `AGENTS.md` for 
 - **CSV export** of missing divisions ready for batch Wikidata edits.
 - **JSON export** of U.S. universities for offline reuse.
 - **Configurable** via environment variables (`.env`):
-  - `OPENAI_API_KEY` – Your OpenAI API key (required)
+  - `OPENAI_API_KEY` – Your OpenAI API key. At least one of the three provider keys is required; OpenAI is the only one with web search
   - `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` – Optional fallbacks. `discover` uses the first provider that returns results (OpenAI first). The multi-provider ensemble with a judge is available in `eval/run_eval.py` and `LLMHelper.extract_divisions_ensemble`, but is not yet wired into `discover`.
   - `LLM_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL` – Override default models
   - `WD_BOT_USERAGENT` – Custom `User-Agent` for Wikidata/SPARQL requests (defaults to `AcademiaBot/1.0`)

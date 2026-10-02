@@ -34,7 +34,7 @@ academiabot/
 
 ```bash
 pip install -r wikidata_discover/requirements.txt pytest
-# Copy env.example to .env and set OPENAI_API_KEY (plus ANTHROPIC_API_KEY and GOOGLE_API_KEY for the ensemble)
+# Copy env.example to .env and set at least one provider key (OPENAI_API_KEY preferred; all three for the eval harness)
 python -m wikidata_discover.scripts.wikidata_division_discover harvest
 python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210  # NYU
 python -m wikidata_discover.eval.run_eval      # precision/recall against ground truth

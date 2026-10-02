@@ -24,6 +24,10 @@ if [ -z "$KEY" ]; then exit 0; fi
 # One private, uniquely named file per session so overlapping sessions never
 # share or overwrite each other's key. Removed by cloud-cleanup.sh at SessionEnd.
 SA_KEY_FILE="$(mktemp "${TMPDIR:-/tmp}/gcp-sa-XXXXXXXX.json")" || exit 0
+# Until setup has fully succeeded, any exit (set -e, a failed decrypt or gcloud
+# call) removes the key file. The trap is cleared only once the path has been
+# handed to the SessionEnd hook via CLAUDE_ENV_FILE.
+trap 'rm -f "$SA_KEY_FILE"' EXIT
 echo "$KEY" | openssl enc -d -aes-256-cbc -pbkdf2 \
   -pass stdin -in "$ENC_FILE" -out "$SA_KEY_FILE" 2>/dev/null || exit 0
 chmod 600 "$SA_KEY_FILE"
@@ -40,6 +44,8 @@ if [ -n "$CLAUDE_ENV_FILE" ]; then
     echo "export GOOGLE_CLOUD_PROJECT='$(jq -r .project_id "$CONFIG")'"
     [ -f /root/.ccr/ca-bundle.crt ] && echo "export REQUESTS_CA_BUNDLE=/root/.ccr/ca-bundle.crt"
   } >> "$CLAUDE_ENV_FILE"
+  # Cleanup is now the SessionEnd hook's job (cloud-cleanup.sh).
+  trap - EXIT
 fi
 
 echo "GCP credentials activated for $USER_EMAIL"
