@@ -13,19 +13,27 @@ TYPE_MAP = {
     None: "Q2467461",
 }
 
-def export_quickstatements(missing, university_qid, university_label, max_items=None, out_dir=None):
-    """
-    Export missing or orphan divisions into QuickStatements format.
+# Property used to link a unit to its university. Known issue 11 in AGENTS.md:
+# the data model says P749 is primary; switch this constant when the exporter is
+# reworked in Milestone 3.
+PARENT_PROPERTY = "P361"
 
-    Args:
-        max_items: Optional cap on how many items to export. None means all.
-        out_dir: Directory for the .qs file. Defaults to RESULTS_DIR.
-    """
 
+def quickstatements_lines(missing, university_qid, university_label, max_items=None):
+    """Build QuickStatements lines for a discovery result. Pure function, unit tested.
+
+    Items with status "orphan" already exist in Wikidata (item["qid"]); they get a
+    single statement linking the existing item to the university. Every other item
+    is created as a new entity.
+    """
     qs_lines = []
     items = missing[:max_items] if max_items else missing
 
     for item in items:
+        if item.get("status") == "orphan" and item.get("qid"):
+            qs_lines.extend([f"{item['qid']}|{PARENT_PROPERTY}|{university_qid}", ""])
+            continue
+
         name = (item["name"] or "").replace('"', '\\"')
 
         unit_type = (item.get("unit_type") or "").lower()
@@ -38,15 +46,27 @@ def export_quickstatements(missing, university_qid, university_label, max_items=
         ).replace('"', '\\"')
 
         type_qid = TYPE_MAP.get(unit_type, TYPE_MAP[None])
-        
+
         qs_lines.extend([
             "CREATE",
             f'LAST|Len|"{name}"',
             f'LAST|Den|"{description}"',
             f"LAST|P31|{type_qid}",
-            f"LAST|P361|{university_qid}",
+            f"LAST|{PARENT_PROPERTY}|{university_qid}",
             ""
         ])
+    return qs_lines
+
+def export_quickstatements(missing, university_qid, university_label, max_items=None, out_dir=None):
+    """
+    Export missing or orphan divisions into QuickStatements format.
+
+    Args:
+        max_items: Optional cap on how many items to export. None means all.
+        out_dir: Directory for the .qs file. Defaults to RESULTS_DIR.
+    """
+
+    qs_lines = quickstatements_lines(missing, university_qid, university_label, max_items)
 
     out_dir = Path(out_dir) if out_dir else RESULTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
