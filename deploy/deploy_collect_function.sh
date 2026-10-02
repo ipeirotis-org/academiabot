@@ -79,6 +79,32 @@ gcloud functions deploy "$FUNCTION" \
 URL=$(gcloud functions describe "$FUNCTION" --project="$PROJECT" --region="$REGION" --gen2 --format="value(serviceConfig.uri)")
 echo "Function URL: $URL"
 
+# The scheduler calls the function as $SA with an OIDC token. A gen 2 function needs
+# run.routes.invoke on its Cloud Run service; roles/run.developer (which $SA holds)
+# includes it, and roles/run.invoker is the narrow alternative. Granting needs
+# run.services.setIamPolicy, which $SA lacks, so the binding is attempted but not
+# required; the call below proves the path works either way.
+gcloud run services add-iam-policy-binding "$FUNCTION" --project="$PROJECT" --region="$REGION" \
+  --member="serviceAccount:$SA" --role="roles/run.invoker" >/dev/null 2>&1 \
+  && echo "Granted roles/run.invoker to $SA." \
+  || echo "Could not grant roles/run.invoker (no permission); relying on the roles $SA already has."
+
+# Prove the scheduler's call path (same account, same token type, same URL) with a
+# request that does no work: an explicit empty QID list. Costs nothing.
+TOKEN=$(gcloud auth print-identity-token --audiences="$URL/" 2>/dev/null || true)
+if [ -n "$TOKEN" ]; then
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL/" -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" -d '{"run_id": "deploy-check", "qids": []}')
+  if [ "$CODE" = "200" ]; then
+    echo "Invoke check passed: $SA can call the function (HTTP 200)."
+  else
+    echo "Invoke check FAILED (HTTP $CODE): the scheduler will get the same answer. Grant roles/run.invoker to $SA on service $FUNCTION." >&2
+    exit 1
+  fi
+else
+  echo "Could not mint an identity token for $SA; skipping the invoke check."
+fi
+
 # The earlier hourly job, if still present, is removed so only one job can run.
 if gcloud scheduler jobs describe "$LEGACY_JOB" --project="$PROJECT" --location="$REGION" >/dev/null 2>&1; then
   gcloud scheduler jobs delete "$LEGACY_JOB" --project="$PROJECT" --location="$REGION" --quiet

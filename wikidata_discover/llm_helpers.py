@@ -145,10 +145,11 @@ EXTRACT_PROMPT_HASH = _prompt_hash(SYSTEM_EXTRACT, UNIVERSITY_UNITS_SCHEMA)
 
 
 def _cache_key(univ_label: str, provider: str, model: str, purpose: str = "extract",
-               prompt_hash: str = EXTRACT_PROMPT_HASH) -> str:
-    """Cache key: provider, model, purpose, university, and the hash of the prompt
-    and schema, so a new prompt gets a new file."""
-    return hashlib.sha256(f"{provider}|{purpose}|{prompt_hash}|{univ_label}|{model}".encode()).hexdigest()
+               prompt_hash: str = EXTRACT_PROMPT_HASH, extra: str = "") -> str:
+    """Cache key: provider, model, purpose, university, the hash of the prompt and
+    schema (so a new prompt gets a new file), and `extra` for anything else the
+    request depends on (the website, so two institutions with one name differ)."""
+    return hashlib.sha256(f"{provider}|{purpose}|{prompt_hash}|{univ_label}|{model}|{extra}".encode()).hexdigest()
 
 
 # Cache files read or written since the last reset. A batch runner uses this to
@@ -227,7 +228,7 @@ class LLMHelper:
     def extract_divisions_openai(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using OpenAI API."""
         model = config.LLM_MODEL
-        key = _cache_key(univ_label, "openai", model)
+        key = _cache_key(univ_label, "openai", model, extra=website or "")
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_openai: cache hit for %s", univ_label)
@@ -291,7 +292,7 @@ class LLMHelper:
     def extract_divisions_anthropic(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using Anthropic Claude API."""
         model = config.ANTHROPIC_MODEL
-        key = _cache_key(univ_label, "anthropic", model)
+        key = _cache_key(univ_label, "anthropic", model, extra=website or "")
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_anthropic: cache hit for %s", univ_label)
@@ -357,7 +358,7 @@ class LLMHelper:
     def extract_divisions_gemini(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using Google Gemini API."""
         model = config.GEMINI_MODEL
-        key = _cache_key(univ_label, "gemini", model)
+        key = _cache_key(univ_label, "gemini", model, extra=website or "")
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_gemini: cache hit for %s", univ_label)

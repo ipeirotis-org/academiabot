@@ -32,16 +32,22 @@ Anya's week 8 switches it.
 
 ```mermaid
 flowchart LR
-    L[LLM proposes<br/>a unit + a source URL] --> C[Code checks<br/>Wikidata]
+    L[LLM proposes<br/>a unit] --> C[Code checks<br/>Wikidata]
+    L -.-> U[a source URL<br/>per unit]
+    U -.-> V
     C --> V[Code checks<br/>the source page]
     V --> H[Person reviews<br/>and approves]
     H --> W[(Wikidata)]
     style L fill:#dfe9f5,stroke:#333,color:#000
     style C fill:#dfe9f5,stroke:#333,color:#000
+    style U fill:#fff3cd,stroke:#333,color:#000
     style V fill:#fff3cd,stroke:#333,color:#000
     style H fill:#fff3cd,stroke:#333,color:#000
     style W fill:#f8f9fa,stroke:#333,color:#000
 ```
+
+Today the LLM gives one reference URL per answer, not one per unit. One URL per unit
+is Anya's week 3.
 
 ## Who this is for
 

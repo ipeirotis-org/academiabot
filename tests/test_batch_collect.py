@@ -156,6 +156,25 @@ def test_collect_records_a_preflight_failure(monkeypatch):
     assert resp.get_json()["outcome"] == "failed"
 
 
+def test_collect_records_an_initialisation_failure(monkeypatch):
+    import flask
+    import wikidata_discover.cloud.collect_function as cf
+    calls = {}
+    def no_keys():
+        raise RuntimeError("No LLM API key available")
+    monkeypatch.setattr(cf, "load_keys_from_secret_manager", no_keys)
+    monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), bucket=bucket, **kw) or
+                        {"run_id": run_id, "failed": 1, "outcome": "failed"})
+    class Req:
+        headers = {}
+        def get_json(self, silent=True): return {"run_id": "r20"}
+    with flask.Flask(__name__).app_context():
+        resp, status = cf.collect(Req())
+    assert status == 207 and calls["qids"] == []
+    assert calls["fail_reason"].startswith("init: RuntimeError: No LLM API key")
+    assert isinstance(calls["bucket"], cf._UnreachableBucket)           # run_batch can still record locally
+
+
 def test_collect_explicit_list_skips_done_before_the_cap(monkeypatch):
     import flask
     import wikidata_discover.cloud.collect_function as cf

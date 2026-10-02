@@ -12,6 +12,9 @@ def test_extract_cache_key_changes_with_the_prompt(monkeypatch):
     assert before != lh._cache_key("NYU", "anthropic", "gpt-4o")         # provider matters
     other_prompt = lh._cache_key("NYU", "openai", "gpt-4o", prompt_hash=lh._prompt_hash("new prompt"))
     assert before != other_prompt                                         # prompt matters
+    a = lh._cache_key("Trinity College", "openai", "gpt-4o", extra="https://trincoll.edu")
+    b = lh._cache_key("Trinity College", "openai", "gpt-4o", extra="https://trinity.duke.edu")
+    assert a != b                                                         # same name, other website
 
 
 def test_choose_match_reuses_a_cached_decision(monkeypatch, tmp_path):

@@ -64,6 +64,18 @@ def pick_qids(list_rows, done: set, limit: int):
     return out
 
 
+class _UnreachableBucket:
+    """Stands in for the bucket when the storage client could not be built, so
+    run_batch can still record the failed invocation locally."""
+    def __init__(self, reason: str):
+        self.reason = reason
+    def _fail(self, *a, **k):
+        raise RuntimeError(self.reason)
+    def blob(self, name):
+        return self
+    exists = download_as_text = upload_from_filename = delete = list_blobs = _fail
+
+
 @functions_framework.http
 def collect(request):
     body = request.get_json(silent=True) or {}
@@ -73,8 +85,6 @@ def collect(request):
     budget = float(body.get("time_budget_s", 1500))
     reserve = float(body.get("reserve_s", 420))
 
-    load_keys_from_secret_manager()
-    ensure_user_agent()
     # Who called: the scheduler job (its header names the job) or a person by hand
     # (the authenticated caller, if the platform passes it; otherwise "manual").
     headers = getattr(request, "headers", {}) or {}
@@ -82,16 +92,23 @@ def collect(request):
     os.environ["ACADEMIABOT_OPERATOR"] = (f"cloud-scheduler:{job}" if job else
                                           f"manual:{headers.get('X-Goog-Authenticated-User-Email', 'unknown caller')}")
 
-    from google.cloud import storage
-    bucket = storage.Client(project=PROJECT).bucket(BUCKET)
-
     args = {"request": body, "run_id": run_id, "list_object": None, "max_universities": limit,
             "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": "qids" in body}
-    # Reading the run log and the list is the preflight. If the bucket is unreachable,
-    # the failure is recorded through run_batch (which writes the local records and
-    # refuses to start a cold run without the bucket) instead of escaping here.
-    qids = []
+    # Every failure from here on is recorded through run_batch (local records, and on
+    # a cold instance a refusal to run blind) instead of escaping as an unlogged 500.
+    qids, bucket = [], None
     try:
+        load_keys_from_secret_manager()
+        ensure_user_agent()
+        from google.cloud import storage
+        bucket = storage.Client(project=PROJECT).bucket(BUCKET)
+    except Exception as e:  # noqa: BLE001
+        args["preflight_error"] = f"init: {type(e).__name__}: {str(e)[:200]}"
+        logger.error("initialisation failed: %s", args["preflight_error"])
+        bucket = _UnreachableBucket(args["preflight_error"])
+    try:
+        if "preflight_error" in args:
+            raise RuntimeError(args["preflight_error"])
         log_blob = bucket.blob(f"runs/{run_id}/log.jsonl")
         done = parse_done(log_blob.download_as_text()) if log_blob.exists() else set()
         args["done_before"] = len(done)
@@ -105,8 +122,9 @@ def collect(request):
             qids = pick_qids(rows, done, limit)
             args["list_done"] = len(done)
     except Exception as e:  # noqa: BLE001
-        args["preflight_error"] = f"{type(e).__name__}: {str(e)[:200]}"
-        logger.error("preflight failed, nothing selected: %s", args["preflight_error"])
+        if "preflight_error" not in args:
+            args["preflight_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+            logger.error("preflight failed, nothing selected: %s", args["preflight_error"])
 
     # An empty list still goes through run_batch so the invocation is recorded; a
     # preflight failure is passed in so the recorded outcome is failed, not ok.

@@ -203,6 +203,8 @@ checks and the human review (section 5). So:
   - `roles/run.developer` -- deploy Cloud Run services for long-running tasks
   - `roles/pubsub.editor` -- event-driven pipelines between collection, verification, and writing stages
   - `roles/cloudfunctions.invoker` -- allow scheduler and other functions to trigger Cloud Functions
+    (gen 1). The gen 2 function is invoked through `roles/run.developer`, which includes
+    `run.routes.invoke`; the deploy script checks this with a real OIDC call after every deploy
 - **Multi-user setup:** Each team member has their own `.cloud-credentials.<email>.enc` file, encrypted with their personal passphrase
 - **Authentication:** Handled automatically via the `cloud-bootstrap` skill and SessionStart hook (`.claude/hooks/cloud-auth.sh`). The hook matches the credentials file to `git config user.email`, so that must be set to the team member's email.
 - **Cross-project access:** The service account also has READER on dataset `nyu-datasets.academiabot` (granted 2026-10-02). See "BigQuery access" below.
