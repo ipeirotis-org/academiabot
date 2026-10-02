@@ -22,8 +22,16 @@ the time:
 | Author profiles collected | about 100,000 |
 | Amortized cost per entity, all tasks | about 20 cents |
 
-If that dataset is still available, it is a ready-made seed and a partial ground truth for
-Milestones 1 and 5 in TASKS.md. Ask Panos.
+That dataset still exists. The organizations are in BigQuery:
+
+```
+nyu-datasets.academiabot.organization
+```
+
+Query it with the project's service account (BigQuery read access is already granted) or
+ask Panos for access. It is a ready-made seed and a partial ground truth for Milestones 1
+and 5 in TASKS.md. Before relying on it, check how current it is: it was collected over
+several years starting in 2015, and units get renamed and reorganized.
 
 ## The human task design we started from
 

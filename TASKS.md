@@ -114,6 +114,9 @@ is mostly your work, not the agent's.
 
 **You do:**
 - [ ] Pick 3 NYU schools (suggested: Stern, Courant, Steinhardt).
+- [ ] Ask the agent to pull what the old crowdsourced dataset has for those schools from
+      BigQuery table `nyu-datasets.academiabot.organization` (see `docs/BACKGROUND.md`).
+      Use it as a starting list, not as the answer. It may be out of date.
 - [ ] From each school's own website, list its real departments. Record the name, the
       URL where you found it, and whether it is already in Wikidata (search wikidata.org;
       if found, record the QID).
