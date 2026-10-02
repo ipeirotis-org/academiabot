@@ -47,3 +47,8 @@ def test_orphan_without_qid_falls_back_to_create():
 def test_unresolved_is_never_exported():
     items = [{"name": "Unknown Dept", "unit_type": "department", "status": "unresolved"}]
     assert quickstatements_lines(items, "Q1", "U") == []
+
+
+def test_cap_applies_after_removing_unresolved():
+    items = [{"name": "U", "status": "unresolved"}, {"name": "M", "unit_type": "school", "status": "missing"}]
+    assert quickstatements_lines(items, "Q1", "U", max_items=1).count("CREATE") == 1

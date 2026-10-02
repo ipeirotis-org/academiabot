@@ -68,9 +68,13 @@ def all_descendants(
     labels: Dict[str, str] = {}
 
     # fetch root label
-    label_q = f"SELECT ?l WHERE {{ wd:{root_qid} rdfs:label ?l FILTER(lang(?l)='en') }}"
-    binding = execute_sparql_bindings(label_q)[0]
-    labels[root_qid] = binding["l"]["value"]
+    # English label preferred, any language otherwise, the QID itself if none.
+    label_q = (
+        f"SELECT ?l WHERE {{ wd:{root_qid} rdfs:label ?l }} "
+        f"ORDER BY DESC(LANG(?l) = 'en') LIMIT 1"
+    )
+    bindings = execute_sparql_bindings(label_q)
+    labels[root_qid] = bindings[0]["l"]["value"] if bindings else root_qid
 
     while queue:
         parent = queue.popleft()

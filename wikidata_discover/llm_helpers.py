@@ -135,11 +135,18 @@ def _cache_key(univ_label: str, provider: str, model: str) -> str:
     return hashlib.sha256(f"{provider}|{univ_label}|{model}".encode()).hexdigest()
 
 
+# Cache files read or written since the last reset. A batch runner uses this to
+# upload exactly the cache entries a run depended on, including old ones it reused.
+cache_paths_touched: set = set()
+
+
 def _load_cache(key: str) -> Optional[List[Dict[str, Any]]]:
     path = _CACHE_DIR / f"{key}.json"
     if path.exists():
         try:
-            return json.loads(path.read_text())
+            data = json.loads(path.read_text())
+            cache_paths_touched.add(path)
+            return data
         except Exception:
             pass
     return None
@@ -147,7 +154,9 @@ def _load_cache(key: str) -> Optional[List[Dict[str, Any]]]:
 
 def _save_cache(key: str, units: List[Dict[str, Any]]) -> None:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    (_CACHE_DIR / f"{key}.json").write_text(json.dumps(units, indent=2))
+    path = _CACHE_DIR / f"{key}.json"
+    path.write_text(json.dumps(units, indent=2))
+    cache_paths_touched.add(path)
 
 
 def _parse_json_text(text: str) -> Any:

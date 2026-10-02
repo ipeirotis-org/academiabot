@@ -19,3 +19,11 @@ def test_falls_back_to_crawl_on_failure(monkeypatch):
     monkeypatch.setattr(h, "execute_sparql_bindings", boom)
     monkeypatch.setattr(h, "all_descendants", lambda root: ([("Q49210", "Q9", "has part", "school")], {}))
     assert h.descendant_qids("Q49210") == {"Q9"}
+
+
+def test_crawl_tolerates_missing_root_label(monkeypatch):
+    # First call is the root label lookup (empty), the rest are crawl steps (empty).
+    monkeypatch.setattr(h, "execute_sparql_bindings", lambda q: [])
+    monkeypatch.setattr(h, "sleep", lambda s: None)
+    edges, labels = h.all_descendants("Q99")
+    assert edges == [] and labels == {"Q99": "Q99"}

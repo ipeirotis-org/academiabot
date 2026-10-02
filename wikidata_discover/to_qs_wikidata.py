@@ -27,11 +27,12 @@ def quickstatements_lines(missing, university_qid, university_label, max_items=N
     is created as a new entity.
     """
     qs_lines = []
-    items = missing[:max_items] if max_items else missing
+    # Unresolved rows (Wikidata could not be checked) are never exported, and they must
+    # not consume the export cap either.
+    exportable = [it for it in missing if it.get("status") != "unresolved"]
+    items = exportable[:max_items] if max_items else exportable
 
     for item in items:
-        if item.get("status") == "unresolved":
-            continue  # Wikidata could not be checked for this one; never create it blind
         if item.get("status") == "orphan" and item.get("qid"):
             qs_lines.extend([f"{item['qid']}|{PARENT_PROPERTY}|{university_qid}", ""])
             continue
