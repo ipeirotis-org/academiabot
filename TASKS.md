@@ -204,21 +204,17 @@ If it is late, read from the CSV files instead and switch later.
 
 ```mermaid
 flowchart LR
-    subgraph A[Anya: build the pipeline]
-        direction TB
-        A2[W2 Run log] --> A3[W3 Departments] --> A4[W4 Full tree] --> A5[W5 Better LLM setup] --> A6[W6 Messy cases] --> A7[W7 Twelve universities] --> A8[W8 Correct export]
-    end
-    subgraph S[Shuo: check that it is true]
-        direction TB
-        S2[W2 Scorer + ground truth] --> S3[W3 Source checker] --> S4[W4 LLM verifier] --> S5[W5 Dept evaluation] --> S6[W6 Review sheet] --> S7[W7 Prolific pilot] --> S8[W8 Review protocol]
-    end
+    SH([Shuo:<br/>check that it is true]) --> S2[W2 Scorer +<br/>ground truth] --> S3[W3 Source<br/>checker] --> S4[W4 LLM<br/>verifier] --> S5[W5 Dept<br/>evaluation] --> S6[W6 Review<br/>sheet] --> S7[W7 Prolific<br/>pilot] --> S8[W8 Review<br/>protocol]
+    AN([Anya:<br/>build the pipeline]) --> A2[W2 Run log] --> A3[W3 Departments] --> A4[W4 Full tree] --> A5[W5 Better<br/>LLM setup] --> A6[W6 Messy<br/>cases] --> A7[W7 Twelve<br/>universities] --> A8[W8 Correct<br/>export]
     S2 -.->|ground-truth CSV| A3
     A2 -.->|candidates row format| S3
     S5 -.->|which LLM setup| A7
     A7 -.->|run ids| S6
     S6 -.->|verdicts| A8
-    A8 --> UP[W9 First upload<br/>Anya + Shuo + Panos]
-    S8 --> UP
+    S8 --> UP[W9 First upload<br/>Anya + Shuo + Panos]
+    A8 --> UP
+    style SH fill:#fde2f3,stroke:#333,color:#000
+    style AN fill:#dff5f2,stroke:#333,color:#000
     style UP fill:#d4edda,stroke:#333,color:#000
 ```
 
