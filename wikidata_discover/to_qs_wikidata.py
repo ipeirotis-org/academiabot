@@ -30,6 +30,8 @@ def quickstatements_lines(missing, university_qid, university_label, max_items=N
     items = missing[:max_items] if max_items else missing
 
     for item in items:
+        if item.get("status") == "unresolved":
+            continue  # Wikidata could not be checked for this one; never create it blind
         if item.get("status") == "orphan" and item.get("qid"):
             qs_lines.extend([f"{item['qid']}|{PARENT_PROPERTY}|{university_qid}", ""])
             continue

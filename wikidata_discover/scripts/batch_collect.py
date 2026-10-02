@@ -32,10 +32,19 @@ from wikidata_discover import config
 gcs = storage.Client(project="wikidata-academia").bucket("academiabot")
 git_commit = subprocess.run(["git","-C",str(REPO),"rev-parse","--short","HEAD"],capture_output=True,text=True).stdout.strip()
 
-def upload_results():
+RUN_STARTED = time.time()
+
+
+def upload_results(qid: str):
+    """Upload only what belongs to this run: the run folder, this QID's outputs, and
+    cache entries written since the run started."""
+    paths = list(RUN_DIR.rglob("*"))
+    paths += [p for p in RESULTS.glob(f"*{qid}*") if p.is_file()]
+    paths += [p for p in (RESULTS / "reports").glob(f"{qid}_*") if p.is_file()]
+    paths += [p for p in (RESULTS / "cache").glob("*") if p.is_file() and p.stat().st_mtime >= RUN_STARTED]
     n = 0
-    for p in RESULTS.rglob("*"):
-        if p.is_file() and p.name != "universities_us.json":
+    for p in paths:
+        if p.is_file():
             gcs.blob(f"runs/{run_id}/{p.relative_to(RESULTS)}").upload_from_filename(str(p)); n += 1
     return n
 
@@ -48,9 +57,15 @@ if LOG.exists():
                 done.add(rec["qid"])
         except Exception: pass
 
-(RUN_DIR / "run.json").write_text(json.dumps({"run_id": run_id, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    "git_commit": git_commit, "models": {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL},
-    "user_agent": config.USER_AGENT, "qids": qids}, indent=2))
+invocation = {"started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "git_commit": git_commit,
+              "command": sys.argv, "models": {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL},
+              "user_agent": config.USER_AGENT, "qids": qids, "resumed": bool(done)}
+if not (RUN_DIR / "run.json").exists():
+    (RUN_DIR / "run.json").write_text(json.dumps({"run_id": run_id, **invocation}, indent=2))
+# Every invocation (first run and each resume) gets its own record, so log.jsonl rows
+# can be attributed to the environment that produced them.
+with (RUN_DIR / "invocations.jsonl").open("a") as f:
+    f.write(json.dumps(invocation) + "\n")
 
 for i, qid in enumerate(qids, 1):
     if qid in done:
@@ -69,7 +84,7 @@ for i, qid in enumerate(qids, 1):
     with LOG.open("a") as f: f.write(json.dumps(rec) + "\n")
     print(f"[{i}/{len(qids)}] {qid} {rec['status']} {rec.get('label','')} {rec['seconds']}s", flush=True)
     try:
-        n = upload_results(); print(f"   uploaded {n} files to gs://academiabot/runs/{run_id}/", flush=True)
+        n = upload_results(qid); print(f"   uploaded {n} files to gs://academiabot/runs/{run_id}/", flush=True)
     except Exception as e:
         print(f"   upload failed: {type(e).__name__}: {str(e)[:120]}", flush=True)
 print("BATCH DONE", flush=True)

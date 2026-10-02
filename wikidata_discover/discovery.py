@@ -125,7 +125,7 @@ class Discovery:
         )
 
         missing: List[Dict[str, Any]] = []
-        counts = {"exists_linked": 0, "exists_orphan": 0, "missing": 0}
+        counts = {"exists_linked": 0, "exists_orphan": 0, "missing": 0, "unresolved": 0}
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("Division")
         table.add_column("Status")
@@ -146,19 +146,36 @@ class Discovery:
                     break
 
             # step 2: if no fuzzy match, fall back to LLM with Wikidata search results
+            search_failed = False
             if not matched:
                 try:
                     qsearch_hits = quick_wd_search(name)
                 except Exception as e:  # noqa: BLE001 - one failed search must not sink the university
-                    logger.warning("Wikidata search failed for '%s' (%s); matching against linked children only", name, e)
+                    logger.warning("Wikidata search failed for '%s' (%s); leaving it unresolved", name, e)
                     qsearch_hits = []
+                    search_failed = True
                 choices = direct_children + [
                     (qid, lbl) for qid, lbl in qsearch_hits if qid not in direct_qids
                 ]
                 matched = LLMHelper.choose_match(name, self.university_label, choices)
 
             # step 3: classify the outcome
-            if matched is None:
+            if matched is None and search_failed:
+                # We could not check Wikidata, so we do not know. Never call it missing:
+                # that would create a duplicate on upload. Recorded for a rerun or review.
+                status = "unresolved"
+                counts["unresolved"] += 1
+                missing.append(
+                    {
+                        "name": name,
+                        "unit_type": division.get("unit_type", "faculty"),
+                        "url": division.get("website", ""),
+                        "university_qid": self.university_qid,
+                        "university_label": self.university_label,
+                        "status": "unresolved",
+                    }
+                )
+            elif matched is None:
                 status = "missing"
                 counts["missing"] += 1
                 missing.append(
@@ -237,6 +254,7 @@ class Discovery:
             "exists_linked": counts["exists_linked"],
             "exists_orphan": counts["exists_orphan"],
             "missing": counts["missing"],
+            "unresolved": counts["unresolved"],
         }
         reports_dir = RESULTS_DIR / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)

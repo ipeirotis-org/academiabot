@@ -68,7 +68,7 @@ def _get(query: str) -> requests.Response:
 @retry(
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
-    retry=retry_if_exception_type((requests.RequestException, SparqlRateLimited)),
+    retry=retry_if_exception_type((requests.RequestException, SparqlRateLimited, SparqlBadResponse)),
     before_sleep=lambda rs: logger.warning(
         "SPARQL retry #%d after %s", rs.attempt_number, rs.outcome.exception()
     ),

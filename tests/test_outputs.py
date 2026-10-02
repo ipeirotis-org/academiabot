@@ -42,3 +42,8 @@ def test_orphans_are_linked_not_created():
 def test_orphan_without_qid_falls_back_to_create():
     lines = quickstatements_lines([{"name": "X", "status": "orphan"}], "Q1", "U")
     assert lines.count("CREATE") == 1
+
+
+def test_unresolved_is_never_exported():
+    items = [{"name": "Unknown Dept", "unit_type": "department", "status": "unresolved"}]
+    assert quickstatements_lines(items, "Q1", "U") == []
