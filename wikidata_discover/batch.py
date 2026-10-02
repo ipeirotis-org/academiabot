@@ -201,6 +201,26 @@ def object_name(run_id: str, path: Path, results_dir: Path, run_dir: Path) -> st
     return f"runs/{run_id}/{path.relative_to(base).as_posix()}"
 
 
+def operator_identity() -> str:
+    """Who started this run: ACADEMIABOT_OPERATOR if set (the Cloud Function sets it
+    from the request), else the git user email, else the OS user name."""
+    who = os.getenv("ACADEMIABOT_OPERATOR")
+    if who:
+        return who
+    try:
+        who = subprocess.run(["git", "-C", str(RESULTS_DIR.parents[1]), "config", "user.email"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        who = ""
+    if who:
+        return who
+    try:
+        import getpass
+        return getpass.getuser()
+    except Exception:
+        return "unknown"
+
+
 def git_commit() -> str:
     try:
         out = subprocess.run(["git", "-C", str(RESULTS_DIR.parents[1]), "rev-parse", "--short", "HEAD"],
@@ -238,27 +258,37 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
             bucket.blob(object_name(run_id, p, results_dir, run_dir)).upload_from_filename(str(p)); n += 1
         return n
 
-    for name in ("log.jsonl", "invocations.jsonl"):
-        sync_from_bucket(bucket, run_id, run_dir, name)
-    resumed = (run_dir / "run.json").exists() or bucket.blob(f"runs/{run_id}/run.json").exists()
+    summary = {"run_id": run_id, "requested": len(qids), "skipped_done": 0, "processed": 0, "ok": 0,
+               "failed": 0, "stopped_for_time": False}
+    # Bring the run state down from the bucket. If the bucket is unreachable the run
+    # still starts from local state and records that, instead of dying silently.
+    resumed = (run_dir / "run.json").exists()
+    sync_error = None
+    try:
+        for name in ("log.jsonl", "invocations.jsonl"):
+            sync_from_bucket(bucket, run_id, run_dir, name)
+        resumed = resumed or bucket.blob(f"runs/{run_id}/run.json").exists()
+        restored = restore_caches(bucket, run_id, log_path, results_dir, load_done(log_path))
+        if restored:
+            report(f"restored {restored} cache files from the bucket for pending universities")
+    except Exception as e:  # noqa: BLE001
+        sync_error = f"{type(e).__name__}: {str(e)[:120]}"
+        report(f"bucket sync failed, continuing from local state: {sync_error}")
+        summary["failed"] += 1
     done = load_done(log_path)
-    restored = restore_caches(bucket, run_id, log_path, results_dir, done)
-    if restored:
-        report(f"restored {restored} cache files from the bucket for pending universities")
 
     invocation = {"started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "git_commit": git_commit(),
+                  "operator": operator_identity(),
                   "args": invocation_args if invocation_args is not None else {"argv": sys.argv},
                   "host": os.getenv("K_SERVICE", "local"),
                   "models": {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL},
                   "user_agent": config.USER_AGENT, "qids": qids, "resumed": resumed,
-                  "time_budget_s": time_budget_s, "reserve_s": reserve_s}
+                  "time_budget_s": time_budget_s, "reserve_s": reserve_s, "sync_error": sync_error}
     if not resumed:
         (run_dir / "run.json").write_text(json.dumps({"run_id": run_id, **invocation}, indent=2))
     with (run_dir / "invocations.jsonl").open("a") as f:
         f.write(json.dumps(invocation) + "\n")
 
-    summary = {"run_id": run_id, "requested": len(qids), "skipped_done": 0, "processed": 0, "ok": 0,
-               "failed": 0, "stopped_for_time": False}
     # The invocation is part of the record even when no university gets processed.
     try:
         upload([p for p in run_dir.rglob("*") if p.is_file()])
@@ -316,9 +346,12 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
             # uploaded=false puts the QID back in the queue here too.
             note += f"; run log upload failed: {type(e).__name__} (QID will be retried on resume)"
             if rec["uploaded"]:
+                correction = {"qid": qid, "status": rec["status"], "uploaded": False,
+                              "note": f"run log upload failed: {type(e).__name__}"}
+                if "error" in rec:
+                    correction["error"] = rec["error"]
                 with log_path.open("a") as f:
-                    f.write(json.dumps({"qid": qid, "status": "ok", "uploaded": False,
-                                        "note": f"run log upload failed: {type(e).__name__}"}) + "\n")
+                    f.write(json.dumps(correction) + "\n")
                 rec["uploaded"] = False
                 summary["failed"] += 1
         if rec["status"] == "ok" and rec["uploaded"] and not rec.get("unresolved_rows"):

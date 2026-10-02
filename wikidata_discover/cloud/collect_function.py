@@ -22,6 +22,7 @@ Deploy with deploy/deploy_collect_function.sh. Keys come from Secret Manager at 
 """
 import json
 import logging
+import os
 import time
 
 import functions_framework
@@ -74,6 +75,12 @@ def collect(request):
 
     load_keys_from_secret_manager()
     ensure_user_agent()
+    # Who called: the scheduler job (its header names the job) or a person by hand
+    # (the authenticated caller, if the platform passes it; otherwise "manual").
+    headers = getattr(request, "headers", {}) or {}
+    job = headers.get("X-CloudScheduler-JobName")
+    os.environ["ACADEMIABOT_OPERATOR"] = (f"cloud-scheduler:{job}" if job else
+                                          f"manual:{headers.get('X-Goog-Authenticated-User-Email', 'unknown caller')}")
 
     from google.cloud import storage
     bucket = storage.Client(project=PROJECT).bucket(BUCKET)

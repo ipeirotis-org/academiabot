@@ -38,15 +38,18 @@ GROUP BY ?child
 
 # English label preferred; any language as a fallback (a few hundred U.S.
 # institutions on Wikidata have labels only in other languages). The label's
-# language is returned so that child lookups and searches can use it too.
+# language is returned so that child lookups and searches can use it too. Ties
+# among fallback languages are broken by language code, then label, so the same
+# QID always gets the same label (it feeds the LLM prompt and the cache key).
 UNIV_INFO_SPARQL = """
-SELECT ?label (LANG(?label) AS ?lang) ?website WHERE {
+SELECT ?label ?lang ?website WHERE {
   OPTIONAL { wd:%s rdfs:label ?en . FILTER(LANG(?en)="en") }
   OPTIONAL { wd:%s rdfs:label ?any }
   OPTIONAL { wd:%s wdt:P856 ?website }
   BIND(COALESCE(?en, ?any) AS ?label)
+  BIND(LANG(?label) AS ?lang)
 }
-ORDER BY DESC(BOUND(?en))
+ORDER BY DESC(BOUND(?en)) ?lang ?label ?website
 LIMIT 1
 """
 

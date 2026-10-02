@@ -36,6 +36,15 @@ rm -rf "$SRC"/wikidata_discover/results/cache "$SRC"/wikidata_discover/results/r
 cp wikidata_discover/cloud/requirements.txt "$SRC/requirements.txt"
 printf 'from wikidata_discover.cloud.collect_function import collect  # noqa: F401\n' > "$SRC/main.py"
 
+# Pause the job before touching the function, so no scheduled tick runs during a slow
+# or failed deployment. The job is left paused at the end unless --resume is given.
+for J in "$JOB" "$LEGACY_JOB"; do
+  if gcloud scheduler jobs describe "$J" --project="$PROJECT" --location="$REGION" >/dev/null 2>&1; then
+    gcloud scheduler jobs pause "$J" --project="$PROJECT" --location="$REGION" >/dev/null
+    echo "Scheduler job $J paused for the deployment."
+  fi
+done
+
 # The invoker policy (authenticated callers only) is set when the function is first
 # created. On a redeploy the flag is omitted: the policy is kept, and setting it again
 # needs run.services.setIamPolicy, which the deploying service account does not have.
@@ -62,9 +71,8 @@ fi
 
 BODY="{\"run_id\": \"$RUN_ID\", \"max_universities\": $MAX_PER_SLICE, \"time_budget_s\": 1500, \"reserve_s\": 420}"
 if gcloud scheduler jobs describe "$JOB" --project="$PROJECT" --location="$REGION" >/dev/null 2>&1; then
-  # Pause first: an update changes the run id in the request body, and a job that was
-  # running before must not start spending on the new run without an explicit --resume.
-  gcloud scheduler jobs pause "$JOB" --project="$PROJECT" --location="$REGION" >/dev/null
+  # Already paused above: an update changes the run id in the request body, and a job
+  # that was running before must not start spending on the new run without --resume.
   gcloud scheduler jobs update http "$JOB" --project="$PROJECT" --location="$REGION" \
     --schedule="$SCHEDULE" --uri="$URL" --http-method=POST --message-body="$BODY" \
     --update-headers="Content-Type=application/json" --oidc-service-account-email="$SA" --attempt-deadline=30m

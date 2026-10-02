@@ -287,11 +287,13 @@ class FakeBucket:
 
 
 class StubDiscovery:
-    """Writes the report a real Discovery would, nothing else."""
+    """Writes the report a real Discovery would, nothing else. QFAIL raises."""
     results_dir = None
     def __init__(self, qid):
         self.university_qid, self.university_label = qid, f"University {qid}"
     def discover_missing(self):
+        if self.university_qid == "QFAIL":
+            raise ValueError("No LLM provider returned any units")
         d = self.results_dir / "reports"; d.mkdir(parents=True, exist_ok=True)
         (d / f"{self.university_qid}_report.json").write_text(json.dumps({"missing": 1, "exists_orphan": 0, "unresolved": 0}))
         return []
@@ -441,3 +443,33 @@ def test_run_batch_run_log_upload_failure_requeues_qid(stub):
     assert s["failed"] == 1 and s["ok"] == 1
     assert load_done(stub / "runs" / "r3" / "log.jsonl") == set()         # local log agrees: not done
     assert "runs/r3/log.jsonl" not in bucket.store
+
+
+def test_correction_record_keeps_failed_status(stub):
+    bucket = FakeBucket(fail_on=("log.jsonl",))
+    batch.run_batch("r14", ["QFAIL"], bucket, results_dir=stub, report=lambda m: None)
+    last = json.loads((stub / "runs" / "r14" / "log.jsonl").read_text().splitlines()[-1])
+    assert last["status"] == "failed" and last["uploaded"] is False and "No LLM provider" in last["error"]
+
+
+def test_run_batch_survives_an_unreachable_bucket(stub):
+    class DeadBlob(FakeBlob):
+        def exists(self): raise OSError("bucket unreachable")
+        def download_as_text(self): raise OSError("bucket unreachable")
+        def upload_from_filename(self, path): raise OSError("bucket unreachable")
+    class DeadBucket(FakeBucket):
+        def blob(self, name): return DeadBlob(self.store, name)
+        def list_blobs(self, prefix=""): raise OSError("bucket unreachable")
+    s = batch.run_batch("r15", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
+    assert s["outcome"] == "failed" and s["processed"] == 1
+    lines = [json.loads(l) for l in (stub / "runs" / "r15" / "invocations.jsonl").read_text().splitlines()]
+    assert lines[0]["sync_error"].startswith("OSError") and lines[0]["operator"]
+    assert lines[-1]["outcome"] == "failed"
+    assert json.loads((stub / "runs" / "r15" / "run.json").read_text())["operator"]
+
+
+def test_operator_identity_prefers_env(monkeypatch):
+    monkeypatch.setenv("ACADEMIABOT_OPERATOR", "cloud-scheduler:academiabot-collect-slice")
+    assert batch.operator_identity() == "cloud-scheduler:academiabot-collect-slice"
+    monkeypatch.delenv("ACADEMIABOT_OPERATOR")
+    assert batch.operator_identity()   # git email or OS user, never empty

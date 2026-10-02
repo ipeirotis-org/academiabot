@@ -33,6 +33,11 @@ def test_language_falls_back_to_xml_lang_then_en(monkeypatch):
     d.fetch_university_info(); assert d.university_lang == "en"
 
 
+def test_fallback_label_choice_is_deterministic():
+    # several non-English labels must not tie: order by language, then label
+    assert "ORDER BY DESC(BOUND(?en)) ?lang ?label" in disc.UNIV_INFO_SPARQL
+
+
 def test_no_label_at_all_raises(monkeypatch):
     d = _make(monkeypatch, [{"website": {"value": "https://t.edu"}}])
     with pytest.raises(ValueError):
