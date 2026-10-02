@@ -447,11 +447,12 @@ class LLMHelper:
                 logger.warning("extract_divisions_best_available: %s raised error (%s), trying next", provider_name, e)
                 continue
 
-        logger.error("extract_divisions_best_available: all providers failed or unavailable for %s", univ_label)
+        logger.error("extract_divisions_best_available: all providers failed, unavailable, or empty for %s", univ_label)
         raise ValueError(
-            f"No LLM providers available for extraction. "
-            f"Please configure at least one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY. "
-            f"University: {univ_label}"
+            f"No LLM provider returned any units for {univ_label!r}: each one was not "
+            f"configured, failed, or answered with an empty list (an empty list usually "
+            f"means the item is not a university). Configure at least one of "
+            f"OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY if none is set."
         )
 
     @staticmethod

@@ -76,16 +76,18 @@ def collect(request):
     from google.cloud import storage
     bucket = storage.Client(project=PROJECT).bucket(BUCKET)
 
+    log_blob = bucket.blob(f"runs/{run_id}/log.jsonl")
+    done = parse_done(log_blob.download_as_text()) if log_blob.exists() else set()
     args = {"request": body, "run_id": run_id, "list_object": None, "max_universities": limit,
-            "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": "qids" in body}
+            "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": "qids" in body,
+            "done_before": len(done)}
     if "qids" in body:
         # An explicit list, even an empty one, never falls back to the bucket list.
-        qids = pick_qids(body["qids"] or [], set(), limit)
+        # Done QIDs are dropped before the cap, so a long list advances across calls.
+        qids = pick_qids(body["qids"] or [], done, limit)
     else:
         args["list_object"] = list_object
         rows = json.loads(bucket.blob(list_object).download_as_text())
-        log_blob = bucket.blob(f"runs/{run_id}/log.jsonl")
-        done = parse_done(log_blob.download_as_text()) if log_blob.exists() else set()
         qids = pick_qids(rows, done, limit)
         args["list_done"] = len(done)
 

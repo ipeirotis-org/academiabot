@@ -49,7 +49,7 @@ gcloud functions deploy "$FUNCTION" \
   --trigger-http $AUTH_FLAG \
   --service-account="$SA" \
   --memory=1Gi --timeout=1800s --max-instances=1 --concurrency=1 \
-  --set-env-vars="GIT_COMMIT=$(git rev-parse --short HEAD)"
+  --update-env-vars="GIT_COMMIT=$(git rev-parse --short HEAD)"   # keeps any other variables set on the function
 
 URL=$(gcloud functions describe "$FUNCTION" --project="$PROJECT" --region="$REGION" --gen2 --format="value(serviceConfig.uri)")
 echo "Function URL: $URL"
@@ -67,7 +67,7 @@ if gcloud scheduler jobs describe "$JOB" --project="$PROJECT" --location="$REGIO
   gcloud scheduler jobs pause "$JOB" --project="$PROJECT" --location="$REGION" >/dev/null
   gcloud scheduler jobs update http "$JOB" --project="$PROJECT" --location="$REGION" \
     --schedule="$SCHEDULE" --uri="$URL" --http-method=POST --message-body="$BODY" \
-    --headers="Content-Type=application/json" --oidc-service-account-email="$SA" --attempt-deadline=30m
+    --update-headers="Content-Type=application/json" --oidc-service-account-email="$SA" --attempt-deadline=30m
   echo "Scheduler job $JOB updated and PAUSED."
 else
   gcloud scheduler jobs create http "$JOB" --project="$PROJECT" --location="$REGION" \

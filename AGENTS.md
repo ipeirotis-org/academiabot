@@ -260,8 +260,10 @@ flowchart LR
 - Stop: `gcloud scheduler jobs pause academiabot-collect-slice --location=us-east1`.
 - Progress: read `runs/<run_id>/log.jsonl` in the bucket. One line per university attempt.
   The last record for a QID wins; a QID is done only when its last record is ok and uploaded
-  and has no unresolved candidates. A university with unresolved candidates is retried on
-  later invocations, up to 3 attempts, then left for a person (its report lists them).
+  and has no unresolved candidates. A university with unresolved candidates, or a failed
+  attempt, is retried on later invocations, up to 3 attempts in total, then left for a
+  person. Three failures usually mean the item is not a university (the LLM returns no
+  units, and that counts as a failure).
   `invocations.jsonl` has a start record and an end record (end time, outcome, summary)
   for every invocation.
 - Request body (all optional): `run_id`, `list_object`, `max_universities` (60), `time_budget_s`

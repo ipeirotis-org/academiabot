@@ -62,6 +62,20 @@ def test_parse_done_keeps_unresolved_pending_until_max_attempts():
     assert parse_done(fixed) == {"Q1"}                            # second try resolved them
 
 
+def test_parse_done_gives_up_on_repeated_failures():
+    failed = {"qid": "Q1", "started": "t", "status": "failed", "error": "ValueError: no units"}
+    assert parse_done("\n".join(json.dumps(r) for r in [failed, failed])) == set()       # retry
+    assert parse_done("\n".join(json.dumps(r) for r in [failed, failed, failed])) == {"Q1"}  # leave it
+
+
+def test_empty_llm_answers_raise_instead_of_an_empty_report(monkeypatch):
+    from wikidata_discover.llm_helpers import LLMHelper
+    for name in ("extract_divisions_openai", "extract_divisions_anthropic", "extract_divisions_gemini"):
+        monkeypatch.setattr(LLMHelper, name, staticmethod(lambda label, website: []))
+    with pytest.raises(ValueError):
+        LLMHelper.extract_divisions_best_available("Not a University", None)
+
+
 def test_collect_treats_empty_qids_as_explicit(monkeypatch):
     import flask
     import wikidata_discover.cloud.collect_function as cf
@@ -71,8 +85,10 @@ def test_collect_treats_empty_qids_as_explicit(monkeypatch):
     monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), **kw) or
                         {"run_id": run_id, "failed": 0})
 
-    class NeverBucket:
+    class NeverBucket(FakeBucket):
         def blob(self, name):
+            if name.startswith("runs/"):           # the run log may be read
+                return super().blob(name)
             raise AssertionError(f"the university list must not be read, got {name}")
     class FakeClient:
         def __init__(self, project=None): pass
@@ -109,6 +125,29 @@ def test_collect_records_invocation_when_list_is_exhausted(monkeypatch):
         resp, status = cf.collect(Req())
     assert calls["qids"] == [] and calls["invocation_args"]["list_done"] == 1
     assert resp.get_json()["message"] == "nothing left to do"
+
+
+def test_collect_explicit_list_skips_done_before_the_cap(monkeypatch):
+    import flask
+    import wikidata_discover.cloud.collect_function as cf
+    calls = {}
+    monkeypatch.setattr(cf, "load_keys_from_secret_manager", lambda: None)
+    monkeypatch.setattr(cf, "ensure_user_agent", lambda: None)
+    monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids)) or
+                        {"run_id": run_id, "failed": 0})
+    done_log = "".join(json.dumps({"qid": q, "started": "t", "status": "ok", "uploaded": True}) + "\n" for q in ("Q1", "Q2"))
+    store = {"runs/r13/log.jsonl": done_log}
+    class FakeClient:
+        def __init__(self, project=None): pass
+        def bucket(self, name): return FakeBucket(store)
+    import google.cloud.storage as gcs
+    monkeypatch.setattr(gcs, "Client", FakeClient)
+
+    class Req:
+        def get_json(self, silent=True): return {"run_id": "r13", "qids": ["Q1", "Q2", "Q3", "Q4"], "max_universities": 2}
+    with flask.Flask(__name__).app_context():
+        cf.collect(Req())
+    assert calls["qids"] == ["Q3", "Q4"]   # not ["Q1", "Q2"] again
 
 
 def test_object_name_never_doubles_run_prefix(tmp_path):

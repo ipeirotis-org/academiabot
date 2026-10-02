@@ -40,18 +40,19 @@ def artifact_paths(results_dir: Path, run_dir: Path, qid: str, since: float, ext
     return run_files + fresh + extra_files
 
 
-MAX_ATTEMPTS = 3  # attempts at a university before unresolved candidates are left for review
+MAX_ATTEMPTS = 3  # attempts at a university before it is left for a person to look at
 
 
 def parse_done(log_text: str, max_attempts: int = MAX_ATTEMPTS) -> set:
-    """QIDs whose discovery succeeded, whose files reached the bucket, and whose
-    candidates were all checked against Wikidata.
+    """QIDs that need no further attempt: discovery succeeded, the files reached the
+    bucket, and every candidate was checked against Wikidata.
 
     The last record for a QID wins, so a later record with uploaded=false (written
     when the run log itself failed to upload) puts the QID back in the queue. A
-    university with unresolved candidates (Wikidata could not be searched) stays
-    pending so it is rechecked, up to max_attempts attempts; after that it counts as
-    done and its report, which lists the unresolved rows, is left for a person."""
+    university with unresolved candidates (Wikidata could not be searched) or a
+    failed attempt is retried, up to max_attempts attempts in total; after that it is
+    left alone and its log records are for a person to read (a QID that fails three
+    times is usually not a university, or the LLM found nothing for it)."""
     last, attempts = {}, {}
     for line in log_text.splitlines():
         try:
@@ -61,7 +62,7 @@ def parse_done(log_text: str, max_attempts: int = MAX_ATTEMPTS) -> set:
                 attempts[qid] = attempts.get(qid, 0) + 1
             complete = rec.get("status") == "ok" and bool(rec.get("uploaded"))
             unresolved = rec.get("unresolved_rows") or 0
-            last[qid] = complete and (unresolved == 0 or attempts.get(qid, 0) >= max_attempts)
+            last[qid] = (complete and unresolved == 0) or attempts.get(qid, 0) >= max_attempts
         except Exception:
             pass
     return {qid for qid, ok in last.items() if ok}

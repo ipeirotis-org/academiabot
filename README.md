@@ -15,10 +15,10 @@ a person has checked.
 
 ```mermaid
 flowchart LR
-    U[University] -->|P749| S[School or College]
-    S -->|P749| D[Department]
-    D -->|P749| P[Program, Lab, Center]
-    P -.->|P108 employer| F[Faculty]
+    U[University] ---|parent| S[School or College]
+    S ---|parent| D[Department]
+    D ---|parent| P[Program, Lab, Center]
+    F[Faculty] -.->|P108 employer| P
     style U fill:#dfe9f5,stroke:#333,color:#000
     style S fill:#dfe9f5,stroke:#333,color:#000
     style D fill:#fff3cd,stroke:#333,color:#000
@@ -26,7 +26,9 @@ flowchart LR
     style F fill:#f8f9fa,stroke:#999,stroke-dasharray: 5 5,color:#000
 ```
 
-Blue: works today. Yellow: being built this term. Dashed: later.
+Blue: works today. Yellow: being built this term. Dashed: later. The parent link will
+be P749 (parent organization); the exporter still writes P361 (part of) today, and
+Anya's week 8 switches it.
 
 ```mermaid
 flowchart LR
