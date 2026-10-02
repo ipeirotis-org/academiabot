@@ -34,6 +34,24 @@ academiabot/
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
 ```
 
+```mermaid
+flowchart LR
+    CLI[cli.py<br/>harvest, discover] --> DISC[discovery.py]
+    BATCH[batch.py] --> DISC
+    CF[cloud/collect_function.py] --> BATCH
+    BC[scripts/batch_collect.py] --> BATCH
+    DISC --> LLM[llm_helpers.py<br/>OpenAI, Anthropic, Gemini]
+    DISC --> SP[sparql_helpers.py]
+    DISC --> WA[wikidata_api.py<br/>search]
+    DISC --> HI[hierarchy.py<br/>descendants]
+    DISC --> QS[to_qs_wikidata.py<br/>QuickStatements]
+    HI --> SP
+    LLM & SP & WA --> CFG[config.py<br/>keys, models, user agent]
+    LLM --> CACHE[(results/cache)]
+    DISC & QS --> OUT[(results/<br/>CSV, .qs, reports)]
+    BATCH --> GCS[(gs://academiabot/runs)]
+```
+
 ## How to run
 
 ```bash
@@ -223,6 +241,17 @@ holds the resumable batch logic; `scripts/batch_collect.py` runs it from a termi
 processes one time slice per invocation and resumes from the run log in the bucket. Cloud
 Scheduler calls it every 30 minutes (its HTTP deadline is 30 minutes at most, so a slice
 has a 25 minute budget). State and artifacts live only in `gs://academiabot/runs/<run_id>/`.
+
+```mermaid
+flowchart LR
+    S[Cloud Scheduler<br/>7 and 37 past the hour<br/>PAUSED until a person resumes it] -->|POST run_id| F[Cloud Function<br/>academiabot-collect<br/>1 instance, 25 min of work]
+    SM[Secret Manager<br/>3 API keys] --> F
+    F -->|read list, log, caches| B[(gs://academiabot<br/>runs/run_id/)]
+    F -->|next universities<br/>not yet done| D[discover]
+    D -->|CSV, .qs, report,<br/>cache, log line| B
+    P[Panos] -->|resume = start spending<br/>pause = stop| S
+    R[Student] -->|read log.jsonl| B
+```
 
 - Deploy or update: `bash deploy/deploy_collect_function.sh` (creates or updates the scheduler
   job and leaves it PAUSED, even if it was running before).

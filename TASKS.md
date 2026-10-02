@@ -31,6 +31,24 @@ That command (Q49210 is NYU):
 5. Writes the results to `wikidata_discover/results/`: a CSV, a QuickStatements file that
    could create the missing schools, and a small JSON report.
 
+```mermaid
+flowchart TD
+    Q[discover QID] --> WD[Wikidata: name, website,<br/>schools already linked]
+    WD --> LLM[LLM lists the schools<br/>OpenAI, else Anthropic, else Gemini]
+    LLM --> M{Name matches a<br/>linked school?}
+    M -->|yes| L[linked]
+    M -->|no| S[Search Wikidata<br/>+ ask LLM to match]
+    S -->|found, linked| L
+    S -->|found, not linked| O[orphan]
+    S -->|not found| X[missing]
+    S -->|search failed| U[unresolved]
+    L & O & X & U --> R[CSV + QuickStatements + report<br/>unresolved is never exported]
+    style L fill:#d4edda,stroke:#333,color:#000
+    style O fill:#fff3cd,stroke:#333,color:#000
+    style X fill:#f8d7da,stroke:#333,color:#000
+    style U fill:#e2e3e5,stroke:#333,color:#000
+```
+
 **How good is it?** We built the true list of schools for 12 universities by hand
 (`wikidata_discover/eval/ground_truth.py`) and measured. The best setup, Anthropic judging
 a merged list from OpenAI and Gemini, gets about 95% precision and 95% recall. The numbers
@@ -183,6 +201,26 @@ If it is late, read from the CSV files instead and switch later.
 | End of week 7 | Anya | Shuo | Run ids for the 12 universities |
 | Week 8 | Shuo | Anya | Verdicts in the `reviews` table, which the export must honor |
 | Week 9 | Both with Panos | Wikidata | The first upload |
+
+```mermaid
+flowchart LR
+    subgraph A[Anya: build the pipeline]
+        direction TB
+        A2[W2 Run log] --> A3[W3 Departments] --> A4[W4 Full tree] --> A5[W5 Better LLM setup] --> A6[W6 Messy cases] --> A7[W7 Twelve universities] --> A8[W8 Correct export]
+    end
+    subgraph S[Shuo: check that it is true]
+        direction TB
+        S2[W2 Scorer + ground truth] --> S3[W3 Source checker] --> S4[W4 LLM verifier] --> S5[W5 Dept evaluation] --> S6[W6 Review sheet] --> S7[W7 Prolific pilot] --> S8[W8 Review protocol]
+    end
+    S2 -.->|ground-truth CSV| A3
+    A2 -.->|candidates row format| S3
+    S5 -.->|which LLM setup| A7
+    A7 -.->|run ids| S6
+    S6 -.->|verdicts| A8
+    A8 --> UP[W9 First upload<br/>Anya + Shuo + Panos]
+    S8 --> UP
+    style UP fill:#d4edda,stroke:#333,color:#000
+```
 
 Meet together with Panos once a week. Meet each other whenever a hand-off is due.
 

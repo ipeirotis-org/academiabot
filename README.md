@@ -13,6 +13,34 @@ each proposal against the university's own website is being built now (see TASKS
 The rule we are building toward: nothing goes into Wikidata without a written source that
 a person has checked.
 
+```mermaid
+flowchart LR
+    U[University] -->|P749| S[School or College]
+    S -->|P749| D[Department]
+    D -->|P749| P[Program, Lab, Center]
+    P -.->|P108 employer| F[Faculty]
+    style U fill:#dfe9f5,stroke:#333,color:#000
+    style S fill:#dfe9f5,stroke:#333,color:#000
+    style D fill:#fff3cd,stroke:#333,color:#000
+    style P fill:#f8f9fa,stroke:#999,stroke-dasharray: 5 5,color:#000
+    style F fill:#f8f9fa,stroke:#999,stroke-dasharray: 5 5,color:#000
+```
+
+Blue: works today. Yellow: being built this term. Dashed: later.
+
+```mermaid
+flowchart LR
+    L[LLM proposes<br/>a unit + a source URL] --> C[Code checks<br/>Wikidata]
+    C --> V[Code checks<br/>the source page]
+    V --> H[Person reviews<br/>and approves]
+    H --> W[(Wikidata)]
+    style L fill:#dfe9f5,stroke:#333,color:#000
+    style C fill:#dfe9f5,stroke:#333,color:#000
+    style V fill:#fff3cd,stroke:#333,color:#000
+    style H fill:#fff3cd,stroke:#333,color:#000
+    style W fill:#f8f9fa,stroke:#333,color:#000
+```
+
 ## Who this is for
 
 Students on this project **direct a coding agent** (Claude Code or similar). You will not
