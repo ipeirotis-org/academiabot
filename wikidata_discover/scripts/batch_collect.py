@@ -42,7 +42,10 @@ def upload_results():
 done = set()
 if LOG.exists():
     for line in LOG.read_text().splitlines():
-        try: done.add(json.loads(line)["qid"])
+        try:
+            rec = json.loads(line)
+            if rec.get("status") == "ok":
+                done.add(rec["qid"])
         except Exception: pass
 
 (RUN_DIR / "run.json").write_text(json.dumps({"run_id": run_id, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

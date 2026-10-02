@@ -141,7 +141,11 @@ class Discovery:
 
             # step 2: if no fuzzy match, fall back to LLM with Wikidata search results
             if not matched:
-                qsearch_hits = quick_wd_search(name)
+                try:
+                    qsearch_hits = quick_wd_search(name)
+                except Exception as e:  # noqa: BLE001 - one failed search must not sink the university
+                    logger.warning("Wikidata search failed for '%s' (%s); matching against linked children only", name, e)
+                    qsearch_hits = []
                 choices = direct_children + [
                     (qid, lbl) for qid, lbl in qsearch_hits if qid not in direct_qids
                 ]
