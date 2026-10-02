@@ -223,12 +223,17 @@ holds the resumable batch logic; `scripts/batch_collect.py` runs it from a termi
 processes one time slice per invocation and resumes from the run log in the bucket. Cloud
 Scheduler calls it hourly. State and artifacts live only in `gs://academiabot/runs/<run_id>/`.
 
-- Deploy or update: `bash deploy/deploy_collect_function.sh` (creates the scheduler job PAUSED).
+- Deploy or update: `bash deploy/deploy_collect_function.sh` (creates or updates the scheduler
+  job and leaves it PAUSED, even if it was running before).
 - Start collecting: `gcloud scheduler jobs resume academiabot-collect-hourly --location=us-east1`.
   Only a person does this; it spends LLM credit.
 - Stop: `gcloud scheduler jobs pause academiabot-collect-hourly --location=us-east1`.
 - Progress: read `runs/<run_id>/log.jsonl` in the bucket. One line per university attempt.
-  The last record for a QID wins; a QID is done only when its last record is ok and uploaded.
+  The last record for a QID wins; a QID is done only when its last record is ok and uploaded
+  and has no unresolved candidates. A university with unresolved candidates is retried on
+  later invocations, up to 3 attempts, then left for a person (its report lists them).
+  `invocations.jsonl` has a start record and an end record (end time, outcome, summary)
+  for every invocation.
 - Request body (all optional): `run_id`, `list_object`, `max_universities` (60), `time_budget_s`
   (3000), `reserve_s` (600: no university starts unless that much budget, or the longest
   university so far, is left), `qids` (explicit list, still de-duplicated and capped).

@@ -2,8 +2,10 @@
 # Deploy the collection Cloud Function (gen 2) and an hourly Cloud Scheduler job.
 # Run from the repository root with gcloud authenticated to project wikidata-academia.
 #
-#   bash deploy/deploy_collect_function.sh            # deploy function + PAUSED scheduler job
+#   bash deploy/deploy_collect_function.sh            # deploy function; scheduler job left PAUSED
 #   bash deploy/deploy_collect_function.sh --resume   # also un-pause the scheduler job
+# A redeploy always pauses an existing job, whether or not it was running, so that
+# nothing spends LLM credit on the new run id until a person resumes it.
 #
 # Prerequisites (one time, by a project owner):
 #   gcloud services enable cloudfunctions.googleapis.com run.googleapis.com cloudbuild.googleapis.com \
@@ -41,9 +43,13 @@ echo "Function URL: $URL"
 
 BODY="{\"run_id\": \"$RUN_ID\", \"max_universities\": $MAX_PER_HOUR, \"time_budget_s\": 3000}"
 if gcloud scheduler jobs describe "$JOB" --project="$PROJECT" --location="$REGION" >/dev/null 2>&1; then
+  # Pause first: an update changes the run id in the request body, and a job that was
+  # running before must not start spending on the new run without an explicit --resume.
+  gcloud scheduler jobs pause "$JOB" --project="$PROJECT" --location="$REGION" >/dev/null
   gcloud scheduler jobs update http "$JOB" --project="$PROJECT" --location="$REGION" \
     --schedule="7 * * * *" --uri="$URL" --http-method=POST --message-body="$BODY" \
     --headers="Content-Type=application/json" --oidc-service-account-email="$SA" --attempt-deadline=30m
+  echo "Scheduler job $JOB updated and PAUSED."
 else
   gcloud scheduler jobs create http "$JOB" --project="$PROJECT" --location="$REGION" \
     --schedule="7 * * * *" --uri="$URL" --http-method=POST --message-body="$BODY" \

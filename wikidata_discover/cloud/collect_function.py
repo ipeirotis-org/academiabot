@@ -14,7 +14,8 @@ Request JSON (all optional):
   reserve_s         default 600: no university starts unless this much of the budget
                     (or the longest university so far, if more) is still left
   qids              explicit list, overrides list_object; still de-duplicated and
-                    capped at max_universities
+                    capped at max_universities. An empty list means do nothing
+                    (the invocation is still recorded)
 
 Deploy with deploy/deploy_collect_function.sh. Keys come from Secret Manager at runtime.
 """
@@ -75,9 +76,10 @@ def collect(request):
     bucket = storage.Client(project=PROJECT).bucket(BUCKET)
 
     args = {"request": body, "run_id": run_id, "list_object": None, "max_universities": limit,
-            "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": bool(body.get("qids"))}
-    if body.get("qids"):
-        qids = pick_qids(body["qids"], set(), limit)
+            "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": "qids" in body}
+    if "qids" in body:
+        # An explicit list, even an empty one, never falls back to the bucket list.
+        qids = pick_qids(body["qids"] or [], set(), limit)
     else:
         args["list_object"] = list_object
         rows = json.loads(bucket.blob(list_object).download_as_text())

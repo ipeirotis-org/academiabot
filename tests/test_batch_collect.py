@@ -50,6 +50,43 @@ def test_parse_done_last_record_wins():
     assert parse_done("\n".join(json.dumps(r) for r in recs)) == {"Q2"}
 
 
+def test_parse_done_keeps_unresolved_pending_until_max_attempts():
+    attempt = {"qid": "Q1", "started": "t", "status": "ok", "uploaded": True, "unresolved_rows": 2}
+    clean = {"qid": "Q2", "started": "t", "status": "ok", "uploaded": True, "unresolved_rows": 0}
+    one = "\n".join(json.dumps(r) for r in [attempt, clean])
+    assert parse_done(one) == {"Q2"}                              # Q1 rechecked next time
+    three = "\n".join(json.dumps(r) for r in [attempt, attempt, attempt, clean])
+    assert parse_done(three) == {"Q1", "Q2"}                      # left for a person after 3 tries
+    assert parse_done(three, max_attempts=5) == {"Q2"}
+    fixed = "\n".join(json.dumps(r) for r in [attempt, {**attempt, "unresolved_rows": 0}])
+    assert parse_done(fixed) == {"Q1"}                            # second try resolved them
+
+
+def test_collect_treats_empty_qids_as_explicit(monkeypatch):
+    import flask
+    import wikidata_discover.cloud.collect_function as cf
+    calls = {}
+    monkeypatch.setattr(cf, "load_keys_from_secret_manager", lambda: None)
+    monkeypatch.setattr(cf, "ensure_user_agent", lambda: None)
+    monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), **kw) or
+                        {"run_id": run_id, "failed": 0})
+
+    class NeverBucket:
+        def blob(self, name):
+            raise AssertionError(f"the university list must not be read, got {name}")
+    class FakeClient:
+        def __init__(self, project=None): pass
+        def bucket(self, name): return NeverBucket()
+    import google.cloud.storage as gcs
+    monkeypatch.setattr(gcs, "Client", FakeClient)
+
+    class Req:
+        def get_json(self, silent=True): return {"qids": [], "run_id": "r9"}
+    with flask.Flask(__name__).app_context():
+        resp, status = cf.collect(Req())
+    assert status == 200 and calls["qids"] == [] and calls["invocation_args"]["explicit_qids"] is True
+
+
 def test_object_name_never_doubles_run_prefix(tmp_path):
     results, run_dir = tmp_path, tmp_path / "runs" / "r1"
     assert object_name("r1", run_dir / "log.jsonl", results, run_dir) == "runs/r1/log.jsonl"
@@ -219,9 +256,21 @@ def test_run_batch_resumes_from_bucket_and_keeps_invocation_history(stub):
     s = batch.run_batch("r2", ["Q1", "Q2"], bucket, results_dir=stub, report=lambda m: None)
     assert (s["skipped_done"], s["processed"]) == (1, 1)
     assert bucket.store["runs/r2/run.json"] == "{}"                       # never rewritten on resume
-    lines = bucket.store["runs/r2/invocations.jsonl"].splitlines()
-    assert len(lines) == 2 and json.loads(lines[0])["started"] == "earlier"
-    assert json.loads(lines[1])["resumed"] is True
+    lines = [json.loads(l) for l in bucket.store["runs/r2/invocations.jsonl"].splitlines()]
+    assert len(lines) == 3 and lines[0]["started"] == "earlier"
+    assert lines[1]["resumed"] is True
+    assert lines[2]["outcome"] == "ok" and lines[2]["ended"] and lines[2]["summary"]["processed"] == 1
+    assert s["outcome"] == "ok"
+
+
+def test_run_batch_outcome_reflects_failures_and_time(stub):
+    bucket = FakeBucket(fail_on=("log.jsonl",))
+    assert batch.run_batch("r7", ["Q1"], bucket, results_dir=stub, report=lambda m: None)["outcome"] == "failed"
+    s = batch.run_batch("r8", ["Q1"], FakeBucket(), results_dir=stub, report=lambda m: None,
+                        time_budget_s=1, reserve_s=10)
+    assert s["outcome"] == "stopped_for_time"
+    end = json.loads((stub / "runs" / "r8" / "invocations.jsonl").read_text().splitlines()[-1])
+    assert end["outcome"] == "stopped_for_time" and end["summary"]["processed"] == 0
 
 
 def test_run_batch_records_invocation_even_when_nothing_runs(stub):

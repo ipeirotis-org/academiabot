@@ -40,16 +40,28 @@ def artifact_paths(results_dir: Path, run_dir: Path, qid: str, since: float, ext
     return run_files + fresh + extra_files
 
 
-def parse_done(log_text: str) -> set:
-    """QIDs whose discovery succeeded and whose files reached the bucket.
+MAX_ATTEMPTS = 3  # attempts at a university before unresolved candidates are left for review
+
+
+def parse_done(log_text: str, max_attempts: int = MAX_ATTEMPTS) -> set:
+    """QIDs whose discovery succeeded, whose files reached the bucket, and whose
+    candidates were all checked against Wikidata.
 
     The last record for a QID wins, so a later record with uploaded=false (written
-    when the run log itself failed to upload) puts the QID back in the queue."""
-    last = {}
+    when the run log itself failed to upload) puts the QID back in the queue. A
+    university with unresolved candidates (Wikidata could not be searched) stays
+    pending so it is rechecked, up to max_attempts attempts; after that it counts as
+    done and its report, which lists the unresolved rows, is left for a person."""
+    last, attempts = {}, {}
     for line in log_text.splitlines():
         try:
             rec = json.loads(line)
-            last[rec["qid"]] = rec.get("status") == "ok" and bool(rec.get("uploaded"))
+            qid = rec["qid"]
+            if "started" in rec:
+                attempts[qid] = attempts.get(qid, 0) + 1
+            complete = rec.get("status") == "ok" and bool(rec.get("uploaded"))
+            unresolved = rec.get("unresolved_rows") or 0
+            last[qid] = complete and (unresolved == 0 or attempts.get(qid, 0) >= max_attempts)
         except Exception:
             pass
     return {qid for qid, ok in last.items() if ok}
@@ -263,10 +275,23 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
                                         "note": f"run log upload failed: {type(e).__name__}"}) + "\n")
                 rec["uploaded"] = False
                 summary["failed"] += 1
-        if rec["status"] == "ok" and rec["uploaded"]:
+        if rec["status"] == "ok" and rec["uploaded"] and not rec.get("unresolved_rows"):
             done.add(qid)
         summary["processed"] += 1
         report(f"[{i}/{len(qids)}] {qid} {rec['status']} {rec.get('label', '')} {rec['seconds']}s")
         report(f"   {note}")
     summary["seconds"] = round(time.time() - started, 1)
+    summary["outcome"] = ("stopped_for_time" if summary["stopped_for_time"] else
+                          "failed" if summary["failed"] else "ok")
+    # Close the invocation record: end time and outcome, then push the run folder once more.
+    with (run_dir / "invocations.jsonl").open("a") as f:
+        f.write(json.dumps({"started": invocation["started"], "host": invocation["host"],
+                            "ended": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "outcome": summary["outcome"], "summary": summary}) + "\n")
+    try:
+        upload([p for p in run_dir.rglob("*") if p.is_file()])
+    except Exception as e:  # noqa: BLE001
+        report(f"final run metadata upload failed: {type(e).__name__}: {str(e)[:120]}")
+        summary["outcome"] = "failed"
+        summary["failed"] = max(summary["failed"], 1)  # usually the same outage already counted
     return summary
