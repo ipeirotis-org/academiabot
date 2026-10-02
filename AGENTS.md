@@ -146,7 +146,8 @@ Students on this project direct agents; they do not write most of the code. So:
 3. ~~No rate limiting on `wikidata_api.quick_wd_search()`~~ Fixed: 0.3s delay added
 4. ~~No retry/backoff on API failures~~ Fixed: tenacity exponential backoff on SPARQL and Wikidata API
 5. ~~`to_qs_wikidata.py` caps at 10 items (`missing[:10]`) with no config~~ Fixed: configurable `max_items` param, defaults to all
-6. ~~CLI `--llm` override is broken (imports `config` instead of `wikidata_discover.config`)~~ Fixed
+6. ~~CLI `--llm` override is broken~~ Fixed twice: `cli.py` now sets `config.LLM_MODEL`, and `llm_helpers.py`
+   reads model names from `config` at call time instead of capturing them at import
 7. ~~No tests exist~~ Fixed: `tests/test_fuzzy.py` covers `normalize_name` and `is_fuzzy_match`
 8. Discovery only goes one level deep (schools). Departments are the current work; see TASKS.md
 9. `discover` uses `extract_divisions_best_available()` (first provider that answers), not the ensemble that
@@ -154,6 +155,8 @@ Students on this project direct agents; they do not write most of the code. So:
 10. Web search is enabled only for OpenAI. Anthropic and Gemini extraction has no search or grounding tool
 11. `to_qs_wikidata.py` links new items to the university with P361, but the data model says P749 is primary.
     Fix when the exporter is reworked in Milestone 3
+12. ~~`choose_match()` could never return an orphan: it compared the whole `ORPHAN:QID` token to bare QIDs~~
+    Fixed: `parse_match_answer()` handles QID, ORPHAN:QID, and NONE, with tests
 
 ## Cloud Credentials
 

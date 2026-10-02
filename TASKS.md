@@ -101,7 +101,7 @@ Working rules that keep the project manageable:
 - [ ] Run it on a university you know well. Is the list of schools right? Note what is wrong.
 - [ ] Ask the agent to walk you through the pipeline, step by step, using `discovery.py`
       as the guide. Then ask it the question that confused you most.
-- [ ] Run the evaluation and compare its numbers to `eval/results_summary.csv`:
+- [ ] Run the evaluation and compare its numbers to `wikidata_discover/eval/results_summary.csv`:
       `python -m wikidata_discover.eval.run_eval`
 - [ ] Write one paragraph for Panos: what the pipeline does, and one thing you would change.
 
@@ -209,7 +209,7 @@ test, and the tests pass.
 **Agent builds:**
 - [ ] The evaluation harness extended to report precision and recall per level (schools
       vs. departments) and per LLM provider.
-- [ ] A results table saved in `eval/` for depth-2 discovery on the 12 ground-truth universities.
+- [ ] A results table saved in `wikidata_discover/eval/` for depth-2 discovery on the 12 ground-truth universities.
 
 **You do:**
 - [ ] For universities with no department ground truth, take a random sample of 20
@@ -276,7 +276,7 @@ procedure is written down.
 Pick one. Each is a self-contained project with the same shape: you define the rule and
 check the data, the agent builds the code.
 
-- **Batch mode.** Run discovery over all U.S. universities from `results/universities_us.json`,
+- **Batch mode.** Run discovery over all U.S. universities from `wikidata_discover/results/universities_us.json`,
   with the ability to stop and resume. Produce one combined review sheet.
 - **Faculty linking.** For one department, find the faculty page, extract names and
   titles, and match them to existing Wikidata people and ORCID records. Link via P108
@@ -320,21 +320,24 @@ SELECT ?child ?childLabel ?childTypeLabel WHERE {
 ```
 
 ```sparql
-# Departments with no parent organization (orphans)
+# Departments with no parent organization (orphans). Both department classes we use.
 SELECT ?dept ?deptLabel WHERE {
-  ?dept wdt:P31 wd:Q1183543 .
+  VALUES ?deptClass { wd:Q1183543 wd:Q2467461 }
+  ?dept wdt:P31 ?deptClass .
   FILTER NOT EXISTS { ?dept wdt:P749 ?parent }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
 }
 ```
 
 ```sparql
-# How many schools and departments each U.S. university has
+# How many schools and departments each U.S. university has.
+# Same university predicate as the harvester (subclasses of university included).
 SELECT ?univ ?univLabel (COUNT(DISTINCT ?school) AS ?nSchool) (COUNT(DISTINCT ?dept) AS ?nDept)
 WHERE {
-  ?univ wdt:P31 wd:Q3918 ; wdt:P17 wd:Q30 .
+  VALUES ?deptClass { wd:Q1183543 wd:Q2467461 }
+  ?univ wdt:P31/wdt:P279* wd:Q3918 ; wdt:P17 wd:Q30 .
   OPTIONAL { ?school wdt:P749 ?univ ; wdt:P31 wd:Q31855 .
-    OPTIONAL { ?dept wdt:P749 ?school ; wdt:P31 wd:Q1183543 . }
+    OPTIONAL { ?dept wdt:P749 ?school ; wdt:P31 ?deptClass . }
   }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
 }

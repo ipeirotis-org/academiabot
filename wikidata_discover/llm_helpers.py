@@ -6,11 +6,13 @@ from rich.console import Console
 import hashlib
 from pathlib import Path
 
+from wikidata_discover import config
 from wikidata_discover.config import (
     OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY,
-    LLM_MODEL, ANTHROPIC_MODEL, GEMINI_MODEL,
     require_key,
 )
+# Model names are read from config at call time (config.LLM_MODEL etc.), never
+# captured at import, so that the CLI --llm override and tests can change them.
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -199,7 +201,7 @@ class LLMHelper:
     @staticmethod
     def extract_divisions_openai(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using OpenAI API."""
-        model = LLM_MODEL
+        model = config.LLM_MODEL
         key = _cache_key(univ_label, "openai", model)
         cached = _load_cache(key)
         if cached is not None:
@@ -263,7 +265,7 @@ class LLMHelper:
     @staticmethod
     def extract_divisions_anthropic(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using Anthropic Claude API."""
-        model = ANTHROPIC_MODEL
+        model = config.ANTHROPIC_MODEL
         key = _cache_key(univ_label, "anthropic", model)
         cached = _load_cache(key)
         if cached is not None:
@@ -329,7 +331,7 @@ class LLMHelper:
     @staticmethod
     def extract_divisions_gemini(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using Google Gemini API."""
-        model = GEMINI_MODEL
+        model = config.GEMINI_MODEL
         key = _cache_key(univ_label, "gemini", model)
         cached = _load_cache(key)
         if cached is not None:
@@ -501,7 +503,7 @@ class LLMHelper:
             try:
                 client = _get_openai_client()
                 resp = client.responses.create(
-                    model=LLM_MODEL,
+                    model=config.LLM_MODEL,
                     input=[{"role": "user", "content": prompt}],
                     text={"format": {"type": "json_schema", "name": "judge_keep", "schema": JUDGE_KEEP_SCHEMA}},
                     max_output_tokens=1024,
@@ -516,7 +518,7 @@ class LLMHelper:
             try:
                 client = _get_anthropic_client()
                 resp = client.messages.create(
-                    model=ANTHROPIC_MODEL,
+                    model=config.ANTHROPIC_MODEL,
                     max_tokens=1024,
                     messages=[{"role": "user", "content": prompt}]
                 )
@@ -533,7 +535,7 @@ class LLMHelper:
                 client = _get_gemini_client()
                 from google.genai import types as genai_types
                 resp = client.models.generate_content(
-                    model=GEMINI_MODEL,
+                    model=config.GEMINI_MODEL,
                     contents=[genai_types.Content(parts=[genai_types.Part.from_text(prompt)])],
                     generation_config=genai_types.GenerationConfig(max_output_tokens=1024),
                 )
@@ -586,9 +588,9 @@ class LLMHelper:
 
         # Try providers in order
         providers = [
-            ("openai", _get_openai_client, LLM_MODEL),
-            ("anthropic", _get_anthropic_client, ANTHROPIC_MODEL),
-            ("gemini", _get_gemini_client, GEMINI_MODEL),
+            ("openai", _get_openai_client, config.LLM_MODEL),
+            ("anthropic", _get_anthropic_client, config.ANTHROPIC_MODEL),
+            ("gemini", _get_gemini_client, config.GEMINI_MODEL),
         ]
 
         for provider_name, get_client, model in providers:
@@ -628,11 +630,9 @@ class LLMHelper:
                     logger.debug("choose_match (%s): returned NONE for candidate '%s'", provider_name, candidate)
                     return None
 
-                # Parse answer (may be QID or ORPHAN:QID)
-                token = answer.split()[0]
-                for qid, label in children:
-                    if qid == token:
-                        return (qid, label)
+                parsed = parse_match_answer(answer, children)
+                if parsed is not None:
+                    return parsed
 
                 logger.debug("choose_match (%s): answer '%s' did not match any child QID", provider_name, answer)
                 continue
@@ -647,6 +647,26 @@ class LLMHelper:
 
         logger.warning("choose_match: all providers failed for candidate '%s'", candidate)
         return None
+
+
+def parse_match_answer(answer: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:
+    """Turn a choose_match reply into (qid, label), ("ORPHAN:" + qid, label), or None.
+
+    The model replies with a bare QID, ORPHAN:QID, or NONE. The QID must be one of the
+    offered children; anything else is treated as no match. Pure function, unit tested.
+    """
+    token = (answer or "").strip().split()[0] if (answer or "").strip() else ""
+    if not token or token.upper() == "NONE":
+        return None
+    orphan = False
+    if token.upper().startswith("ORPHAN:"):
+        orphan = True
+        token = token.split(":", 1)[1].strip()
+    token = token.upper()
+    for qid, label in children:
+        if qid.upper() == token:
+            return (f"ORPHAN:{qid}", label) if orphan else (qid, label)
+    return None
 
 
 def _union_names(names_a: List[str], names_b: List[str]) -> List[str]:
