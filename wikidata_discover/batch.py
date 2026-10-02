@@ -207,6 +207,18 @@ def object_name(run_id: str, path: Path, results_dir: Path, run_dir: Path) -> st
     return f"runs/{run_id}/{path.relative_to(base).as_posix()}"
 
 
+class UnreachableBucket:
+    """Stands in for the bucket when the storage client could not be built, so
+    run_batch can still record the failed invocation locally."""
+    def __init__(self, reason: str):
+        self.reason = reason
+    def _fail(self, *a, **k):
+        raise RuntimeError(self.reason)
+    def blob(self, name):
+        return self
+    exists = download_as_text = upload_from_filename = delete = list_blobs = _fail
+
+
 def operator_identity() -> str:
     """Who started this run: ACADEMIABOT_OPERATOR if set (the Cloud Function sets it
     from the request), else the git user email, else the OS user name."""
@@ -239,7 +251,7 @@ def git_commit() -> str:
 def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[float] = None,
               results_dir: Path = RESULTS_DIR, report: Callable[[str], None] = print,
               invocation_args: Optional[dict] = None, reserve_s: float = 0,
-              fail_reason: Optional[str] = None) -> dict:
+              fail_reason: Optional[str] = None, hard_deadline_s: Optional[float] = None) -> dict:
     """Run discovery for each QID not already done, uploading as it goes.
 
     bucket: a google.cloud.storage Bucket. time_budget_s: stop starting new QIDs once
@@ -250,14 +262,17 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     it), recorded in run.json and invocations.jsonl so the run can be repeated.
     fail_reason: set by a caller whose own preparation failed (for example the
     university list could not be read), so the invocation is recorded as failed even
-    though nothing was processed. Returns a summary dict with counts; 'failed' > 0
-    means something needs attention.
+    though nothing was processed. hard_deadline_s: the process will be killed this
+    many seconds after the start (a Cloud Function's timeout); Wikidata retries and
+    waits stop 90 seconds before it so the attempt's records still get written.
+    Returns a summary dict with counts; 'failed' > 0 means something needs attention.
     """
     from wikidata_discover import config, llm_helpers
     from wikidata_discover.discovery import Discovery
 
     qids = list(dict.fromkeys(qids))  # de-duplicate, keeping order
     started = time.time()
+    config.DEADLINE = (started + hard_deadline_s - 90) if hard_deadline_s else None
     run_dir = results_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "log.jsonl"
@@ -295,6 +310,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
                 f.write(json.dumps({"started": ended, "ended": ended, "host": os.getenv("K_SERVICE", "local"),
                                     "operator": operator_identity(), "qids": qids, "outcome": "failed",
                                     "sync_error": sync_error, "summary": summary}) + "\n")
+            config.DEADLINE = None
             return summary
         report(f"bucket sync failed, continuing from local state: {sync_error}")
     done = load_done(log_path)
@@ -405,4 +421,5 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
                                 "ended": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                 "outcome": "failed", "summary": summary,
                                 "note": f"final run metadata upload failed: {type(e).__name__}"}) + "\n")
+    config.DEADLINE = None
     return summary

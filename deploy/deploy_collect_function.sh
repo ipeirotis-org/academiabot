@@ -90,8 +90,15 @@ gcloud run services add-iam-policy-binding "$FUNCTION" --project="$PROJECT" --re
   || echo "Could not grant roles/run.invoker (no permission); relying on the roles $SA already has."
 
 # Prove the scheduler's call path (same account, same token type, same URL) with a
-# request that does no work: an explicit empty QID list. Costs nothing.
-TOKEN=$(gcloud auth print-identity-token --audiences="$URL/" 2>/dev/null || true)
+# request that does no work: an explicit empty QID list. Costs nothing. The token
+# must belong to $SA: minted directly when gcloud runs as $SA, otherwise by
+# impersonation (needs roles/iam.serviceAccountTokenCreator on $SA).
+ACTIVE=$(gcloud config get-value account 2>/dev/null || true)
+if [ "$ACTIVE" = "$SA" ]; then
+  TOKEN=$(gcloud auth print-identity-token --audiences="$URL/" 2>/dev/null || true)
+else
+  TOKEN=$(gcloud auth print-identity-token --impersonate-service-account="$SA" --audiences="$URL/" 2>/dev/null || true)
+fi
 if [ -n "$TOKEN" ]; then
   CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL/" -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" -d '{"run_id": "deploy-check", "qids": []}')
@@ -101,8 +108,11 @@ if [ -n "$TOKEN" ]; then
     echo "Invoke check FAILED (HTTP $CODE): the scheduler will get the same answer. Grant roles/run.invoker to $SA on service $FUNCTION." >&2
     exit 1
   fi
+elif [ "${SKIP_INVOKE_CHECK:-}" = "1" ]; then
+  echo "Could not mint an identity token for $SA; invoke check skipped (SKIP_INVOKE_CHECK=1)."
 else
-  echo "Could not mint an identity token for $SA; skipping the invoke check."
+  echo "Could not mint an identity token for $SA (active account: $ACTIVE). Run this script as $SA, grant yourself roles/iam.serviceAccountTokenCreator on it, or set SKIP_INVOKE_CHECK=1 to deploy unverified." >&2
+  exit 1
 fi
 
 # The earlier hourly job, if still present, is removed so only one job can run.

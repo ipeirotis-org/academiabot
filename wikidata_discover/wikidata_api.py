@@ -4,7 +4,7 @@ import requests
 from typing import List, Tuple
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from . import config
-from .sparql_helpers import _retry_after_seconds
+from .sparql_helpers import _retry_after_seconds, bounded_wait, past_deadline, request_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +18,8 @@ class WikidataRateLimited(Exception):
 
 
 @retry(
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=1, min=2, max=30),
+    stop=lambda rs: stop_after_attempt(4)(rs) or past_deadline(rs),
+    wait=lambda rs: bounded_wait(wait_exponential(multiplier=1, min=2, max=30)(rs)),
     retry=retry_if_exception_type((requests.RequestException, WikidataRateLimited)),
     before_sleep=lambda rs: logger.warning(
         "Wikidata search retry #%d after %s", rs.attempt_number, rs.outcome.exception()
@@ -33,10 +33,10 @@ def quick_wd_search(label: str, language: str = "en") -> List[Tuple[str, str]]:
         _SEARCH_URL,
         params={"action": "wbsearchentities", "format": "json", "language": language, "limit": 10, "search": label},
         headers={"User-Agent": config.USER_AGENT},
-        timeout=30,
+        timeout=request_timeout(30),
     )
     if resp.status_code == 429:
-        wait = _retry_after_seconds(resp.headers.get("Retry-After"))
+        wait = bounded_wait(_retry_after_seconds(resp.headers.get("Retry-After")))
         logger.warning("Wikidata search 429 for '%s'. Waiting %ss.", label, wait)
         time.sleep(wait)
         raise WikidataRateLimited(label)

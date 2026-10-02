@@ -51,6 +51,25 @@ def _retry_after_seconds(header_value, default: int = _RATE_LIMIT_WAIT) -> int:
         return default
 
 
+def request_timeout(default: float = 120) -> float:
+    """HTTP timeout for one request: the default, or less when the process deadline
+    (config.DEADLINE) is closer. Never below 5 seconds."""
+    left = config.seconds_left()
+    return default if left is None else max(5.0, min(default, left))
+
+
+def bounded_wait(seconds: float) -> float:
+    """A wait that never runs past the process deadline."""
+    left = config.seconds_left()
+    return seconds if left is None else max(0.0, min(seconds, left))
+
+
+def past_deadline(_retry_state=None) -> bool:
+    """tenacity stop: give up retrying once the process deadline is reached."""
+    left = config.seconds_left()
+    return left is not None and left <= 0
+
+
 def _get(query: str) -> requests.Response:
     global _last_call
     gap = time.time() - _last_call
@@ -60,15 +79,15 @@ def _get(query: str) -> requests.Response:
         SPARQL_ENDPOINT,
         params={"query": query, "format": "json"},
         headers={"User-Agent": config.USER_AGENT, "Accept": "application/sparql-results+json"},
-        timeout=120,
+        timeout=request_timeout(120),
     )
     _last_call = time.time()
     return resp
 
 
 @retry(
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=1, min=2, max=30),
+    stop=lambda rs: stop_after_attempt(4)(rs) or past_deadline(rs),
+    wait=lambda rs: bounded_wait(wait_exponential(multiplier=1, min=2, max=30)(rs)),
     retry=retry_if_exception_type((requests.RequestException, SparqlRateLimited, SparqlBadResponse)),
     before_sleep=lambda rs: logger.warning(
         "SPARQL retry #%d after %s", rs.attempt_number, rs.outcome.exception()
@@ -84,7 +103,7 @@ def execute_sparql_bindings(query: str) -> list[dict]:
     """
     resp = _get(query)
     if resp.status_code == 429:
-        wait = _retry_after_seconds(resp.headers.get("Retry-After"))
+        wait = bounded_wait(_retry_after_seconds(resp.headers.get("Retry-After")))
         logger.warning("SPARQL 429 (%s). Waiting %ss.", resp.text.strip()[:80], wait)
         time.sleep(wait)
         raise SparqlRateLimited(resp.text.strip()[:120])

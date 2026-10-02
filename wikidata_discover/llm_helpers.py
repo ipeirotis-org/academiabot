@@ -90,6 +90,7 @@ _CACHE_DIR = Path(__file__).parent / "results" / "cache"
 _openai_client = None
 _anthropic_client = None
 _gemini_client = None
+LLM_TIMEOUT_S = 180  # one LLM request; the SDK defaults (10 minutes) are too long for a timed slice
 
 
 def reset_clients() -> None:
@@ -103,7 +104,7 @@ def _get_openai_client():
     global _openai_client
     if _openai_client is None:
         from openai import OpenAI
-        _openai_client = OpenAI(api_key=require_key("OPENAI_API_KEY", config.OPENAI_API_KEY))
+        _openai_client = OpenAI(api_key=require_key("OPENAI_API_KEY", config.OPENAI_API_KEY), timeout=LLM_TIMEOUT_S)
     return _openai_client
 
 
@@ -112,7 +113,7 @@ def _get_anthropic_client():
     if _anthropic_client is None:
         import anthropic
         _anthropic_client = anthropic.Anthropic(
-            api_key=require_key("ANTHROPIC_API_KEY", config.ANTHROPIC_API_KEY)
+            api_key=require_key("ANTHROPIC_API_KEY", config.ANTHROPIC_API_KEY), timeout=LLM_TIMEOUT_S
         )
     return _anthropic_client
 

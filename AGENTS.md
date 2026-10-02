@@ -274,6 +274,9 @@ flowchart LR
 - LLM cache files that an unfinished university used, and cache files in the bucket that no
   log record mentions, are restored before a retry, so a fresh instance reuses the same
   LLM answers.
+- Hard deadline: the function passes its own timeout (1800 s) to the batch runner, which sets
+  `config.DEADLINE` 90 s before it. Wikidata requests, retries, and 429 waits stop at that
+  point, and LLM requests time out after 180 s, so the attempt's records are always written.
 - Deployed 2026-10-02: function `academiabot-collect` (us-east1), scheduler job
   `academiabot-collect-slice` (paused). The Cloud Functions, Run, Build, Artifact Registry,
   Scheduler, Eventarc, and Resource Manager APIs are enabled. The service account cannot

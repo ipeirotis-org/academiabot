@@ -172,7 +172,59 @@ def test_collect_records_an_initialisation_failure(monkeypatch):
         resp, status = cf.collect(Req())
     assert status == 207 and calls["qids"] == []
     assert calls["fail_reason"].startswith("init: RuntimeError: No LLM API key")
-    assert isinstance(calls["bucket"], cf._UnreachableBucket)           # run_batch can still record locally
+    assert isinstance(calls["bucket"], cf.UnreachableBucket)            # run_batch can still record locally
+
+
+def test_collect_records_a_bad_request(monkeypatch):
+    import flask
+    import wikidata_discover.cloud.collect_function as cf
+    calls = {}
+    monkeypatch.setattr(cf, "load_keys_from_secret_manager", lambda: None)
+    monkeypatch.setattr(cf, "ensure_user_agent", lambda: None)
+    monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), **kw) or
+                        {"run_id": run_id, "failed": 1, "outcome": "failed"})
+    class Req:
+        headers = {}
+        def get_json(self, silent=True): return {"run_id": "r21", "max_universities": "sixty"}
+    with flask.Flask(__name__).app_context():
+        resp, status = cf.collect(Req())
+    assert status == 207 and calls["qids"] == []
+    assert calls["fail_reason"].startswith("bad request: max_universities must be a number")
+    assert calls["hard_deadline_s"] == 1800
+
+
+def test_parse_request_rejects_non_objects_and_bad_lists():
+    import wikidata_discover.cloud.collect_function as cf
+    with pytest.raises(ValueError):
+        cf.parse_request(["Q1"])
+    with pytest.raises(ValueError):
+        cf.parse_request({"qids": "Q1"})
+    p = cf.parse_request({"qids": None, "time_budget_s": "900"})
+    assert p["qids"] == [] and p["time_budget_s"] == 900.0 and p["max_universities"] == 60
+
+
+def test_caller_identity_from_scheduler_header_or_verified_token():
+    import base64, json
+    import wikidata_discover.cloud.collect_function as cf
+    assert cf.caller_identity({"X-CloudScheduler-JobName": "academiabot-collect-slice"}) == "cloud-scheduler:academiabot-collect-slice"
+    payload = base64.urlsafe_b64encode(json.dumps({"email": "panos@example.org"}).encode()).decode().rstrip("=")
+    token = f"aaa.{payload}.sig"
+    assert cf.caller_identity({"Authorization": f"Bearer {token}"}) == "manual:panos@example.org"
+    assert cf.caller_identity({"Authorization": "Bearer not-a-jwt"}) == "manual:unknown caller"
+    assert cf.caller_identity({"X-Goog-Authenticated-User-Email": "forged@example.org"}) == "manual:unknown caller"
+
+
+def test_batch_collect_records_an_initialisation_failure(monkeypatch, tmp_path):
+    import wikidata_discover.scripts.batch_collect as bc
+    calls = {}
+    def no_keys():
+        raise RuntimeError("No LLM API key available")
+    monkeypatch.setattr(bc, "load_keys_from_secret_manager", no_keys)
+    monkeypatch.setattr(bc, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(bc, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), bucket=bucket, **kw) or
+                        {"failed": 1})
+    assert bc.main(["r22", "Q1"]) == 1
+    assert calls["fail_reason"].startswith("init: RuntimeError") and isinstance(calls["bucket"], bc.UnreachableBucket)
 
 
 def test_collect_explicit_list_skips_done_before_the_cap(monkeypatch):

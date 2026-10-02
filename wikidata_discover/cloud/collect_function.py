@@ -20,6 +20,7 @@ Request JSON (all optional):
 
 Deploy with deploy/deploy_collect_function.sh. Keys come from Secret Manager at runtime.
 """
+import base64
 import json
 import logging
 import os
@@ -28,10 +29,15 @@ import time
 import functions_framework
 from flask import jsonify
 
-from wikidata_discover.batch import BUCKET, PROJECT, ensure_user_agent, load_keys_from_secret_manager, parse_done, run_batch
+from wikidata_discover.batch import (BUCKET, PROJECT, UnreachableBucket, ensure_user_agent,
+                                     load_keys_from_secret_manager, parse_done, run_batch)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# The function's own timeout (deploy script: --timeout=1800s). Wikidata retries stop
+# before this so the attempt's records are always written.
+FUNCTION_TIMEOUT_S = float(os.getenv("FUNCTION_TIMEOUT_S", "1800"))
 
 
 def row_qid(row) -> str:
@@ -64,58 +70,85 @@ def pick_qids(list_rows, done: set, limit: int):
     return out
 
 
-class _UnreachableBucket:
-    """Stands in for the bucket when the storage client could not be built, so
-    run_batch can still record the failed invocation locally."""
-    def __init__(self, reason: str):
-        self.reason = reason
-    def _fail(self, *a, **k):
-        raise RuntimeError(self.reason)
-    def blob(self, name):
-        return self
-    exists = download_as_text = upload_from_filename = delete = list_blobs = _fail
+def caller_identity(headers) -> str:
+    """Who made this request. The scheduler names its job in a header. Any other
+    caller reached us with a Google ID token that Cloud Run IAM already verified
+    before the request was delivered, so its `email` claim can be read from the
+    token's payload without a second verification. Nothing else is trusted."""
+    job = headers.get("X-CloudScheduler-JobName")
+    if job:
+        return f"cloud-scheduler:{job}"
+    auth = headers.get("Authorization", "")
+    if auth.startswith("Bearer ") and auth.count(".") == 2:
+        try:
+            payload = auth.split(" ", 1)[1].split(".")[1]
+            claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+            if claims.get("email"):
+                return f"manual:{claims['email']}"
+        except Exception:  # noqa: BLE001 - an unreadable token is just an unknown caller
+            pass
+    return "manual:unknown caller"
+
+
+def parse_request(body) -> dict:
+    """Validate and normalize the request body. Raises ValueError on bad input."""
+    if body is None:
+        body = {}
+    if not isinstance(body, dict):
+        raise ValueError(f"request body must be a JSON object, got {type(body).__name__}")
+    p = {"run_id": str(body.get("run_id") or f"cloud-{time.strftime('%Y-%m-%d', time.gmtime())}"),
+         "list_object": str(body.get("list_object", "universities_us.json"))}
+    for key, default, cast in (("max_universities", 60, int), ("time_budget_s", 1500.0, float), ("reserve_s", 420.0, float)):
+        try:
+            p[key] = cast(body.get(key, default))
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"{key} must be a number, got {body.get(key)!r}") from e
+    if "qids" in body:
+        if body["qids"] is not None and not isinstance(body["qids"], list):
+            raise ValueError("qids must be a list")
+        p["qids"] = [str(q) for q in (body["qids"] or [])]
+    return p
 
 
 @functions_framework.http
 def collect(request):
-    body = request.get_json(silent=True) or {}
-    run_id = body.get("run_id") or f"cloud-{time.strftime('%Y-%m-%d', time.gmtime())}"
-    list_object = body.get("list_object", "universities_us.json")
-    limit = int(body.get("max_universities", 60))
-    budget = float(body.get("time_budget_s", 1500))
-    reserve = float(body.get("reserve_s", 420))
-
-    # Who called: the scheduler job (its header names the job) or a person by hand
-    # (the authenticated caller, if the platform passes it; otherwise "manual").
     headers = getattr(request, "headers", {}) or {}
-    job = headers.get("X-CloudScheduler-JobName")
-    os.environ["ACADEMIABOT_OPERATOR"] = (f"cloud-scheduler:{job}" if job else
-                                          f"manual:{headers.get('X-Goog-Authenticated-User-Email', 'unknown caller')}")
+    os.environ["ACADEMIABOT_OPERATOR"] = caller_identity(headers)
+    raw = request.get_json(silent=True)
+    args = {"request": raw if isinstance(raw, (dict, list)) else None}
 
-    args = {"request": body, "run_id": run_id, "list_object": None, "max_universities": limit,
-            "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": "qids" in body}
     # Every failure from here on is recorded through run_batch (local records, and on
     # a cold instance a refusal to run blind) instead of escaping as an unlogged 500.
     qids, bucket = [], None
     try:
-        load_keys_from_secret_manager()
-        ensure_user_agent()
-        from google.cloud import storage
-        bucket = storage.Client(project=PROJECT).bucket(BUCKET)
-    except Exception as e:  # noqa: BLE001
-        args["preflight_error"] = f"init: {type(e).__name__}: {str(e)[:200]}"
-        logger.error("initialisation failed: %s", args["preflight_error"])
-        bucket = _UnreachableBucket(args["preflight_error"])
+        p = parse_request(raw)
+    except ValueError as e:
+        p = parse_request({})
+        args["preflight_error"] = f"bad request: {e}"
+    run_id, list_object, limit = p["run_id"], p["list_object"], p["max_universities"]
+    budget, reserve = p["time_budget_s"], p["reserve_s"]
+    args.update({"run_id": run_id, "list_object": None, "max_universities": limit,
+                 "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": "qids" in p})
+    if "preflight_error" not in args:
+        try:
+            load_keys_from_secret_manager()
+            ensure_user_agent()
+            from google.cloud import storage
+            bucket = storage.Client(project=PROJECT).bucket(BUCKET)
+        except Exception as e:  # noqa: BLE001
+            args["preflight_error"] = f"init: {type(e).__name__}: {str(e)[:200]}"
+    if bucket is None:
+        bucket = UnreachableBucket(args.get("preflight_error", "no bucket"))
     try:
         if "preflight_error" in args:
             raise RuntimeError(args["preflight_error"])
         log_blob = bucket.blob(f"runs/{run_id}/log.jsonl")
         done = parse_done(log_blob.download_as_text()) if log_blob.exists() else set()
         args["done_before"] = len(done)
-        if "qids" in body:
+        if "qids" in p:
             # An explicit list, even an empty one, never falls back to the bucket list.
             # Done QIDs are dropped before the cap, so a long list advances across calls.
-            qids = pick_qids(body["qids"] or [], done, limit)
+            qids = pick_qids(p["qids"], done, limit)
         else:
             args["list_object"] = list_object
             rows = json.loads(bucket.blob(list_object).download_as_text())
@@ -124,12 +157,14 @@ def collect(request):
     except Exception as e:  # noqa: BLE001
         if "preflight_error" not in args:
             args["preflight_error"] = f"{type(e).__name__}: {str(e)[:200]}"
-            logger.error("preflight failed, nothing selected: %s", args["preflight_error"])
+    if "preflight_error" in args:
+        logger.error("preflight failed, nothing selected: %s", args["preflight_error"])
 
     # An empty list still goes through run_batch so the invocation is recorded; a
     # preflight failure is passed in so the recorded outcome is failed, not ok.
     summary = run_batch(run_id, qids, bucket, time_budget_s=budget, reserve_s=reserve,
-                        report=logger.info, invocation_args=args, fail_reason=args.get("preflight_error"))
+                        hard_deadline_s=FUNCTION_TIMEOUT_S, report=logger.info,
+                        invocation_args=args, fail_reason=args.get("preflight_error"))
     if "preflight_error" in args:
         summary["message"] = "preflight failed: " + args["preflight_error"]
     elif not qids:
