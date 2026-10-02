@@ -1,172 +1,193 @@
 # TASKS.md
 
-> **Mission**: Make Wikidata the definitive, queryable source for the full organizational
-> hierarchy of every university worldwide, down to departments and faculty affiliations.
->
-> **Current phase**: Phase 2 (Recursive depth) + GCP integration
->
-> Last updated: 2026-03-19
+**Goal.** Make Wikidata the definitive source for how universities are organized:
+university > school > department, with faculty linked to their departments.
+
+This file is the project's to-do list. It is written for a student who is picking the
+project up fresh. Read it top to bottom once, then come back to it every week.
+
+Last updated: 2026-10-02
 
 ---
 
-## Phase 0: Bugs and tech debt (do first)
+## 1. What exists today
 
-- [x] **Fix LLM model config**: `LLM_MODEL` now read from `.env` with default `gpt-4o`. README updated.
-- [x] **Fix CLI --llm override**: `cli.py` now imports `wikidata_discover.config` correctly.
-- [x] **Fix misc_scripts imports**: Scripts were already standalone; added deprecation notices pointing to `wikidata_discover.hierarchy`.
-- [x] **Add rate limiting to Wikidata Search API**: `quick_wd_search()` now has 0.3s polite delay.
-- [x] **Add retry/backoff**: SPARQL and Wikidata API calls wrapped with `tenacity` exponential backoff (3 attempts).
-- [x] **Remove hardcoded cap in QuickStatements export**: `export_quickstatements()` now accepts optional `max_items` param; defaults to all.
-- [x] **Add basic error handling for LLM responses**: `extract_divisions()` now logs raw response on parse failure, retries once, then returns `[]` gracefully.
-- [x] **Add `.env.example`** with all required/optional env vars documented.
+In plain terms, the code can do one thing well: **given a university, find its schools
+and colleges.**
 
----
+```
+python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210
+```
 
-## Phase 1: Stabilize and validate the discover pipeline
+That command:
 
-- [x] **Run pilot on 10 diverse universities**: NYU (Q49210), Columbia (Q49088), MIT (Q49108), Stanford (Q41506), UC Berkeley (Q168756), U Michigan (Q230492), Howard (Q2089472), Caltech (Q161562), U Texas Austin (Q49213), CUNY (Q762266). Document precision/recall of LLM extraction.
-- [x] **Add validation/QA reporting**: After discovery, output a summary report: how many candidates found, how many matched, how many orphans, how many truly missing. Store in `results/` as JSON.
-- [x] **Improve fuzzy matching**: Current `is_fuzzy_match` in `discovery.py` has aggressive partial matching (threshold 70 with partial_ratio can cause false positives). Tune thresholds, add unit tests for edge cases like "Stern School of Business" vs "Leonard N. Stern School of Business".
-- [x] **Add caching for LLM responses**: Cache `extract_divisions` results keyed by (QID, model_version) to avoid redundant API calls during iteration. Use a JSON file in `results/cache/`.
-- [x] **Add proper logging**: Replace ad-hoc `console.print` debug output with Python `logging` module. Keep `rich` for user-facing tables/progress only.
+1. Looks up the university on Wikidata (name, website, existing child units).
+2. Asks several LLMs (OpenAI, Anthropic, Gemini), each with web search, to list the
+   university's schools and colleges.
+3. Has one LLM act as a judge to merge the lists and drop hallucinations.
+4. Checks each school against what Wikidata already has (fuzzy name matching, then an
+   LLM tie-breaker when names are ambiguous).
+5. Labels each school as already linked, existing but not linked to the university
+   (an orphan), or missing from Wikidata entirely.
+6. Writes the missing ones to a CSV and a QuickStatements file in `wikidata_discover/results/`.
 
----
+**How good is it?** We hand-built the true list of schools for 12 universities
+(`wikidata_discover/eval/ground_truth.py`) and measured. The best configuration
+(Anthropic as judge over OpenAI + Gemini) reaches about 95% precision and 95% recall.
+Full numbers are in `wikidata_discover/eval/results_summary.csv`. Rerun with:
 
-## Phase 2: Recursive depth (schools -> departments -> programs)
+```
+python -m wikidata_discover.eval.run_eval
+```
 
-The current pipeline only discovers **top-level units** (schools/colleges) under a university. This phase extends it to work recursively.
+**What does not exist yet:**
 
-- [ ] **Generalize `extract_divisions` to work at any level**: The LLM prompt currently says "top-level academic or administrative unit". Make it configurable: given any entity (school, department), extract its sub-units.
-- [ ] **Add recursive discovery mode**: `discover --recursive Q49210` should:
-  1. Discover schools/colleges under the university
-  2. For each school (existing or newly found), discover departments
-  3. For each department, discover programs/labs/centers
-  4. Output the full tree
-- [ ] **Add depth parameter**: `discover --depth 2 Q49210` to control how many levels deep to go (default 1 = schools only, 2 = schools+departments, 3 = full tree).
-- [ ] **Create entity type detection**: When discovering sub-units, the LLM should classify each as school/department/program/lab/center and assign the correct P31 value. Update `to_qs_wikidata.py` TYPE_MAP accordingly.
-- [ ] **Handle cross-listed/joint units**: Some departments belong to multiple schools. Detect and model with multiple P749 statements + qualifiers.
-
----
-
-## Phase 3: Batch processing and automation
-
-> **Depends on**: GCP Steps 1-2 (BigQuery + GCS) for progress tracking and resume.
-> GCP Step 5 (Cloud Functions + Scheduler) for automated batch runs.
-
-- [ ] **Add batch discovery mode**: `discover --batch` processes all universities from the BigQuery `universities` table (or `universities_us.json` as fallback). Resume capability by querying `discovery_runs` for already-processed QIDs via `bq_helpers.get_processed_qids()`. Add progress tracking and summary report.
-- [ ] **Add batch QuickStatements generation**: Aggregate all missing entities across universities into a single uploadable QS batch, organized by hierarchy level (schools first, then departments). Record generated batches in `quickstatements_batches` BQ table.
-- [ ] **Implement ShEx validation schema**: Write Shape Expressions (one shape per entity level) and store in the repo. Validate generated QS statements against the schema before export.
-- [ ] **Add IPEDS reconciliation**: Download IPEDS CSV, match against Wikidata universities by IPEDS ID (P1771). Flag institutions missing from Wikidata entirely. Store reconciliation results in BigQuery.
-- [ ] **Add diff/update mode**: Compare current Wikidata state against last run using BigQuery `discovered_units` history. Only generate QS for genuinely new entities (not already uploaded in a previous batch).
-- [ ] **Expand beyond U.S.**: Make country configurable. Add support for international institution identifiers (UK UCAS codes, EU ETER IDs, etc.). Extend BigQuery `universities` table with a `country` column.
+- Going one level deeper (school > department). The LLM prompt only knows about schools.
+- Running over many universities at once.
+- Anything about faculty.
+- Nothing has been uploaded to Wikidata yet. All output is files on disk.
 
 ---
 
-## Phase 4: Faculty and researcher linking
+## 2. Your first week: get set up
 
-- [ ] **Design faculty data model**: Researcher entity linked via P108 (employer) -> department QID, with P39 (position held) as qualifier. Add P1960 (Google Scholar author ID), P496 (ORCID).
-- [ ] **Build faculty discovery pipeline**: Given a department QID:
-  1. LLM + web search to find faculty listing page
-  2. Extract faculty names, titles, and profile URLs
-  3. Match against existing Wikidata person entities
-  4. For unmatched: check Google Scholar / ORCID for existing profiles
-  5. Output CSV of faculty to link or create
-- [ ] **Google Scholar integration**: Given a faculty name + institution, find their Google Scholar profile. Extract: author ID, h-index, citation count, research interests.
-- [ ] **Salary data integration** (U.S. public universities): Parse public salary databases (state-level data) and link to faculty entities. Add as P3457 (salary) with qualifiers for fiscal year.
-- [ ] **Bulk faculty upload**: Generate QS statements for faculty-department links. Run only after department hierarchy is stable (Phase 3 complete).
-
----
-
-## Phase 5: Governance, maintenance, and community
-
-- [ ] **Scheduled IPEDS diff**: GitHub Action that quarterly compares IPEDS list vs Wikidata, flags new institutions.
-- [ ] **Orphan detection dashboard**: Weekly SPARQL query for departments without parents, schools with broken links. Output as GitHub issue or report.
-- [ ] **WikiProject Universities engagement**: Document the data model, post on WikiProject talk page, get community review before large batch uploads.
-- [ ] **Bot approval**: If automating Wikidata edits, apply for bot flag per Wikidata bot policy. Document edit patterns and rate limits.
-- [ ] **Monitoring and rollback**: Keep per-batch logs of all QS uploads. Build a rollback script that can undo a batch if issues are found.
+- [ ] Clone the repo and install dependencies: `pip install -r wikidata_discover/requirements.txt pytest`
+- [ ] Copy `env.example` to `.env` and add API keys. Ask Panos for the keys, or pull them
+      from GCP Secret Manager (see AGENTS.md, section "Secret Manager").
+      You need at least `OPENAI_API_KEY`. For the full ensemble you also need
+      `ANTHROPIC_API_KEY` and `GOOGLE_API_KEY`.
+- [ ] Run the tests: `python -m pytest tests -q`. All 22 should pass.
+- [ ] Run discovery on NYU (Q49210) and read the output CSV.
+- [ ] Run discovery on a university you know personally. Does the list look right?
+- [ ] Read these four files, in this order. They are the whole pipeline:
+      `cli.py` -> `discovery.py` -> `llm_helpers.py` -> `to_qs_wikidata.py`
+- [ ] Write one paragraph for Panos: what the pipeline does, and one thing that confused you.
 
 ---
 
-## GCP integration (parallel track -- do alongside Phase 2)
+## 3. The work, in order
 
-> **Project**: `wikidata-academia` | **SA**: `claude-agent@wikidata-academia.iam.gserviceaccount.com`
->
-> GCP is already provisioned with BigQuery, GCS, Cloud Functions, Scheduler, Secret Manager,
-> Vertex AI, Cloud Run, and Pub/Sub roles. This phase wires the existing pipeline into GCP
-> so results are durable, shareable, and ready for batch automation in Phase 3.
+Each milestone has a "done when" line. Do them in order. Milestones 1 through 5 are the
+core of a 10-week project. Milestone 6 is the goal we are aiming for. Later items are
+stretch goals.
 
-### Step 1: BigQuery for results storage (do first)
+### Milestone 1: Build the department ground truth
 
-- [ ] **Create BigQuery dataset and tables**: Dataset `academiabot` in project `wikidata-academia` with tables:
-  - `universities` -- harvested university list (qid, label, website, country, ipeds_id). Source of truth replacing `universities_us.json`.
-  - `discovery_runs` -- one row per discover invocation (run_id, university_qid, university_label, model, timestamp, total_candidates, exists_linked, exists_orphan, missing). Replaces per-QID `_report.json` files.
-  - `discovered_units` -- every candidate unit found across all runs (run_id, university_qid, unit_name, unit_type, status [exists_linked|exists_orphan|missing], matched_qid, website, location). Replaces per-QID `missing_divisions_*.csv` files.
-  - `quickstatements_batches` -- exported QS lines per run (run_id, university_qid, qs_line, uploaded_at). Tracks what has been submitted to Wikidata.
-- [ ] **Add `bq_helpers.py` module**: Thin wrapper around `google-cloud-bigquery` client. Functions: `save_discovery_run()`, `save_discovered_units()`, `get_processed_qids()`, `get_coverage_summary()`. Follow the same pattern as `sparql_helpers.py` (single source for all BQ access).
-- [ ] **Wire `discovery.py` to save results to BigQuery**: After `discover_missing()` completes, call `bq_helpers.save_discovery_run()` and `bq_helpers.save_discovered_units()`. Keep local CSV/JSON output as fallback when BQ is unavailable.
-- [ ] **Wire `harvester.py` to save to BigQuery**: `fetch_us_universities()` writes to `universities` table in addition to (or instead of) the local JSON file.
-- [ ] **Add `--no-bq` CLI flag**: Allow running without BigQuery (e.g., offline or local-only mode). When set, skip all BQ writes and fall back to local files only.
+Before changing any code, we need a way to know whether a change helped.
 
-### Step 2: GCS for cache and artifacts
+- [ ] Pick 3 NYU schools (suggested: Stern, Courant, Steinhardt).
+- [ ] For each, list its real departments from the school's own website.
+- [ ] For each department, record whether it is already in Wikidata and, if so, its QID.
+- [ ] Save as a CSV next to `ground_truth.py`, and add a Python structure for it in the
+      same style as the existing school-level ground truth.
 
-- [ ] **Move LLM response cache to GCS**: Bucket `gs://academiabot-cache/llm-responses/`. Same SHA256 key scheme, but stored in GCS instead of local `results/cache/`. Fall back to local cache if GCS is unreachable.
-- [ ] **Upload result artifacts to GCS**: After each discovery run, upload the CSV, QS file, and report JSON to `gs://academiabot-results/{qid}/`. Provides a durable backup and allows sharing across team members.
-- [ ] **Add `gcs_helpers.py` module**: Functions: `upload_cache()`, `download_cache()`, `upload_artifact()`, `list_artifacts()`. Use `google-cloud-storage` client.
+**Done when:** `ground_truth.py` has department lists for 3 schools, and a one-line
+command can score a department list against it.
 
-### Step 3: Secret Manager for API keys
+### Milestone 2: Make the LLM extraction work at any level
 
-- [x] **Store API keys in Secret Manager**: Three secrets created in project `wikidata-academia`: `openai-api-key`, `anthropic-api-key`, `gemini-api-key`. Service account has `roles/secretmanager.admin`.
-- [ ] **Wire `config.py` to read from Secret Manager**: Try Secret Manager first, fall back to env var / `.env`. Add `google-cloud-secret-manager` to requirements.txt with graceful import fallback.
-- [ ] **Store Wikidata bot credentials in Secret Manager**: For future Phase 5 bot operations. Secret name `wikidata-bot-password`.
+Today `extract_divisions_*` in `llm_helpers.py` is hard-coded to "top-level units of a
+university". Make it general.
 
-### Step 4: Vertex AI as alternative LLM provider
+- [ ] Change the functions to take a parent entity (name, website, QID) and the kind of
+      children wanted (schools, departments, programs).
+- [ ] Adjust the prompts so the LLM returns, for each child, a name, a website if known,
+      and a proposed type (school / department / program / center / lab).
+- [ ] Keep the cache working. The cache key must include the parent and the level.
+- [ ] Run it on the 3 schools from Milestone 1 and score the results.
 
-- [ ] **Add Gemini support via Vertex AI**: New provider option in `llm_helpers.py`. Set `LLM_PROVIDER=vertex` in `.env` to use `gemini-2.5-pro` instead of OpenAI. Implement `extract_divisions()` and `choose_match()` using the Vertex AI `generativeai` SDK with equivalent structured output.
-- [ ] **Add cost/quality comparison tooling**: CLI command `discover --compare Q49210` that runs the same university through both OpenAI and Vertex AI, then outputs a side-by-side diff of discovered units. Store comparison results in BigQuery for analysis.
+**Done when:** Running extraction on Stern's QID returns a department list that scores
+above 80% precision and recall against the ground truth.
 
-### Step 5: Cloud Functions + Scheduler (enables Phase 3 batch)
+### Milestone 3: Recursive discovery
 
-- [ ] **Create `discover` Cloud Function**: HTTP-triggered function that accepts a university QID, runs `Discovery(qid).discover_missing()`, saves results to BigQuery, and returns a summary. Deploy via `gcloud functions deploy`.
-- [ ] **Create batch orchestrator**: Cloud Scheduler job that reads unprocessed QIDs from the BigQuery `universities` table (LEFT JOIN against `discovery_runs`), and invokes the discover Cloud Function for each. Rate-limited to respect Wikidata and LLM API quotas (e.g., 30 universities/hour).
-- [ ] **Add Pub/Sub event pipeline**: After a discovery run completes, publish a message to `discovery-complete` topic. A downstream subscriber can trigger QS generation, validation, or alerting.
-- [ ] **Add Cloud Run option for long-running recursive discovery**: For Phase 2 recursive mode (which may take minutes per university), deploy as a Cloud Run service instead of a Cloud Function (which has a 9-minute timeout).
+- [ ] Add `--depth N` to the `discover` command. Depth 1 is today's behavior (schools only).
+      Depth 2 adds departments under each school. Depth 3 adds programs and centers.
+- [ ] At each level, reuse the same matching steps that already exist for schools:
+      fuzzy match against existing Wikidata children, then `choose_match` for ambiguous cases.
+- [ ] Output the whole tree, not just a flat list. A JSON file with nesting is fine.
+- [ ] Update `to_qs_wikidata.py` so the proposed type from Milestone 2 maps to the right
+      Wikidata class (P31). The mapping table is in AGENTS.md under "Data model".
+
+**Done when:** `discover --depth 2 Q49210` runs end to end and produces a QuickStatements
+file for NYU's missing departments, with each department pointing to its school via P749.
+
+### Milestone 4: Handle the messy cases
+
+Real universities are not clean trees. Collect examples as you hit them.
+
+- [ ] Joint departments that belong to two schools. Model with two P749 statements.
+- [ ] Two departments with the same name in different schools (e.g., two "Economics").
+      The matcher must not merge them.
+- [ ] Units that recently moved or were renamed. Decide on a rule and document it.
+- [ ] Add a test for each case to `tests/`.
+
+**Done when:** The tests pass, and there is a short note in AGENTS.md on how joint units
+are represented.
+
+### Milestone 5: Measure across many universities
+
+- [ ] Run depth-2 discovery on the 12 universities in the existing ground truth.
+- [ ] Extend the evaluation harness (`eval/run_eval.py`) to report precision and recall
+      per level (schools vs. departments) and per LLM provider.
+- [ ] Write down the top 3 ways it fails. Fix the ones that are fixable.
+
+**Done when:** A results table for 12 universities exists in `eval/`, and the top failure
+modes are either fixed or documented as known issues in this file.
+
+### Milestone 6: Upload to Wikidata
+
+This is what the whole project is for. Everything before this is preparation.
+
+- [ ] Pick the one or two universities with the cleanest results.
+- [ ] Review every proposed statement by hand with Panos. Remove anything doubtful.
+- [ ] Upload through the QuickStatements web tool. Record the batch ID and date here.
+- [ ] Check the result on Wikidata. Query it back with SPARQL to confirm the hierarchy
+      is visible (see the queries at the bottom of this file).
+
+**Done when:** At least one university's departments are live on Wikidata, and the upload
+steps are written down so the next person can repeat them.
 
 ---
 
-## Infrastructure and tooling (ongoing)
+## 4. Stretch goals (after Milestone 6)
 
-- [ ] **Add tests**: Unit tests for `normalize_name`, `is_fuzzy_match`, SPARQL query construction, QS export format. Integration tests with mock LLM responses.
-- [ ] **Add pyproject.toml / setup.py**: Proper Python packaging so the CLI can be installed as `academiabot`.
-- [ ] **CI/CD**: GitHub Actions for linting (ruff/flake8), tests, and type checking (mypy).
-- [ ] **Support multiple LLM providers**: Abstract `llm_helpers.py` to support both OpenAI and Anthropic Claude APIs. Make provider configurable via `.env`. (See also GCP Step 4 for Vertex AI/Gemini.)
-- [ ] **Add Wikidata write capability**: Currently only generates QS files. Add direct Wikidata API editing via `wikibaseintegrator` or `pywikibot` for approved bot operations.
-- [ ] **Structured output validation**: Use pydantic models for LLM response schemas instead of raw dicts. Validate before processing.
-- [ ] **Add `google-cloud-bigquery`, `google-cloud-storage`, `google-cloud-secret-manager` to requirements.txt**: Required for GCP integration. Guard imports so the tool still works without them installed (graceful degradation).
+Pick one. Each is a self-contained project.
+
+- **Batch mode.** Run discovery over all U.S. universities from `results/universities_us.json`,
+  with the ability to stop and resume. Produce one combined QuickStatements file.
+- **Faculty linking.** For one department, find the faculty page, extract names and
+  titles, and match them to existing Wikidata people and ORCID records. Link via P108
+  (employer). Start with one department before generalizing.
+- **Validation before upload.** Write a checker that rejects a QuickStatements file if any
+  line is malformed, points to a nonexistent QID, or would create a duplicate.
+- **Beyond the U.S.** Make the country a parameter of `harvest`.
 
 ---
 
-## Useful SPARQL queries (reference)
+## 5. Parked (not now)
+
+These were on earlier versions of this list. They are good ideas but not the bottleneck.
+Do not start them unless Panos asks.
+
+- Storing results in BigQuery and caches in Google Cloud Storage instead of local files.
+- Running the pipeline as Cloud Functions or Cloud Run with a scheduler.
+- Direct Wikidata API writes with a bot account (requires Wikidata bot approval).
+- Salary data for public-university faculty.
+- Packaging as an installable CLI, CI pipeline, type checking.
+- Reconciling the IPEDS institution list against Wikidata.
+
+GCP project `wikidata-academia` is already set up with permissions for all of this.
+Details are in AGENTS.md.
+
+---
+
+## 6. Reference: useful SPARQL queries
+
+Paste these into https://query.wikidata.org.
 
 ```sparql
-# Orphan departments (no parent)
-SELECT ?dept ?deptLabel WHERE {
-  ?dept wdt:P31 wd:Q1183543 .
-  FILTER NOT EXISTS { ?dept wdt:P749 ?parent }
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
-}
-
-# University -> school -> department counts
-SELECT ?univ ?univLabel (COUNT(DISTINCT ?school) AS ?nSchool) (COUNT(DISTINCT ?dept) AS ?nDept)
-WHERE {
-  ?univ wdt:P31 wd:Q3918 ; wdt:P17 wd:Q30 .
-  OPTIONAL { ?school wdt:P749 ?univ ; wdt:P31 wd:Q31855 .
-    OPTIONAL { ?dept wdt:P749 ?school ; wdt:P31 wd:Q1183543 . }
-  }
-}
-GROUP BY ?univ ?univLabel
-ORDER BY DESC(?nDept)
-
-# All children of a specific university
+# All children of a university (NYU here)
 SELECT ?child ?childLabel ?childTypeLabel WHERE {
   ?child wdt:P749 wd:Q49210 .
   OPTIONAL { ?child wdt:P31 ?childType . }
@@ -174,6 +195,25 @@ SELECT ?child ?childLabel ?childTypeLabel WHERE {
 }
 ```
 
----
+```sparql
+# Departments with no parent organization (orphans)
+SELECT ?dept ?deptLabel WHERE {
+  ?dept wdt:P31 wd:Q1183543 .
+  FILTER NOT EXISTS { ?dept wdt:P749 ?parent }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+```
 
-_Last updated: 2026-03-19_
+```sparql
+# How many schools and departments each U.S. university has
+SELECT ?univ ?univLabel (COUNT(DISTINCT ?school) AS ?nSchool) (COUNT(DISTINCT ?dept) AS ?nDept)
+WHERE {
+  ?univ wdt:P31 wd:Q3918 ; wdt:P17 wd:Q30 .
+  OPTIONAL { ?school wdt:P749 ?univ ; wdt:P31 wd:Q31855 .
+    OPTIONAL { ?dept wdt:P749 ?school ; wdt:P31 wd:Q1183543 . }
+  }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+GROUP BY ?univ ?univLabel
+ORDER BY DESC(?nDept)
+```
