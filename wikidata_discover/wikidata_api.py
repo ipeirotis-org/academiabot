@@ -3,7 +3,7 @@ import logging
 import requests
 from typing import List, Tuple
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from .config import USER_AGENT
+from . import config
 from .sparql_helpers import _retry_after_seconds
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ def quick_wd_search(label: str, language: str = "en") -> List[Tuple[str, str]]:
     resp = requests.get(
         _SEARCH_URL,
         params={"action": "wbsearchentities", "format": "json", "language": language, "limit": 10, "search": label},
-        headers={"User-Agent": USER_AGENT},
+        headers={"User-Agent": config.USER_AGENT},
         timeout=30,
     )
     if resp.status_code == 429:

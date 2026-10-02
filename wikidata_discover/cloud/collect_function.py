@@ -11,19 +11,21 @@ Request JSON (all optional):
                     [qid, ...], or the SPARQL binding rows that `harvest` writes)
   max_universities  default 60, cap per invocation independent of the time budget
   time_budget_s     default 3000 (50 minutes; the function timeout is 60)
-  qids              explicit list, overrides list_object
+  reserve_s         default 600: no university starts unless this much of the budget
+                    (or the longest university so far, if more) is still left
+  qids              explicit list, overrides list_object; still de-duplicated and
+                    capped at max_universities
 
 Deploy with deploy/deploy_collect_function.sh. Keys come from Secret Manager at runtime.
 """
 import json
 import logging
-import os
 import time
 
 import functions_framework
 from flask import jsonify
 
-from wikidata_discover.batch import BUCKET, PROJECT, load_keys_from_secret_manager, parse_done, run_batch
+from wikidata_discover.batch import BUCKET, PROJECT, ensure_user_agent, load_keys_from_secret_manager, parse_done, run_batch
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -64,17 +66,18 @@ def collect(request):
     list_object = body.get("list_object", "universities_us.json")
     limit = int(body.get("max_universities", 60))
     budget = float(body.get("time_budget_s", 3000))
+    reserve = float(body.get("reserve_s", 600))
 
     load_keys_from_secret_manager()
-    os.environ.setdefault("WD_BOT_USERAGENT", "AcademiaBot/1.0 (ipeirotis@gmail.com)")
+    ensure_user_agent()
 
     from google.cloud import storage
     bucket = storage.Client(project=PROJECT).bucket(BUCKET)
 
     args = {"request": body, "run_id": run_id, "list_object": None, "max_universities": limit,
-            "time_budget_s": budget, "explicit_qids": bool(body.get("qids"))}
+            "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": bool(body.get("qids"))}
     if body.get("qids"):
-        qids = list(body["qids"])
+        qids = pick_qids(body["qids"], set(), limit)
     else:
         args["list_object"] = list_object
         rows = json.loads(bucket.blob(list_object).download_as_text())
@@ -84,5 +87,6 @@ def collect(request):
         if not qids:
             return jsonify({"run_id": run_id, "message": "nothing left to do", "done": len(done)})
 
-    summary = run_batch(run_id, qids, bucket, time_budget_s=budget, report=logger.info, invocation_args=args)
+    summary = run_batch(run_id, qids, bucket, time_budget_s=budget, reserve_s=reserve,
+                        report=logger.info, invocation_args=args)
     return jsonify(summary), (200 if summary["failed"] == 0 else 207)

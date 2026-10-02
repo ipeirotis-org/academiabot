@@ -96,6 +96,58 @@ def test_secret_manager_keys_reach_config(monkeypatch):
     assert os.environ["GOOGLE_API_KEY"] == "secret-for-gemini-api-key"
 
 
+def test_missing_optional_secret_is_tolerated(monkeypatch):
+    from wikidata_discover import config
+    for env in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(env, raising=False); monkeypatch.setattr(config, env, None)
+
+    class Payload:
+        def __init__(self, d): self.data = d
+    class Resp:
+        def __init__(self, d): self.payload = Payload(d)
+    class OnlyOpenAI:
+        def access_secret_version(self, request):
+            if "openai" in request["name"]:
+                return Resp(b"sk-only")
+            raise PermissionError("denied")
+
+    assert batch.load_keys_from_secret_manager(client=OnlyOpenAI()) == {
+        "OPENAI_API_KEY": "secret_manager", "ANTHROPIC_API_KEY": "missing", "GOOGLE_API_KEY": "missing"}
+    assert config.OPENAI_API_KEY == "sk-only" and config.ANTHROPIC_API_KEY is None
+
+    class Nothing:
+        def access_secret_version(self, request):
+            raise PermissionError("denied")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)   # the first call exported it
+    with pytest.raises(RuntimeError):
+        batch.load_keys_from_secret_manager(client=Nothing())
+
+
+def test_ensure_user_agent_updates_config_after_import(monkeypatch):
+    from wikidata_discover import config, sparql_helpers, wikidata_api
+    monkeypatch.delenv("WD_BOT_USERAGENT", raising=False)
+    monkeypatch.setattr(config, "USER_AGENT", "AcademiaBot/1.0 (ipeirotis@example.com)")
+    assert batch.ensure_user_agent("Bot/1 (real@example.org)") == "Bot/1 (real@example.org)"
+    assert config.USER_AGENT == "Bot/1 (real@example.org)" == os.environ["WD_BOT_USERAGENT"]
+    # the request modules read it at call time, not at import
+    seen = {}
+    monkeypatch.setattr(wikidata_api.time, "sleep", lambda s: None)
+    class R:
+        status_code = 200; headers = {}
+        def raise_for_status(self): pass
+        def json(self): return {"search": []}
+    monkeypatch.setattr(wikidata_api.requests, "get", lambda *a, **k: seen.update(k["headers"]) or R())
+    wikidata_api.quick_wd_search("x")
+    assert seen["User-Agent"] == "Bot/1 (real@example.org)"
+    monkeypatch.setattr(sparql_helpers.requests, "get", lambda *a, **k: seen.update(k["headers"]) or R())
+    monkeypatch.setattr(sparql_helpers.time, "sleep", lambda s: None)
+    sparql_helpers._get("SELECT 1")
+    assert seen["User-Agent"] == "Bot/1 (real@example.org)"
+    monkeypatch.setenv("WD_BOT_USERAGENT", "FromEnv/1")
+    assert batch.ensure_user_agent("ignored") == "FromEnv/1"
+
+
 def test_llm_clients_read_keys_at_call_time(monkeypatch):
     from wikidata_discover import config, llm_helpers
     monkeypatch.setattr(config, "OPENAI_API_KEY", "sk-late")
@@ -170,6 +222,38 @@ def test_run_batch_resumes_from_bucket_and_keeps_invocation_history(stub):
     lines = bucket.store["runs/r2/invocations.jsonl"].splitlines()
     assert len(lines) == 2 and json.loads(lines[0])["started"] == "earlier"
     assert json.loads(lines[1])["resumed"] is True
+
+
+def test_run_batch_records_invocation_even_when_nothing_runs(stub):
+    prior_log = json.dumps({"qid": "Q1", "status": "ok", "uploaded": True}) + "\n"
+    bucket = FakeBucket({"runs/r4/log.jsonl": prior_log, "runs/r4/run.json": "{}"})
+    s = batch.run_batch("r4", ["Q1"], bucket, results_dir=stub, report=lambda m: None)
+    assert s["processed"] == 0
+    assert "runs/r4/invocations.jsonl" in bucket.store
+
+
+def test_run_batch_reserve_stops_before_starting(stub):
+    bucket = FakeBucket()
+    s = batch.run_batch("r5", ["Q1"], bucket, results_dir=stub, report=lambda m: None,
+                        time_budget_s=100, reserve_s=100)
+    assert s["stopped_for_time"] is True and s["processed"] == 0
+    s = batch.run_batch("r5", ["Q1"], bucket, results_dir=stub, report=lambda m: None,
+                        time_budget_s=100, reserve_s=50)
+    assert s["processed"] == 1
+    assert json.loads(bucket.store["runs/r5/run.json"])["reserve_s"] == 100
+
+
+def test_run_batch_restores_caches_for_pending_qids(stub):
+    # Q1 ran before, used cache file c1.json, but its upload failed, so it is pending.
+    # Q2 is done; its cache (c2.json) is not needed.
+    log = "\n".join(json.dumps(r) for r in [
+        {"qid": "Q1", "status": "ok", "uploaded": False, "cache_files": ["c1.json"]},
+        {"qid": "Q2", "status": "ok", "uploaded": True, "cache_files": ["c2.json"]}]) + "\n"
+    bucket = FakeBucket({"runs/r6/log.jsonl": log, "runs/r6/run.json": "{}",
+                         "runs/r6/cache/c1.json": '{"cached": 1}', "runs/r6/cache/c2.json": '{"cached": 2}'})
+    batch.run_batch("r6", ["Q1", "Q2"], bucket, results_dir=stub, report=lambda m: None)
+    assert (stub / "cache" / "c1.json").read_text() == '{"cached": 1}'
+    assert not (stub / "cache" / "c2.json").exists()
 
 
 def test_run_batch_run_log_upload_failure_requeues_qid(stub):

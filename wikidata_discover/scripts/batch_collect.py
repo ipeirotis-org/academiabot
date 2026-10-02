@@ -8,10 +8,9 @@ nonzero if anything failed. The same logic runs in the cloud via
 wikidata_discover/cloud/collect_function.py. See wikidata_discover/batch.py.
 """
 import logging
-import os
 import sys
 
-from wikidata_discover.batch import BUCKET, PROJECT, RESULTS_DIR, load_keys_from_secret_manager, run_batch
+from wikidata_discover.batch import BUCKET, PROJECT, RESULTS_DIR, ensure_user_agent, load_keys_from_secret_manager, run_batch
 from wikidata_discover.batch import artifact_paths, load_done  # noqa: F401  (re-exported)
 
 
@@ -23,7 +22,7 @@ def main(argv=None) -> int:
     run_dir = RESULTS_DIR / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     load_keys_from_secret_manager()
-    os.environ.setdefault("WD_BOT_USERAGENT", "AcademiaBot/1.0 (ipeirotis@gmail.com)")
+    ensure_user_agent()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         handlers=[logging.FileHandler(run_dir / "pipeline.log"), logging.StreamHandler()])
     from google.cloud import storage

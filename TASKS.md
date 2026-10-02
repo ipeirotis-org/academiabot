@@ -54,6 +54,19 @@ python -m wikidata_discover.eval.run_eval
 - Human review. (Shuo, weeks 6 to 8.)
 - Nothing has been uploaded to Wikidata. (Both, week 9.)
 
+**Collecting many universities at once.** `discover` handles one university. For the whole
+list there is a batch runner that resumes where it stopped and uploads every output to the
+`academiabot` bucket under `runs/<run_id>/`. It runs from a terminal
+(`python -m wikidata_discover.scripts.batch_collect <run_id> <QID> ...`) or as a Cloud
+Function called hourly by Cloud Scheduler, so that collection does not depend on anyone's
+laptop. The first batch of 25 universities is in the bucket as `2026-10-02-batch01`. How
+to deploy, start, stop, and watch a cloud run is in AGENTS.md ("Running collection in the
+cloud"). You check a run by reading `runs/<run_id>/log.jsonl` in the bucket: one line per
+university, with `status` and `uploaded`. Only Panos starts a cloud run, because it spends
+LLM credit. Anya's week 2 (the run log) builds on this: the batch runner already records
+what ran, with which models and code version, and the run log tables are where that
+record moves next.
+
 Where the project came from and why we model things the way we do: `docs/BACKGROUND.md`.
 Read it once. It is short.
 
@@ -196,7 +209,6 @@ agent builds the code.
 
 Good ideas that are not the bottleneck. Do not start them unless Panos asks.
 
-- Running the pipeline as Cloud Functions or Cloud Run on a schedule.
 - Direct Wikidata API writes with a bot account (needs Wikidata bot approval).
 - Salary data for public-university faculty.
 - Packaging as an installable command, continuous integration, type checking.

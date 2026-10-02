@@ -166,7 +166,7 @@ class Discovery:
             for qid, label in direct_children:
                 alt_labels = alt_labels_map.get(qid, [])
                 all_names = [label] + alt_labels
-                if any(normalize_name(name) == normalize_name(n) or is_fuzzy_match(name, n) for n in all_names):
+                if any(is_fuzzy_match(name, n) for n in all_names if n):
                     matched = (qid, label)
                     logger.debug("fuzzy match: '%s' -> %s (%s)", name, qid, label)
                     break
@@ -299,7 +299,10 @@ def normalize_name(name: str) -> str:
     name = re.sub(r"\b(the|of|for|and|at|by)\b", " ", name)
     name = re.sub(r"&", " and ", name)
     name = re.sub(r"\b[a-z]\.? ?[a-z]\.? ", "", name)  # removes "n.", "a. b."
-    name = re.sub(r"[^a-z\s]", "", name)
+    # Keep letters in any script (Chinese, Arabic, accented Latin), drop digits,
+    # punctuation and symbols. An ASCII-only filter would reduce every
+    # non-Latin name to the same empty string.
+    name = re.sub(r"[^\w\s]|[\d_]", "", name)
     name = re.sub(r"\s+", " ", name)
     return name.strip()
 
@@ -307,6 +310,9 @@ def normalize_name(name: str) -> str:
 
 def is_fuzzy_match(a: str, b: str) -> bool:
     na, nb = normalize_name(a), normalize_name(b)
+
+    if not na or not nb:
+        return False  # nothing left to compare; never match on emptiness
 
     if na == nb:
         return True

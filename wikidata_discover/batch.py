@@ -59,22 +59,73 @@ def load_done(log_path: Path) -> set:
     return parse_done(log_path.read_text()) if log_path.exists() else set()
 
 
-def load_keys_from_secret_manager(client=None):
+def load_keys_from_secret_manager(client=None) -> dict:
     """Fill in any missing LLM key from Secret Manager, into this process only.
 
     Sets both the environment variable and the matching config attribute, because
-    config has usually been imported (and read os.environ) before this runs."""
+    config has usually been imported (and read os.environ) before this runs. A secret
+    that is missing or inaccessible is logged and skipped: one working provider is a
+    supported setup. Raises RuntimeError only when no key is available at all.
+    Returns {env_name: "env" | "secret_manager" | "missing"}."""
     from wikidata_discover import config
     if client is None:
         from google.cloud import secretmanager
         client = secretmanager.SecretManagerServiceClient()
+    sources = {}
     for env, secret in SECRETS:
         value = os.getenv(env)
+        sources[env] = "env"
         if not value:
             name = f"projects/{PROJECT}/secrets/{secret}/versions/latest"
-            value = client.access_secret_version(request={"name": name}).payload.data.decode().strip()
-            os.environ[env] = value
-        setattr(config, env, value)
+            try:
+                value = client.access_secret_version(request={"name": name}).payload.data.decode().strip()
+                sources[env] = "secret_manager"
+            except Exception as e:  # noqa: BLE001 - one missing optional key must not stop a run
+                logger.warning("Secret %s not available (%s: %s); provider %s disabled", secret, type(e).__name__, str(e)[:120], env)
+                value, sources[env] = None, "missing"
+            if value:
+                os.environ[env] = value
+        setattr(config, env, value or None)
+    if not any(getattr(config, env) for env, _ in SECRETS):
+        raise RuntimeError("No LLM API key available from the environment or Secret Manager: " + ", ".join(s for _, s in SECRETS))
+    return sources
+
+
+def ensure_user_agent(default: str = "AcademiaBot/1.0 (ipeirotis@gmail.com)") -> str:
+    """Make sure Wikidata requests identify us. WD_BOT_USERAGENT wins if set; otherwise
+    `default` is applied to config as well as the environment, because config has
+    usually been imported before this runs."""
+    from wikidata_discover import config
+    config.set_user_agent(os.getenv("WD_BOT_USERAGENT") or default)
+    return config.USER_AGENT
+
+
+def restore_caches(bucket, run_id: str, log_path: Path, results_dir: Path, done: set) -> int:
+    """Bring back, from the bucket, the LLM cache files that earlier attempts at still
+    pending QIDs read or wrote, so a retry on a fresh instance reuses the same LLM
+    answers instead of paying for (and possibly getting) new ones. Returns the count."""
+    if not log_path.exists():
+        return 0
+    wanted = set()
+    for line in log_path.read_text().splitlines():
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if rec.get("qid") not in done:
+            wanted.update(rec.get("cache_files") or [])
+    cache_dir = results_dir / "cache"
+    restored = 0
+    for name in sorted(wanted):
+        local = cache_dir / name
+        if local.exists():
+            continue
+        blob = bucket.blob(f"runs/{run_id}/cache/{name}")
+        if blob.exists():
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            local.write_text(blob.download_as_text())
+            restored += 1
+    return restored
 
 
 def sync_from_bucket(bucket, run_id: str, run_dir: Path, name: str) -> None:
@@ -107,15 +158,16 @@ def git_commit() -> str:
 
 def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[float] = None,
               results_dir: Path = RESULTS_DIR, report: Callable[[str], None] = print,
-              invocation_args: Optional[dict] = None) -> dict:
+              invocation_args: Optional[dict] = None, reserve_s: float = 0) -> dict:
     """Run discovery for each QID not already done, uploading as it goes.
 
-    bucket: a google.cloud.storage Bucket. time_budget_s: stop starting new QIDs once this
-    many seconds have passed (for a Cloud Function with a hard timeout). invocation_args:
-    what selected this run (the CLI arguments, or the HTTP request body and the values
-    resolved from it), recorded in run.json and invocations.jsonl so the run can be
-    repeated. Returns a summary dict with counts; 'failed' > 0 means something needs
-    attention.
+    bucket: a google.cloud.storage Bucket. time_budget_s: stop starting new QIDs once
+    the time used plus a reserve for the next one would exceed this (for a Cloud
+    Function with a hard timeout). The reserve is reserve_s or the longest university
+    so far in this invocation, whichever is larger. invocation_args: what selected
+    this run (the CLI arguments, or the HTTP request body and the values resolved from
+    it), recorded in run.json and invocations.jsonl so the run can be repeated. Returns
+    a summary dict with counts; 'failed' > 0 means something needs attention.
     """
     from wikidata_discover import config, llm_helpers
     from wikidata_discover.discovery import Discovery
@@ -136,12 +188,16 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         sync_from_bucket(bucket, run_id, run_dir, name)
     resumed = (run_dir / "run.json").exists() or bucket.blob(f"runs/{run_id}/run.json").exists()
     done = load_done(log_path)
+    restored = restore_caches(bucket, run_id, log_path, results_dir, done)
+    if restored:
+        report(f"restored {restored} cache files from the bucket for pending universities")
 
     invocation = {"started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "git_commit": git_commit(),
                   "args": invocation_args if invocation_args is not None else {"argv": sys.argv},
                   "host": os.getenv("K_SERVICE", "local"),
                   "models": {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL},
-                  "user_agent": config.USER_AGENT, "qids": qids, "resumed": resumed, "time_budget_s": time_budget_s}
+                  "user_agent": config.USER_AGENT, "qids": qids, "resumed": resumed,
+                  "time_budget_s": time_budget_s, "reserve_s": reserve_s}
     if not resumed:
         (run_dir / "run.json").write_text(json.dumps({"run_id": run_id, **invocation}, indent=2))
     with (run_dir / "invocations.jsonl").open("a") as f:
@@ -149,11 +205,19 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
 
     summary = {"run_id": run_id, "requested": len(qids), "skipped_done": 0, "processed": 0, "ok": 0,
                "failed": 0, "stopped_for_time": False}
+    # The invocation is part of the record even when no university gets processed.
+    try:
+        upload([p for p in run_dir.rglob("*") if p.is_file()])
+    except Exception as e:  # noqa: BLE001
+        report(f"run metadata upload failed: {type(e).__name__}: {str(e)[:120]}")
+        summary["failed"] += 1
+
+    longest = 0.0
     for i, qid in enumerate(qids, 1):
         if qid in done:
             summary["skipped_done"] += 1
             continue
-        if time_budget_s is not None and time.time() - started > time_budget_s:
+        if time_budget_s is not None and time.time() - started + max(reserve_s, longest) > time_budget_s:
             summary["stopped_for_time"] = True
             report(f"time budget reached after {summary['processed']} universities; stopping")
             break
@@ -174,6 +238,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
                         "trace": traceback.format_exc()[-1500:]})
             summary["failed"] += 1
         rec["seconds"] = round(time.time() - t, 1)
+        longest = max(longest, rec["seconds"])
         rec["cache_files"] = sorted(p.name for p in llm_helpers.cache_paths_touched)
         try:
             n = upload(artifact_paths(results_dir, run_dir, qid, since=t, extra=list(llm_helpers.cache_paths_touched)))

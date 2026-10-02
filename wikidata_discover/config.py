@@ -21,6 +21,13 @@ RESULTS_DIR = Path(__file__).parent / "results"
 console = Console()
 
 
+def set_user_agent(value: str) -> None:
+    """Change the User-Agent for every later Wikidata request, in this process."""
+    global USER_AGENT
+    USER_AGENT = value
+    os.environ["WD_BOT_USERAGENT"] = value
+
+
 def require_key(name: str, val) -> str:
     if not val:
         raise ValueError(f"{name} not set in environment")

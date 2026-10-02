@@ -3,7 +3,8 @@ import time
 from email.utils import parsedate_to_datetime
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from wikidata_discover.config import SPARQL_ENDPOINT, USER_AGENT
+from wikidata_discover import config
+from wikidata_discover.config import SPARQL_ENDPOINT
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ def _get(query: str) -> requests.Response:
     resp = requests.get(
         SPARQL_ENDPOINT,
         params={"query": query, "format": "json"},
-        headers={"User-Agent": USER_AGENT, "Accept": "application/sparql-results+json"},
+        headers={"User-Agent": config.USER_AGENT, "Accept": "application/sparql-results+json"},
         timeout=120,
     )
     _last_call = time.time()

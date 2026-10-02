@@ -228,6 +228,12 @@ Scheduler calls it hourly. State and artifacts live only in `gs://academiabot/ru
   Only a person does this; it spends LLM credit.
 - Stop: `gcloud scheduler jobs pause academiabot-collect-hourly --location=us-east1`.
 - Progress: read `runs/<run_id>/log.jsonl` in the bucket. One line per university attempt.
+  The last record for a QID wins; a QID is done only when its last record is ok and uploaded.
+- Request body (all optional): `run_id`, `list_object`, `max_universities` (60), `time_budget_s`
+  (3000), `reserve_s` (600: no university starts unless that much budget, or the longest
+  university so far, is left), `qids` (explicit list, still de-duplicated and capped).
+- LLM cache files that an unfinished university used are restored from the bucket before a
+  retry, so a retry on a fresh instance reuses the same LLM answers.
 - One-time prerequisite for a project owner: enable the Cloud Functions, Cloud Run, Cloud Build,
   Artifact Registry, Cloud Scheduler, and Eventarc APIs. The service account cannot enable APIs.
 - The `gcloud` CLI in a Claude Code cloud session needs `env -u CLOUDSDK_AUTH_ACCESS_TOKEN` in
