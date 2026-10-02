@@ -24,7 +24,8 @@ academiabot/
 │   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness
 │   ├── results/                 # Output CSVs, universities_us.json, LLM cache
 │   └── scripts/
-│       └── wikidata_division_discover.py   # Entrypoint
+│       ├── wikidata_division_discover.py   # Entrypoint
+│       └── batch_collect.py                # Interim batch runner: many QIDs, log per university, upload to GCS
 ├── docs/                        # BACKGROUND.md (origins, decisions); later REVIEW_GUIDE.md, MODELING_RULES.md
 ├── tests/                       # pytest unit tests (fuzzy matching)
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
@@ -188,12 +189,14 @@ checks and the human review (section 5). So:
 
 ## Run log (planned, Anya week 2)
 
-Every run must be reproducible. Four BigQuery tables in dataset `academiabot` of project
-`wikidata-academia`, with large text in Cloud Storage and the GCS path kept in the row:
+Every run must be reproducible. Anya's week 2 creates the first four tables below in dataset
+`academiabot` of project `wikidata-academia`, with large text in Cloud Storage and the GCS path
+kept in the row. The fifth table, `reviews`, is Shuo's week 6; it is specified here so both
+tracks build to the same shape.
 
 | Table | One row per | Must contain |
 |---|---|---|
-| `runs` | command invocation | run_id, who, git commit, config (providers, models, depth), start and end time |
+| `runs` | command invocation | run_id, who, git commit, the exact command and arguments (subcommand, QIDs, flags), config (providers, models, depth), start and end time, outcome |
 | `llm_calls` | API call | llm_call_id, run_id, provider, model, purpose (extract, judge, match, verify), prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
 | `evidence` | web page fetched | evidence_id, run_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
 | `candidates` | unit proposed | candidate_id, run_id, parent_qid, name, unit_type, status (linked, orphan, missing), matched_qid, source_url, llm_call_ids, evidence_ids |

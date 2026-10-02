@@ -92,7 +92,9 @@ Rules that keep things manageable:
 - [ ] Get API keys working. Today the code reads keys only from `.env`: copy `env.example`
       to `.env` and paste at least one key (ask Panos). Never commit `.env`. After Anya's
       week 2 lands, the keys will come from Secret Manager and `.env` becomes optional.
-- [ ] Run discovery on NYU (Q49210). Open the CSV in `wikidata_discover/results/`.
+- [ ] Run discovery on NYU (Q49210). Open `wikidata_discover/results/reports/Q49210_report.json`.
+      (NYU's schools are all linked already, so no CSV is written for it. A university with
+      missing schools also gets a CSV and a QuickStatements file.)
 - [ ] Run it on a university you know well. Is the list of schools right? Note what is wrong.
 - [ ] Ask the agent to walk you through the pipeline using `discovery.py` as the guide.
       Then ask it the question that confused you most.
@@ -137,7 +139,7 @@ a person confirms it. Nothing enters Wikidata without the third.
 
 | Week | Dates | You ask the agent to build | You check it by | You do yourself | Hand to Panos |
 |---|---|---|---|---|---|
-| 2 | Oct 9 to 15 | **A scorer.** Loads a department ground-truth CSV (one row per department, with a `source_url` column) and scores any list of names against it: precision and recall. | Feeding it a list you wrote with 2 deliberate errors. The score must drop by exactly 2. | Build the ground truth for Stern, Courant, Steinhardt from their websites, one URL per department. Start from the old BigQuery table (`docs/BACKGROUND.md` explains it) but confirm every row yourself. | Ground-truth CSV, about 40 to 60 rows, every row with a URL you visited. Give it to Anya. |
+| 2 | Oct 9 to 15 | **A scorer.** Loads a department ground-truth CSV (one row per department, with a `source_url` column) and scores any list of names against it: precision and recall. | Feeding it your own ground-truth list plus 2 made-up department names. It must report recall 100% and exactly 2 wrong names (precision = N/(N+2) for N real names). Then remove 1 real name: recall must be (N-1)/N. | Build the ground truth for Stern, Courant, Steinhardt from their websites, one URL per department. Start from the old BigQuery table (`docs/BACKGROUND.md` explains it) but confirm every row yourself. | Ground-truth CSV, about 40 to 60 rows, every row with a URL you visited. Give it to Anya. |
 | 3 | Oct 16 to 22 | **Source checker.** Given a unit name and a URL: fetch the page, record the HTTP status, say whether the name appears in the page text, save a copy of the page. Results go in Anya's `evidence` table. | Giving it 10 URLs you picked: 2 dead, 2 real but about something else, 6 correct. It must sort all 10 the way you did. | Run it on every URL the LLMs cited for the 12 universities. Read 20 failures and sort them: dead link, wrong page, right page but different name, made-up URL. | Table: share of cited URLs that exist and support the claim, per LLM provider. |
 | 4 | Oct 23 to 29 | **LLM verifier.** Given a claim ("X is a department of Y") and the text of a page, answer supported, not supported, or unclear, and quote the sentence that decides it. | Labeling 100 claim-and-page pairs yourself first, then comparing. Spot-check 10 quoted sentences against the page: the quote must really be there. | Decide what verifier accuracy is good enough to use it for sorting the review sheet. Write the number down and why. | Verifier accuracy against your labels, with the confusion matrix. |
 | 5 | Oct 30 to Nov 5 | **Department-level evaluation.** The eval harness extended to departments and to each LLM provider and judge combination, reading from Anya's run log. | Running it twice: identical numbers (the cache works). Pick one university and recount 5 rows by hand. | Choose the generator and judge combination for departments, with numbers. Give the choice to Anya. | Midpoint report: precision, recall, source-support rate, verifier accuracy. |

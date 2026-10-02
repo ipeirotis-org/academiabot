@@ -1,5 +1,6 @@
 import logging
 import time
+from email.utils import parsedate_to_datetime
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from wikidata_discover.config import SPARQL_ENDPOINT, USER_AGENT
@@ -16,9 +17,37 @@ class SparqlRateLimited(Exception):
     """Raised when the endpoint answers HTTP 429 after we have already waited."""
 
 
-def _parse_bindings(payload: dict) -> list[dict]:
-    """Pull the bindings list out of a SPARQL JSON results payload."""
-    return payload.get("results", {}).get("bindings", [])
+class SparqlBadResponse(ValueError):
+    """Raised when a 200 response is not a SPARQL JSON result (for example an error page)."""
+
+
+def _parse_bindings(payload) -> list[dict]:
+    """Pull the bindings list out of a SPARQL JSON results payload.
+
+    A valid empty result has results.bindings == []. Anything without that
+    structure is an error, never silently an empty result.
+    """
+    if not isinstance(payload, dict):
+        raise SparqlBadResponse("SPARQL response is not a JSON object")
+    bindings = payload.get("results", {}).get("bindings") if isinstance(payload.get("results"), dict) else None
+    if not isinstance(bindings, list):
+        raise SparqlBadResponse(f"SPARQL response has no results.bindings: {str(payload)[:120]}")
+    return bindings
+
+
+def _retry_after_seconds(header_value, default: int = _RATE_LIMIT_WAIT) -> int:
+    """Retry-After may be integer seconds or an HTTP date. Fall back to default."""
+    if not header_value:
+        return default
+    try:
+        return max(1, int(header_value))
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(header_value)
+        return max(1, int(when.timestamp() - time.time()))
+    except Exception:
+        return default
 
 
 def _get(query: str) -> requests.Response:
@@ -54,7 +83,7 @@ def execute_sparql_bindings(query: str) -> list[dict]:
     """
     resp = _get(query)
     if resp.status_code == 429:
-        wait = int(resp.headers.get("Retry-After", _RATE_LIMIT_WAIT) or _RATE_LIMIT_WAIT)
+        wait = _retry_after_seconds(resp.headers.get("Retry-After"))
         logger.warning("SPARQL 429 (%s). Waiting %ss.", resp.text.strip()[:80], wait)
         time.sleep(wait)
         raise SparqlRateLimited(resp.text.strip()[:120])
