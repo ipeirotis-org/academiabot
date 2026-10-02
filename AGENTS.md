@@ -104,6 +104,20 @@ Use **P749 (parent organization)** as the primary relationship. Add P361 as supp
 - Eval on 12 universities: best config is Anthropic judge over OpenAI + Gemini, about 0.95 precision and recall
   (see `eval/results_summary.csv`)
 
+## Working norms (read first)
+
+Students on this project direct agents; they do not write most of the code. So:
+
+- Work on exactly the milestone in `TASKS.md` that the student names. Do not start the next one.
+- Before writing code, give a short plan (five lines or fewer) and wait for a go-ahead.
+- The milestone's "done when" line is the acceptance test. Show it passing, with the command and its output.
+- Explain what you did in plain language. Assume the reader can run a command and open a CSV but will not read a diff.
+- Run `python -m pytest tests -q` before saying anything is done. Add a test for every behavior you add.
+- At the end of a session: tick the boxes you completed in `TASKS.md`, add anything a future agent needs to this file, and leave the student a three-line summary.
+- Never upload to Wikidata, never run QuickStatements batches, never write to the Wikidata API. Humans do that step.
+- Never commit `.env` or any API key.
+- One milestone per branch and pull request.
+
 ## Coding conventions
 
 - All SPARQL goes through `sparql_helpers.py` (never construct SPARQLWrapper directly)
