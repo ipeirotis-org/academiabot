@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
+from wikidata_discover import config
 from wikidata_discover.config import RESULTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -214,6 +215,37 @@ def sync_from_bucket(bucket, run_id: str, run_dir: Path, name: str) -> None:
             local.write_text(remote_text)
 
 
+def fetch_if_missing(bucket, run_id: str, run_dir: Path, name: str) -> bool:
+    """Download a write-once run file (run.json) when there is no local copy, so a
+    later invocation on this instance can never mint a new one. True if present."""
+    local = run_dir / name
+    if local.exists():
+        return True
+    blob = bucket.blob(f"runs/{run_id}/{name}")
+    if blob.exists():
+        local.write_text(blob.download_as_text())
+        return True
+    return False
+
+
+# Uploads may use the shutdown buffer (after config.DEADLINE) but must finish before
+# the kill, so none starts with less than this many seconds to the hard deadline.
+_UPLOAD_MARGIN_S = 10
+_UPLOAD_TIMEOUT_S = 60
+
+
+def upload_timeout() -> float:
+    """Timeout for one upload: 60 s, or less when the kill is closer. Raises
+    DeadlineExceeded when the upload could not finish before the kill."""
+    from wikidata_discover.sparql_helpers import DeadlineExceeded
+    left = config.hard_seconds_left()
+    if left is None:
+        return _UPLOAD_TIMEOUT_S
+    if left <= _UPLOAD_MARGIN_S:
+        raise DeadlineExceeded("process about to be killed; not starting an upload")
+    return max(5.0, min(_UPLOAD_TIMEOUT_S, left - _UPLOAD_MARGIN_S))
+
+
 def object_name(run_id: str, path: Path, results_dir: Path, run_dir: Path) -> str:
     """Bucket object for a local file: run files land directly under runs/<run_id>/,
     other outputs keep their path relative to the results folder."""
@@ -299,45 +331,49 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     validate_run_id(run_id)
     qids = list(dict.fromkeys(qids))  # de-duplicate, keeping order
     started = time.time()
+    config.HARD_DEADLINE = (started + hard_deadline_s) if hard_deadline_s else None
     config.DEADLINE = (started + hard_deadline_s - 90) if hard_deadline_s else None
     invocation_id = uuid.uuid4().hex[:12]  # ties this invocation's start, end, and QID records together
     run_dir = results_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "log.jsonl"
 
+    def clear_deadlines():
+        config.DEADLINE = config.HARD_DEADLINE = None
+
     def upload(paths) -> int:
-        # Each upload is bounded by the process deadline, like every other network
-        # call, and none starts after it: a stalled bucket must not eat the shutdown
-        # buffer in which the attempt's records get written.
-        from wikidata_discover.sparql_helpers import check_deadline, request_timeout
+        # Work stops at config.DEADLINE; the 90 s after it exist so the attempt's
+        # records and artifacts still reach the bucket. Each upload is bounded by the
+        # kill time instead, and none starts once it could not finish before it.
         n = 0
         for p in paths:
-            check_deadline("an upload")
             bucket.blob(object_name(run_id, p, results_dir, run_dir)).upload_from_filename(
-                str(p), timeout=request_timeout(60)); n += 1
+                str(p), timeout=upload_timeout()); n += 1
         return n
 
     summary = {"run_id": run_id, "requested": len(qids), "skipped_done": 0, "processed": 0, "ok": 0,
                "failed": 0, "stopped_for_time": False}
     # Bring the run state down from the bucket. If the bucket is unreachable the run
     # still starts from local state and records that, instead of dying silently.
-    resumed = (run_dir / "run.json").exists()
+    run_files = ("run.json", "log.jsonl", "invocations.jsonl")
     sync_error = None
     try:
         for name in ("log.jsonl", "invocations.jsonl"):
             sync_from_bucket(bucket, run_id, run_dir, name)
-        resumed = resumed or bucket.blob(f"runs/{run_id}/run.json").exists()
+        # run.json is written once per run and never changed: the bucket's copy comes
+        # down so that this instance keeps it through a later outage.
+        fetch_if_missing(bucket, run_id, run_dir, "run.json")
         restored = restore_caches(bucket, run_id, log_path, results_dir, load_done(log_path))
         if restored:
             report(f"restored {restored} cache files from the bucket for pending universities")
     except Exception as e:  # noqa: BLE001
         sync_error = f"{type(e).__name__}: {str(e)[:120]}"
         summary["failed"] += 1
-        if not (log_path.exists() and (run_dir / "invocations.jsonl").exists()):
-            # Cold start with incomplete local state: one of the append-only files is
-            # unknown, so doing work would re-run finished universities, and a later
-            # upload of a fresh file would wipe the bucket's history of it. Record the
-            # refused invocation in a file of its own (never one that could replace
+        if not all((run_dir / name).exists() for name in run_files):
+            # Cold start with incomplete local state: one of the run files is unknown,
+            # so doing work would re-run finished universities, mint a second run.json,
+            # or wipe the bucket's history with a later upload of a fresh file. Record
+            # the refused invocation in a file of its own (never one that could replace
             # bucket history) and stop.
             report(f"bucket sync failed on a cold start; refusing to run blind: {sync_error}")
             summary.update({"outcome": "failed", "sync_error": sync_error})
@@ -347,9 +383,10 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
                                     "host": os.getenv("K_SERVICE", "local"),
                                     "operator": operator_identity(), "qids": qids, "outcome": "failed",
                                     "sync_error": sync_error, "summary": summary}) + "\n")
-            config.DEADLINE = None
+            clear_deadlines()
             return summary
         report(f"bucket sync failed, continuing from local state: {sync_error}")
+    resumed = (run_dir / "run.json").exists()
     done = load_done(log_path)
     # Universities given up on (3 attempts) are not retried, but they are not finished
     # either: the summary and the end record carry the count so a person looks at them.
@@ -465,5 +502,5 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
                                 "ended": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                 "outcome": "failed", "summary": summary,
                                 "note": f"final run metadata upload failed: {type(e).__name__}"}) + "\n")
-    config.DEADLINE = None
+    clear_deadlines()
     return summary

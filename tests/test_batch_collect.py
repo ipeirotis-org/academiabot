@@ -274,18 +274,63 @@ def test_uploads_are_bounded_by_the_deadline(stub, monkeypatch):
     bucket = FakeBucket()
     batch.run_batch("r26", ["Q1"], bucket, results_dir=stub, report=lambda m: None, hard_deadline_s=1800)
     assert all(t is not None and t <= 60 for t in bucket.store["__timeouts__"])     # every upload has a timeout
-    # deadline already passed: no upload starts, the QID is not marked uploaded, the run is failed
-    class Stuck:
+    import wikidata_discover.discovery as disc
+    # Work deadline passed, kill 90 s away: the shutdown buffer is for exactly these
+    # uploads, so the attempt's records and artifacts still reach the bucket, bounded.
+    class Slow:
         def __init__(self, qid): self.university_qid, self.university_label = qid, qid
         def discover_missing(self):
-            config.DEADLINE = time.time() - 1; return []
-    import wikidata_discover.discovery as disc
-    monkeypatch.setattr(disc, "Discovery", Stuck)
+            config.DEADLINE = time.time() - 1; config.HARD_DEADLINE = time.time() + 89; return []
+    monkeypatch.setattr(disc, "Discovery", Slow)
     bucket = FakeBucket()
     s = batch.run_batch("r27", ["Q1"], bucket, results_dir=stub, report=lambda m: None, hard_deadline_s=1800)
     rec = json.loads((stub / "runs" / "r27" / "log.jsonl").read_text().splitlines()[0])
+    assert rec["uploaded"] is True and s["outcome"] == "ok"
+    assert "runs/r27/invocations.jsonl" in bucket.store
+    assert all(5 <= t <= 60 for t in bucket.store["__timeouts__"])
+    # Kill already passed: no upload starts, the QID is not marked uploaded, the run is failed.
+    class Stuck(Slow):
+        def discover_missing(self):
+            config.DEADLINE = config.HARD_DEADLINE = time.time() - 1; return []
+    monkeypatch.setattr(disc, "Discovery", Stuck)
+    bucket = FakeBucket()
+    s = batch.run_batch("r28", ["Q1"], bucket, results_dir=stub, report=lambda m: None, hard_deadline_s=1800)
+    rec = json.loads((stub / "runs" / "r28" / "log.jsonl").read_text().splitlines()[0])
     assert rec["uploaded"] is False and s["outcome"] == "failed"
-    assert "runs/r27/reports/Q1_report.json" not in bucket.store
+    assert "runs/r28/reports/Q1_report.json" not in bucket.store
+    assert config.HARD_DEADLINE is None and config.DEADLINE is None                 # cleared afterwards
+
+
+def test_upload_timeout_tracks_the_kill_time(monkeypatch):
+    import wikidata_discover.config as config
+    from wikidata_discover.sparql_helpers import DeadlineExceeded
+    monkeypatch.setattr(config, "HARD_DEADLINE", None)
+    assert batch.upload_timeout() == 60
+    monkeypatch.setattr(config, "HARD_DEADLINE", time.time() + 40)
+    assert 25 <= batch.upload_timeout() <= 30                 # 40 s left minus the 10 s margin
+    monkeypatch.setattr(config, "HARD_DEADLINE", time.time() + 8)
+    with pytest.raises(DeadlineExceeded):
+        batch.upload_timeout()
+
+
+def test_resume_keeps_the_original_run_json_through_a_warm_outage(stub):
+    original = json.dumps({"run_id": "r29", "operator": "first", "started": "earlier"})
+    prior_log = json.dumps({"qid": "Q1", "status": "ok", "uploaded": True}) + "\n"
+    bucket = FakeBucket({"runs/r29/run.json": original, "runs/r29/log.jsonl": prior_log,
+                         "runs/r29/invocations.jsonl": "{}\n"})
+    batch.run_batch("r29", ["Q1", "Q2"], bucket, results_dir=stub, report=lambda m: None)
+    assert (stub / "runs" / "r29" / "run.json").read_text() == original   # came down with the histories
+    # Same instance, bucket gone: the run continues and no second run.json is minted.
+    class DeadBlob(FakeBlob):
+        def exists(self): raise OSError("bucket unreachable")
+        def upload_from_filename(self, path, **kw): raise OSError("bucket unreachable")
+    class DeadBucket(FakeBucket):
+        def blob(self, name): return DeadBlob(self.store, name)
+    s = batch.run_batch("r29", ["Q1", "Q2", "Q3"], DeadBucket(), results_dir=stub, report=lambda m: None)
+    assert s["processed"] >= 1 and (stub / "runs" / "r29" / "run.json").read_text() == original
+    # Bucket back: the upload carries the original, not a rewrite.
+    batch.run_batch("r29", ["Q3"], bucket, results_dir=stub, report=lambda m: None)
+    assert bucket.store["runs/r29/run.json"] == original
 
 
 def test_batch_collect_refuses_a_bad_run_id_before_touching_disk(monkeypatch, tmp_path):
@@ -663,19 +708,23 @@ def test_run_batch_survives_an_unreachable_bucket(stub):
     assert s["outcome"] == "failed" and s["processed"] == 0
     assert not (stub / "runs" / "r15b" / "invocations.jsonl").exists()
 
-    # Warm instance (both local histories exist): continue from local state and record the error.
-    # A local log without invocations.jsonl is a half-synced cold start, not a warm instance.
+    # Warm instance (all three run files exist locally): continue from local state and
+    # record the error. Anything less is a half-synced cold start, not a warm instance.
     (stub / "runs" / "r16").mkdir(parents=True)
     (stub / "runs" / "r16" / "log.jsonl").write_text("")
     s = batch.run_batch("r16", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
     assert s["outcome"] == "failed" and s["processed"] == 0
     (stub / "runs" / "r16" / "invocations.jsonl").write_text("")
     s = batch.run_batch("r16", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
+    assert s["outcome"] == "failed" and s["processed"] == 0
+    original = json.dumps({"run_id": "r16", "operator": "first"})
+    (stub / "runs" / "r16" / "run.json").write_text(original)
+    s = batch.run_batch("r16", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
     assert s["outcome"] == "failed" and s["processed"] == 1
     lines = [json.loads(l) for l in (stub / "runs" / "r16" / "invocations.jsonl").read_text().splitlines()]
-    assert lines[0]["sync_error"].startswith("OSError") and lines[0]["operator"]
+    assert lines[0]["sync_error"].startswith("OSError") and lines[0]["operator"] and lines[0]["resumed"] is True
     assert lines[-1]["outcome"] == "failed"
-    assert json.loads((stub / "runs" / "r16" / "run.json").read_text())["operator"]
+    assert (stub / "runs" / "r16" / "run.json").read_text() == original    # never minted again
 
 
 def test_fail_reason_marks_the_invocation_failed(stub):

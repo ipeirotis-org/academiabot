@@ -105,7 +105,7 @@ def test_run_batch_sets_and_clears_the_deadline(monkeypatch, tmp_path):
     class Stub:
         def __init__(self, qid):
             self.university_qid, self.university_label = qid, qid
-            seen["deadline"] = config.DEADLINE
+            seen["deadline"], seen["hard"] = config.DEADLINE, config.HARD_DEADLINE
         def discover_missing(self):
             return []
     monkeypatch.setattr(disc, "Discovery", Stub)
@@ -123,4 +123,5 @@ def test_run_batch_sets_and_clears_the_deadline(monkeypatch, tmp_path):
     t0 = time.time()
     batch.run_batch("d1", ["Q1"], Bucket(), results_dir=tmp_path, report=lambda m: None, hard_deadline_s=1800)
     assert t0 + 1800 - 95 <= seen["deadline"] <= t0 + 1800 - 85   # 90 s before the kill
-    assert config.DEADLINE is None                                 # cleared afterwards
+    assert t0 + 1795 <= seen["hard"] <= t0 + 1805                  # the kill itself
+    assert config.DEADLINE is None and config.HARD_DEADLINE is None   # cleared afterwards

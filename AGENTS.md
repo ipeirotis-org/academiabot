@@ -287,7 +287,11 @@ flowchart LR
   point and no new Wikidata request starts after it; LLM requests time out after 180 s (or
   sooner, at the deadline) and no LLM call starts in the last 30 s. A university caught by
   the deadline fails that attempt (never "missing") and is retried in a later slice, so the
-  attempt's records are always written.
+  attempt's records are always written. The 90 s after it are for uploads: each upload is
+  bounded by the kill time (`config.HARD_DEADLINE`) and none starts in the last 10 s.
+- Deploying uncommitted code (`ALLOW_DIRTY=1`) saves the patch to
+  `gs://academiabot/deploys/<sha>-dirty-<hash>.patch` and records that name as the commit,
+  so every run record still names source that can be rebuilt.
 - `needs_review` in every summary and end record: universities given up on after 3 attempts.
   They are skipped by later slices, not finished. Their log records say why.
 - Deployed 2026-10-02: function `academiabot-collect` (us-east1), scheduler job

@@ -30,12 +30,22 @@ MAX_PER_SLICE=${MAX_PER_SLICE:-60}
 SCHEDULE="7,37 * * * *"
 
 # The deployed code must be the committed code, so that GIT_COMMIT in every run record
-# names exactly what ran. Set ALLOW_DIRTY=1 to deploy anyway; the commit is then marked.
+# names exactly what ran. Set ALLOW_DIRTY=1 to deploy anyway: the uncommitted changes
+# (tracked and untracked) are then saved as a patch in the bucket under deploys/, and
+# the commit is recorded as <sha>-dirty-<patch hash>, so the exact source of any run
+# record can still be rebuilt with "git checkout <sha> && git apply <patch>".
 GIT_COMMIT=$(git rev-parse --short HEAD)
 if [ -n "$(git status --porcelain -- wikidata_discover deploy)" ]; then
   if [ "${ALLOW_DIRTY:-}" = "1" ]; then
-    GIT_COMMIT="${GIT_COMMIT}-dirty"
-    echo "WARNING: uncommitted changes are being deployed; recorded as $GIT_COMMIT."
+    PATCH=$(mktemp)
+    git diff HEAD -- wikidata_discover deploy > "$PATCH"
+    git ls-files --others --exclude-standard -- wikidata_discover deploy | while read -r f; do
+      git diff --no-index -- /dev/null "$f" >> "$PATCH" || true   # exit 1 means "differs"
+    done
+    GIT_COMMIT="${GIT_COMMIT}-dirty-$(sha256sum "$PATCH" | cut -c1-12)"
+    gcloud storage cp "$PATCH" "gs://academiabot/deploys/${GIT_COMMIT}.patch" --project="$PROJECT" >/dev/null
+    rm -f "$PATCH"
+    echo "WARNING: uncommitted changes are being deployed; recorded as $GIT_COMMIT, patch saved to gs://academiabot/deploys/${GIT_COMMIT}.patch."
   else
     echo "Refusing to deploy: uncommitted changes in wikidata_discover/ or deploy/. Commit first, or set ALLOW_DIRTY=1." >&2
     exit 1

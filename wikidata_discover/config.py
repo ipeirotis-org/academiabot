@@ -21,15 +21,25 @@ RESULTS_DIR = Path(__file__).parent / "results"
 console = Console()
 
 
-# Absolute time (time.time()) after which no Wikidata request or retry wait may start,
-# set by the batch runner when the process has a hard timeout. None means no limit.
+# Absolute time (time.time()) after which no Wikidata request, LLM request, or retry
+# wait may start, set by the batch runner when the process has a hard timeout. None
+# means no limit. HARD_DEADLINE is the moment the platform kills the process; the gap
+# between the two (90 s in the batch runner) is kept for writing and uploading the
+# attempt's records.
 DEADLINE = None
+HARD_DEADLINE = None
 
 
 def seconds_left() -> float | None:
     """Seconds until DEADLINE, or None when there is no deadline."""
     import time
     return None if DEADLINE is None else DEADLINE - time.time()
+
+
+def hard_seconds_left() -> float | None:
+    """Seconds until the process is killed (HARD_DEADLINE), or None when unknown."""
+    import time
+    return None if HARD_DEADLINE is None else HARD_DEADLINE - time.time()
 
 
 def set_user_agent(value: str) -> None:
