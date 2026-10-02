@@ -148,23 +148,32 @@ def restore_caches(bucket, run_id: str, log_path: Path, results_dir: Path, done:
     """Bring back, from the bucket, the LLM cache files that earlier attempts at still
     pending QIDs read or wrote, so a retry on a fresh instance reuses the same LLM
     answers instead of paying for (and possibly getting) new ones. Returns the count."""
-    if not log_path.exists():
-        return 0
-    wanted = set()
-    for line in log_path.read_text().splitlines():
-        try:
-            rec = json.loads(line)
-        except Exception:
-            continue
-        if rec.get("qid") not in done:
-            wanted.update(rec.get("cache_files") or [])
+    wanted, attributed = set(), set()
+    if log_path.exists():
+        for line in log_path.read_text().splitlines():
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            names = rec.get("cache_files") or []
+            attributed.update(names)
+            if rec.get("qid") not in done:
+                wanted.update(names)
+    # Cache files in the bucket that no log record mentions come from an attempt whose
+    # record never reached the bucket (the log upload failed after the artifact upload).
+    # They are few, and restoring them keeps that attempt's LLM answers in use.
+    prefix = f"runs/{run_id}/cache/"
+    for blob in bucket.list_blobs(prefix=prefix):
+        name = blob.name[len(prefix):]
+        if name and name not in attributed:
+            wanted.add(name)
     cache_dir = results_dir / "cache"
     restored = 0
     for name in sorted(wanted):
         local = cache_dir / name
         if local.exists():
             continue
-        blob = bucket.blob(f"runs/{run_id}/cache/{name}")
+        blob = bucket.blob(prefix + name)
         if blob.exists():
             cache_dir.mkdir(parents=True, exist_ok=True)
             local.write_text(blob.download_as_text())

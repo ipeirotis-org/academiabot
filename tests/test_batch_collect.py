@@ -241,6 +241,8 @@ class FakeBucket:
         self.fail_on = fail_on
     def blob(self, name):
         return FakeBlob(self.store, name, self.fail_on)
+    def list_blobs(self, prefix=""):
+        return [FakeBlob(self.store, n, self.fail_on) for n in sorted(self.store) if n.startswith(prefix)]
 
 
 class StubDiscovery:
@@ -330,6 +332,18 @@ def test_run_batch_restores_caches_for_pending_qids(stub):
                          "runs/r6/cache/c1.json": '{"cached": 1}', "runs/r6/cache/c2.json": '{"cached": 2}'})
     batch.run_batch("r6", ["Q1", "Q2"], bucket, results_dir=stub, report=lambda m: None)
     assert (stub / "cache" / "c1.json").read_text() == '{"cached": 1}'
+    assert not (stub / "cache" / "c2.json").exists()
+
+
+def test_restore_caches_includes_files_no_log_record_mentions(stub):
+    # c3.json was uploaded by an attempt whose log record never reached the bucket.
+    log = json.dumps({"qid": "Q2", "status": "ok", "uploaded": True, "cache_files": ["c2.json"]}) + "\n"
+    bucket = FakeBucket({"runs/r12/log.jsonl": log,
+                         "runs/r12/cache/c2.json": "done", "runs/r12/cache/c3.json": "orphaned"})
+    (stub / "runs" / "r12").mkdir(parents=True)
+    (stub / "runs" / "r12" / "log.jsonl").write_text(log)
+    n = batch.restore_caches(bucket, "r12", stub / "runs" / "r12" / "log.jsonl", stub, done={"Q2"})
+    assert n == 1 and (stub / "cache" / "c3.json").read_text() == "orphaned"
     assert not (stub / "cache" / "c2.json").exists()
 
 

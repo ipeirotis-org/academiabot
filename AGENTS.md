@@ -28,7 +28,7 @@ academiabot/
 │   └── scripts/
 │       ├── wikidata_division_discover.py   # Entrypoint
 │       └── batch_collect.py                # CLI wrapper around batch.py
-├── deploy/                      # deploy_collect_function.sh: Cloud Function + paused hourly Scheduler job
+├── deploy/                      # deploy_collect_function.sh: Cloud Function + paused half-hourly Scheduler job
 ├── docs/                        # BACKGROUND.md (origins, decisions); later REVIEW_GUIDE.md, MODELING_RULES.md
 ├── tests/                       # pytest unit tests (fuzzy matching)
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
@@ -219,15 +219,16 @@ Secret Manager when `.env` has none (see "Secret Manager" below).
 
 Collection runs should not depend on a laptop or a sandbox session. `wikidata_discover/batch.py`
 holds the resumable batch logic; `scripts/batch_collect.py` runs it from a terminal and
-`cloud/collect_function.py` runs it as a Cloud Function (gen 2, HTTP, 60 minute timeout) that
+`cloud/collect_function.py` runs it as a Cloud Function (gen 2, HTTP, 30 minute timeout) that
 processes one time slice per invocation and resumes from the run log in the bucket. Cloud
-Scheduler calls it hourly. State and artifacts live only in `gs://academiabot/runs/<run_id>/`.
+Scheduler calls it every 30 minutes (its HTTP deadline is 30 minutes at most, so a slice
+has a 25 minute budget). State and artifacts live only in `gs://academiabot/runs/<run_id>/`.
 
 - Deploy or update: `bash deploy/deploy_collect_function.sh` (creates or updates the scheduler
   job and leaves it PAUSED, even if it was running before).
-- Start collecting: `gcloud scheduler jobs resume academiabot-collect-hourly --location=us-east1`.
+- Start collecting: `gcloud scheduler jobs resume academiabot-collect-slice --location=us-east1`.
   Only a person does this; it spends LLM credit.
-- Stop: `gcloud scheduler jobs pause academiabot-collect-hourly --location=us-east1`.
+- Stop: `gcloud scheduler jobs pause academiabot-collect-slice --location=us-east1`.
 - Progress: read `runs/<run_id>/log.jsonl` in the bucket. One line per university attempt.
   The last record for a QID wins; a QID is done only when its last record is ok and uploaded
   and has no unresolved candidates. A university with unresolved candidates is retried on
@@ -235,20 +236,21 @@ Scheduler calls it hourly. State and artifacts live only in `gs://academiabot/ru
   `invocations.jsonl` has a start record and an end record (end time, outcome, summary)
   for every invocation.
 - Request body (all optional): `run_id`, `list_object`, `max_universities` (60), `time_budget_s`
-  (3000), `reserve_s` (600: no university starts unless that much budget, or the longest
+  (1500), `reserve_s` (420: no university starts unless that much budget, or the longest
   university so far, is left), `qids` (explicit list, still de-duplicated and capped).
-- LLM cache files that an unfinished university used are restored from the bucket before a
-  retry, so a retry on a fresh instance reuses the same LLM answers.
+- LLM cache files that an unfinished university used, and cache files in the bucket that no
+  log record mentions, are restored before a retry, so a fresh instance reuses the same
+  LLM answers.
 - Deployed 2026-10-02: function `academiabot-collect` (us-east1), scheduler job
-  `academiabot-collect-hourly` (paused). The Cloud Functions, Run, Build, Artifact Registry,
+  `academiabot-collect-slice` (paused). The Cloud Functions, Run, Build, Artifact Registry,
   Scheduler, Eventarc, and Resource Manager APIs are enabled. The service account cannot
   enable APIs; a project owner does that.
 - Test one slice by hand (spends a little LLM credit):
   `gcloud functions call academiabot-collect --gen2 --region=us-east1 --data '{"run_id": "test", "qids": ["Q49213"], "time_budget_s": 500, "reserve_s": 120}'`
 - The `gcloud` CLI in a Claude Code cloud session needs `env -u CLOUDSDK_AUTH_ACCESS_TOKEN` in
   front of it, because the session proxy sets that variable to a placeholder.
-- Wikidata rate limits are per IP, so one instance at a time (`--max-instances=1`), about 60
-  universities per hour. The full U.S. list is roughly two days of hourly slices.
+- Wikidata rate limits are per IP, so one instance at a time (`--max-instances=1`), about 40
+  universities per hour over two slices. The full U.S. list is roughly three days.
 
 ## BigQuery access
 

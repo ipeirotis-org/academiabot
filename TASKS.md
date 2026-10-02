@@ -58,7 +58,7 @@ python -m wikidata_discover.eval.run_eval
 list there is a batch runner that resumes where it stopped and uploads every output to the
 `academiabot` bucket under `runs/<run_id>/`. It runs from a terminal
 (`python -m wikidata_discover.scripts.batch_collect <run_id> <QID> ...`) or as a Cloud
-Function called hourly by Cloud Scheduler, so that collection does not depend on anyone's
+Function called every 30 minutes by Cloud Scheduler, so that collection does not depend on anyone's
 laptop. The first batch of 25 universities is in the bucket as `2026-10-02-batch01`. How
 to deploy, start, stop, and watch a cloud run is in AGENTS.md ("Running collection in the
 cloud"). You check a run by reading `runs/<run_id>/log.jsonl` in the bucket: one line per

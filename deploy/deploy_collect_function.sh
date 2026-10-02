@@ -1,27 +1,33 @@
 #!/bin/bash
-# Deploy the collection Cloud Function (gen 2) and an hourly Cloud Scheduler job.
-# Run from the repository root with gcloud authenticated to project wikidata-academia.
+# Deploy the collection Cloud Function (gen 2) and a Cloud Scheduler job that calls it
+# every 30 minutes. Run from the repository root with gcloud authenticated to project
+# wikidata-academia.
 #
 #   bash deploy/deploy_collect_function.sh            # deploy function; scheduler job left PAUSED
 #   bash deploy/deploy_collect_function.sh --resume   # also un-pause the scheduler job
 # A redeploy always pauses an existing job, whether or not it was running, so that
 # nothing spends LLM credit on the new run id until a person resumes it.
 #
+# Timing: Cloud Scheduler cancels an HTTP call after 30 minutes at most, so each slice
+# gets a 25 minute budget (time_budget_s=1500) and the function timeout is 30 minutes.
+# A university starts only if 7 minutes (reserve_s=420), or the longest university so
+# far, are left in the budget. Two slices per hour is about 40 universities per hour.
+#
 # Prerequisites (one time, by a project owner):
 #   gcloud services enable cloudfunctions.googleapis.com run.googleapis.com cloudbuild.googleapis.com \
 #       artifactregistry.googleapis.com cloudscheduler.googleapis.com eventarc.googleapis.com \
-#       --project=wikidata-academia
-#
-# The scheduler job is created PAUSED so nothing runs (or spends) until a person resumes it.
+#       cloudresourcemanager.googleapis.com --project=wikidata-academia
 set -euo pipefail
 
 PROJECT=wikidata-academia
 REGION=${REGION:-us-east1}
 FUNCTION=academiabot-collect
-JOB=academiabot-collect-hourly
+JOB=academiabot-collect-slice
+LEGACY_JOB=academiabot-collect-hourly
 SA=claude-agent@wikidata-academia.iam.gserviceaccount.com
 RUN_ID=${RUN_ID:-cloud-$(date -u +%Y-%m-%d)}
-MAX_PER_HOUR=${MAX_PER_HOUR:-60}
+MAX_PER_SLICE=${MAX_PER_SLICE:-60}
+SCHEDULE="7,37 * * * *"
 
 # Source directory for the build: the package (minus generated data) and a root main.py.
 SRC=$(mktemp -d)
@@ -35,24 +41,30 @@ gcloud functions deploy "$FUNCTION" \
   --runtime=python311 --source="$SRC" --entry-point=collect \
   --trigger-http --no-allow-unauthenticated \
   --service-account="$SA" \
-  --memory=1Gi --timeout=3600s --max-instances=1 --concurrency=1 \
+  --memory=1Gi --timeout=1800s --max-instances=1 --concurrency=1 \
   --set-env-vars="GIT_COMMIT=$(git rev-parse --short HEAD)"
 
 URL=$(gcloud functions describe "$FUNCTION" --project="$PROJECT" --region="$REGION" --gen2 --format="value(serviceConfig.uri)")
 echo "Function URL: $URL"
 
-BODY="{\"run_id\": \"$RUN_ID\", \"max_universities\": $MAX_PER_HOUR, \"time_budget_s\": 3000}"
+# The earlier hourly job, if still present, is removed so only one job can run.
+if gcloud scheduler jobs describe "$LEGACY_JOB" --project="$PROJECT" --location="$REGION" >/dev/null 2>&1; then
+  gcloud scheduler jobs delete "$LEGACY_JOB" --project="$PROJECT" --location="$REGION" --quiet
+  echo "Removed old job $LEGACY_JOB."
+fi
+
+BODY="{\"run_id\": \"$RUN_ID\", \"max_universities\": $MAX_PER_SLICE, \"time_budget_s\": 1500, \"reserve_s\": 420}"
 if gcloud scheduler jobs describe "$JOB" --project="$PROJECT" --location="$REGION" >/dev/null 2>&1; then
   # Pause first: an update changes the run id in the request body, and a job that was
   # running before must not start spending on the new run without an explicit --resume.
   gcloud scheduler jobs pause "$JOB" --project="$PROJECT" --location="$REGION" >/dev/null
   gcloud scheduler jobs update http "$JOB" --project="$PROJECT" --location="$REGION" \
-    --schedule="7 * * * *" --uri="$URL" --http-method=POST --message-body="$BODY" \
+    --schedule="$SCHEDULE" --uri="$URL" --http-method=POST --message-body="$BODY" \
     --headers="Content-Type=application/json" --oidc-service-account-email="$SA" --attempt-deadline=30m
   echo "Scheduler job $JOB updated and PAUSED."
 else
   gcloud scheduler jobs create http "$JOB" --project="$PROJECT" --location="$REGION" \
-    --schedule="7 * * * *" --uri="$URL" --http-method=POST --message-body="$BODY" \
+    --schedule="$SCHEDULE" --uri="$URL" --http-method=POST --message-body="$BODY" \
     --headers="Content-Type=application/json" --oidc-service-account-email="$SA" --attempt-deadline=30m
   gcloud scheduler jobs pause "$JOB" --project="$PROJECT" --location="$REGION"
   echo "Scheduler job $JOB created PAUSED."
@@ -60,6 +72,6 @@ fi
 
 if [ "${1:-}" = "--resume" ]; then
   gcloud scheduler jobs resume "$JOB" --project="$PROJECT" --location="$REGION"
-  echo "Scheduler job $JOB resumed: it calls the function at 7 minutes past every hour."
+  echo "Scheduler job $JOB resumed: it calls the function at 7 and 37 minutes past every hour."
 fi
 rm -rf "$SRC"

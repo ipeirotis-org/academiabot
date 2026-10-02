@@ -3,15 +3,16 @@
 Each invocation: read the university list and the run log from the bucket, pick the
 next universities not yet done, run discovery on them until the time budget is spent,
 upload everything, and return a JSON summary. Cloud Scheduler calls it on a schedule
-(for example hourly) until the run log shows every university done.
+(every 30 minutes) until the run log shows every university done.
 
 Request JSON (all optional):
   run_id            default "cloud-<yyyy-mm-dd>"; keep it fixed for a multi-day run
   list_object       default "universities_us.json" (bucket object: [[qid, label], ...],
                     [qid, ...], or the SPARQL binding rows that `harvest` writes)
   max_universities  default 60, cap per invocation independent of the time budget
-  time_budget_s     default 3000 (50 minutes; the function timeout is 60)
-  reserve_s         default 600: no university starts unless this much of the budget
+  time_budget_s     default 1500 (25 minutes). Cloud Scheduler cancels an HTTP call
+                    after 30 minutes at most, so the slice must return before that
+  reserve_s         default 420: no university starts unless this much of the budget
                     (or the longest university so far, if more) is still left
   qids              explicit list, overrides list_object; still de-duplicated and
                     capped at max_universities. An empty list means do nothing
@@ -66,8 +67,8 @@ def collect(request):
     run_id = body.get("run_id") or f"cloud-{time.strftime('%Y-%m-%d', time.gmtime())}"
     list_object = body.get("list_object", "universities_us.json")
     limit = int(body.get("max_universities", 60))
-    budget = float(body.get("time_budget_s", 3000))
-    reserve = float(body.get("reserve_s", 600))
+    budget = float(body.get("time_budget_s", 1500))
+    reserve = float(body.get("reserve_s", 420))
 
     load_keys_from_secret_manager()
     ensure_user_agent()
