@@ -85,24 +85,36 @@ def collect(request):
     from google.cloud import storage
     bucket = storage.Client(project=PROJECT).bucket(BUCKET)
 
-    log_blob = bucket.blob(f"runs/{run_id}/log.jsonl")
-    done = parse_done(log_blob.download_as_text()) if log_blob.exists() else set()
     args = {"request": body, "run_id": run_id, "list_object": None, "max_universities": limit,
-            "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": "qids" in body,
-            "done_before": len(done)}
-    if "qids" in body:
-        # An explicit list, even an empty one, never falls back to the bucket list.
-        # Done QIDs are dropped before the cap, so a long list advances across calls.
-        qids = pick_qids(body["qids"] or [], done, limit)
-    else:
-        args["list_object"] = list_object
-        rows = json.loads(bucket.blob(list_object).download_as_text())
-        qids = pick_qids(rows, done, limit)
-        args["list_done"] = len(done)
+            "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": "qids" in body}
+    # Reading the run log and the list is the preflight. If the bucket is unreachable,
+    # the failure is recorded through run_batch (which writes the local records and
+    # refuses to start a cold run without the bucket) instead of escaping here.
+    qids = []
+    try:
+        log_blob = bucket.blob(f"runs/{run_id}/log.jsonl")
+        done = parse_done(log_blob.download_as_text()) if log_blob.exists() else set()
+        args["done_before"] = len(done)
+        if "qids" in body:
+            # An explicit list, even an empty one, never falls back to the bucket list.
+            # Done QIDs are dropped before the cap, so a long list advances across calls.
+            qids = pick_qids(body["qids"] or [], done, limit)
+        else:
+            args["list_object"] = list_object
+            rows = json.loads(bucket.blob(list_object).download_as_text())
+            qids = pick_qids(rows, done, limit)
+            args["list_done"] = len(done)
+    except Exception as e:  # noqa: BLE001
+        args["preflight_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        logger.error("preflight failed, nothing selected: %s", args["preflight_error"])
 
     # An empty list still goes through run_batch so the invocation is recorded.
     summary = run_batch(run_id, qids, bucket, time_budget_s=budget, reserve_s=reserve,
                         report=logger.info, invocation_args=args)
-    if not qids:
+    if "preflight_error" in args:
+        summary["failed"] = max(summary["failed"], 1)
+        summary["outcome"] = "failed"
+        summary["message"] = "bucket unreachable during preflight: " + args["preflight_error"]
+    elif not qids:
         summary["message"] = "nothing left to do" if "list_done" in args else "no QIDs requested"
     return jsonify(summary), (200 if summary["failed"] == 0 else 207)

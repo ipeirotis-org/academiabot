@@ -273,8 +273,20 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
             report(f"restored {restored} cache files from the bucket for pending universities")
     except Exception as e:  # noqa: BLE001
         sync_error = f"{type(e).__name__}: {str(e)[:120]}"
-        report(f"bucket sync failed, continuing from local state: {sync_error}")
         summary["failed"] += 1
+        if not log_path.exists():
+            # Cold start with no local state: nothing is known about the run, so doing
+            # work would re-run finished universities and a later upload would wipe the
+            # bucket's history. Record the failed invocation locally and stop.
+            report(f"bucket sync failed on a cold start; refusing to run blind: {sync_error}")
+            summary.update({"outcome": "failed", "sync_error": sync_error})
+            ended = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            with (run_dir / "invocations.jsonl").open("a") as f:
+                f.write(json.dumps({"started": ended, "ended": ended, "host": os.getenv("K_SERVICE", "local"),
+                                    "operator": operator_identity(), "qids": qids, "outcome": "failed",
+                                    "sync_error": sync_error, "summary": summary}) + "\n")
+            return summary
+        report(f"bucket sync failed, continuing from local state: {sync_error}")
     done = load_done(log_path)
 
     invocation = {"started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "git_commit": git_commit(),

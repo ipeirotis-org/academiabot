@@ -39,9 +39,12 @@ printf 'from wikidata_discover.cloud.collect_function import collect  # noqa: F4
 # Pause the job before touching the function, so no scheduled tick runs during a slow
 # or failed deployment. The job is left paused at the end unless --resume is given.
 for J in "$JOB" "$LEGACY_JOB"; do
-  if gcloud scheduler jobs describe "$J" --project="$PROJECT" --location="$REGION" >/dev/null 2>&1; then
+  STATE=$(gcloud scheduler jobs describe "$J" --project="$PROJECT" --location="$REGION" --format="value(state)" 2>/dev/null || true)
+  if [ "$STATE" = "ENABLED" ]; then
     gcloud scheduler jobs pause "$J" --project="$PROJECT" --location="$REGION" >/dev/null
     echo "Scheduler job $J paused for the deployment."
+  elif [ -n "$STATE" ]; then
+    echo "Scheduler job $J is $STATE; nothing to pause."
   fi
 done
 
@@ -71,8 +74,8 @@ fi
 
 BODY="{\"run_id\": \"$RUN_ID\", \"max_universities\": $MAX_PER_SLICE, \"time_budget_s\": 1500, \"reserve_s\": 420}"
 if gcloud scheduler jobs describe "$JOB" --project="$PROJECT" --location="$REGION" >/dev/null 2>&1; then
-  # Already paused above: an update changes the run id in the request body, and a job
-  # that was running before must not start spending on the new run without --resume.
+  # Paused above if it was running: an update changes the run id in the request body,
+  # and the job must not start spending on the new run without an explicit --resume.
   gcloud scheduler jobs update http "$JOB" --project="$PROJECT" --location="$REGION" \
     --schedule="$SCHEDULE" --uri="$URL" --http-method=POST --message-body="$BODY" \
     --update-headers="Content-Type=application/json" --oidc-service-account-email="$SA" --attempt-deadline=30m

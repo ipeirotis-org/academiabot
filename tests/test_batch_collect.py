@@ -127,6 +127,34 @@ def test_collect_records_invocation_when_list_is_exhausted(monkeypatch):
     assert resp.get_json()["message"] == "nothing left to do"
 
 
+def test_collect_records_a_preflight_failure(monkeypatch):
+    import flask
+    import wikidata_discover.cloud.collect_function as cf
+    calls = {}
+    monkeypatch.setattr(cf, "load_keys_from_secret_manager", lambda: None)
+    monkeypatch.setattr(cf, "ensure_user_agent", lambda: None)
+    monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), **kw) or
+                        {"run_id": run_id, "failed": 0, "outcome": "ok"})
+    class DeadBlob:
+        def exists(self): raise OSError("bucket unreachable")
+    class DeadBucket:
+        def blob(self, name): return DeadBlob()
+    class FakeClient:
+        def __init__(self, project=None): pass
+        def bucket(self, name): return DeadBucket()
+    import google.cloud.storage as gcs
+    monkeypatch.setattr(gcs, "Client", FakeClient)
+
+    class Req:
+        headers = {}
+        def get_json(self, silent=True): return {"run_id": "r17"}
+    with flask.Flask(__name__).app_context():
+        resp, status = cf.collect(Req())
+    assert status == 207 and calls["qids"] == []                      # run_batch still records it
+    assert calls["invocation_args"]["preflight_error"].startswith("OSError")
+    assert resp.get_json()["outcome"] == "failed"
+
+
 def test_collect_explicit_list_skips_done_before_the_cap(monkeypatch):
     import flask
     import wikidata_discover.cloud.collect_function as cf
@@ -460,12 +488,23 @@ def test_run_batch_survives_an_unreachable_bucket(stub):
     class DeadBucket(FakeBucket):
         def blob(self, name): return DeadBlob(self.store, name)
         def list_blobs(self, prefix=""): raise OSError("bucket unreachable")
+    # Cold start (no local log): refuse to run, record the failure, touch nothing else.
     s = batch.run_batch("r15", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
-    assert s["outcome"] == "failed" and s["processed"] == 1
+    assert s["outcome"] == "failed" and s["processed"] == 0 and s["sync_error"].startswith("OSError")
     lines = [json.loads(l) for l in (stub / "runs" / "r15" / "invocations.jsonl").read_text().splitlines()]
+    assert len(lines) == 1 and lines[0]["outcome"] == "failed" and lines[0]["operator"]
+    assert not (stub / "runs" / "r15" / "run.json").exists()
+    assert not (stub / "runs" / "r15" / "log.jsonl").exists()
+
+    # Warm instance (local log exists): continue from local state and record the error.
+    (stub / "runs" / "r16").mkdir(parents=True)
+    (stub / "runs" / "r16" / "log.jsonl").write_text("")
+    s = batch.run_batch("r16", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
+    assert s["outcome"] == "failed" and s["processed"] == 1
+    lines = [json.loads(l) for l in (stub / "runs" / "r16" / "invocations.jsonl").read_text().splitlines()]
     assert lines[0]["sync_error"].startswith("OSError") and lines[0]["operator"]
     assert lines[-1]["outcome"] == "failed"
-    assert json.loads((stub / "runs" / "r15" / "run.json").read_text())["operator"]
+    assert json.loads((stub / "runs" / "r16" / "run.json").read_text())["operator"]
 
 
 def test_operator_identity_prefers_env(monkeypatch):

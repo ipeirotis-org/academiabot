@@ -135,9 +135,20 @@ def _names_match(a: str, b: str) -> bool:
     return na == nb or fuzz.token_sort_ratio(na, nb) >= 88
 
 
-def _cache_key(univ_label: str, provider: str, model: str) -> str:
-    """Cache key includes provider to avoid collisions between providers."""
-    return hashlib.sha256(f"{provider}|{univ_label}|{model}".encode()).hexdigest()
+def _prompt_hash(*parts: Any) -> str:
+    """Short hash of the prompt text and schema a call uses, so a changed prompt
+    never reads an answer produced by the old one."""
+    return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+EXTRACT_PROMPT_HASH = _prompt_hash(SYSTEM_EXTRACT, UNIVERSITY_UNITS_SCHEMA)
+
+
+def _cache_key(univ_label: str, provider: str, model: str, purpose: str = "extract",
+               prompt_hash: str = EXTRACT_PROMPT_HASH) -> str:
+    """Cache key: provider, model, purpose, university, and the hash of the prompt
+    and schema, so a new prompt gets a new file."""
+    return hashlib.sha256(f"{provider}|{purpose}|{prompt_hash}|{univ_label}|{model}".encode()).hexdigest()
 
 
 # Cache files read or written since the last reset. A batch runner uses this to
@@ -608,6 +619,15 @@ class LLMHelper:
             ("gemini", _get_gemini_client, config.GEMINI_MODEL),
         ]
 
+        # A match decision is cached on the full prompt (candidate, university, and
+        # the exact list of choices) and the models in use, so a retry of the same
+        # university repeats no paid call and cannot flip an earlier decision.
+        match_key = _cache_key(univ_label, "match", "|".join(m for _, _, m in providers),
+                               purpose="match", prompt_hash=_prompt_hash(prompt))
+        cached = _load_cache(match_key)
+        if isinstance(cached, dict) and "answer" in cached:
+            return parse_match_answer(cached["answer"], children)
+
         for provider_name, get_client, model in providers:
             try:
                 if provider_name == "openai":
@@ -643,10 +663,12 @@ class LLMHelper:
 
                 if answer.upper() == "NONE":
                     logger.debug("choose_match (%s): returned NONE for candidate '%s'", provider_name, candidate)
+                    _save_cache(match_key, {"answer": "NONE", "provider": provider_name})
                     return None
 
                 parsed = parse_match_answer(answer, children)
                 if parsed is not None:
+                    _save_cache(match_key, {"answer": answer, "provider": provider_name})
                     return parsed
 
                 logger.debug("choose_match (%s): answer '%s' did not match any child QID", provider_name, answer)
