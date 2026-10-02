@@ -1,0 +1,9 @@
+flowchart LR
+    S[Cloud Scheduler<br/>every hour, now PAUSED] -->|POST run_id| F[Cloud Function<br/>academiabot-collect<br/>1 instance, 60 min max]
+    F -->|read list + log| B[(Bucket academiabot<br/>runs/run_id/)]
+    F -->|next 60 universities<br/>not yet done| D[discover: Wikidata + LLM]
+    D -->|CSV, QuickStatements,<br/>report, cache, log line| B
+    SM[Secret Manager<br/>3 API keys] --> F
+    P[Panos] -->|resume job = start spending| S
+    P -->|pause job = stop| S
+    R[Student] -->|read log.jsonl| B

@@ -239,8 +239,12 @@ Scheduler calls it hourly. State and artifacts live only in `gs://academiabot/ru
   university so far, is left), `qids` (explicit list, still de-duplicated and capped).
 - LLM cache files that an unfinished university used are restored from the bucket before a
   retry, so a retry on a fresh instance reuses the same LLM answers.
-- One-time prerequisite for a project owner: enable the Cloud Functions, Cloud Run, Cloud Build,
-  Artifact Registry, Cloud Scheduler, and Eventarc APIs. The service account cannot enable APIs.
+- Deployed 2026-10-02: function `academiabot-collect` (us-east1), scheduler job
+  `academiabot-collect-hourly` (paused). The Cloud Functions, Run, Build, Artifact Registry,
+  Scheduler, Eventarc, and Resource Manager APIs are enabled. The service account cannot
+  enable APIs; a project owner does that.
+- Test one slice by hand (spends a little LLM credit):
+  `gcloud functions call academiabot-collect --gen2 --region=us-east1 --data '{"run_id": "test", "qids": ["Q49213"], "time_budget_s": 500, "reserve_s": 120}'`
 - The `gcloud` CLI in a Claude Code cloud session needs `env -u CLOUDSDK_AUTH_ACCESS_TOKEN` in
   front of it, because the session proxy sets that variable to a placeholder.
 - Wikidata rate limits are per IP, so one instance at a time (`--max-instances=1`), about 60
