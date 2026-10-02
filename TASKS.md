@@ -3,9 +3,9 @@
 > **Mission**: Make Wikidata the definitive, queryable source for the full organizational
 > hierarchy of every university worldwide, down to departments and faculty affiliations.
 >
-> **Current phase**: Phase 2 (Recursive depth) + GCP integration
+> **Current phase**: Phase 3 (Batch processing and automation) complete; next up Phase 4 (Faculty linking)
 >
-> Last updated: 2026-03-19
+> Last updated: 2026-07-03
 
 ---
 
@@ -53,12 +53,12 @@ The current pipeline only discovers **top-level units** (schools/colleges) under
 > **Depends on**: GCP Steps 1-2 (BigQuery + GCS) for progress tracking and resume.
 > GCP Step 5 (Cloud Functions + Scheduler) for automated batch runs.
 
-- [ ] **Add batch discovery mode**: `discover --batch` processes all universities from the BigQuery `universities` table (or `universities_us.json` as fallback). Resume capability by querying `discovery_runs` for already-processed QIDs via `bq_helpers.get_processed_qids()`. Add progress tracking and summary report.
-- [ ] **Add batch QuickStatements generation**: Aggregate all missing entities across universities into a single uploadable QS batch, organized by hierarchy level (schools first, then departments). Record generated batches in `quickstatements_batches` BQ table.
-- [ ] **Implement ShEx validation schema**: Write Shape Expressions (one shape per entity level) and store in the repo. Validate generated QS statements against the schema before export.
-- [ ] **Add IPEDS reconciliation**: Download IPEDS CSV, match against Wikidata universities by IPEDS ID (P1771). Flag institutions missing from Wikidata entirely. Store reconciliation results in BigQuery.
-- [ ] **Add diff/update mode**: Compare current Wikidata state against last run using BigQuery `discovered_units` history. Only generate QS for genuinely new entities (not already uploaded in a previous batch).
-- [ ] **Expand beyond U.S.**: Make country configurable. Add support for international institution identifiers (UK UCAS codes, EU ETER IDs, etc.). Extend BigQuery `universities` table with a `country` column.
+- [x] **Add batch discovery mode**: `discover --batch` processes all universities from the BigQuery `universities` table (falling back to `universities_*.json`). Depth-aware resume via `bq_helpers.get_processed_qids(min_depth)`, per-university error isolation, progress logging, and a JSON summary in `results/batch_reports/`. Implemented in `batch.py`.
+- [x] **Add batch QuickStatements generation**: `qs-batch` aggregates every exportable unit into one QS file ordered by hierarchy level (schools before departments). Reads the latest run per university from BigQuery (fallback to local CSVs), records lines in `quickstatements_batches` with per-university attribution. Implemented in `batch_qs.py`.
+- [x] **Implement ShEx validation schema**: `shapes/academia.shex` (one shape per level) plus `shex_validation.py`, which enforces the core constraints (label, allowed P31, >=1 P749) before export. Malformed optional P856 lines are stripped, not fatal.
+- [x] **Add IPEDS reconciliation**: `ipeds --csv` parses an IPEDS HD file, matches against Wikidata P1771, and reports `matched` vs `no_ipeds_match` (absence of the identifier is not asserted as absence). Results go to `results/` and the `ipeds_reconciliation` BQ table. Implemented in `ipeds.py`.
+- [x] **Add diff/update mode**: `qs-batch --diff` skips units already emitted in a previous batch (keyed per emitted P749 target so new joint parents are preserved). Fails closed if the prior-key read errors. Keys recorded in `quickstatements_batches.unit_key`.
+- [x] **Expand beyond U.S.**: `harvest --country <QID>` parameterizes the P17 filter; `COUNTRY_IDENTIFIER_PROPS` maps country -> verified identifier property (US -> P1771). `universities` table already has `country`; added `identifier`/`identifier_property` columns.
 
 ---
 
@@ -176,4 +176,4 @@ SELECT ?child ?childLabel ?childTypeLabel WHERE {
 
 ---
 
-_Last updated: 2026-03-19_
+_Last updated: 2026-07-03_

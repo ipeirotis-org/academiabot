@@ -1,0 +1,50 @@
+# AcademiaBot entity shapes (ShEx)
+#
+# One shape per level of the university organizational hierarchy. These shapes
+# document the target Wikidata structure and are the reference the lightweight
+# QuickStatements validator in shex_validation.py enforces before export.
+#
+# Primary relationship is P749 (parent organization). Every unit below a
+# university must have at least one P749. P856 (official website), when present,
+# must be an IRI.
+
+PREFIX wd:   <http://www.wikidata.org/entity/>
+PREFIX wdt:  <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>
+
+# University: top of the hierarchy. No required parent organization.
+<University> {
+  wdt:P31   [ wd:Q3918 ] ;            # instance of: university
+  rdfs:label xsd:string ;
+  wdt:P856  IRI ?                      # optional official website
+}
+
+# School / college / faculty directly under a university.
+<School> {
+  wdt:P31   [ wd:Q31855 wd:Q3918 ] ;  # higher-education institution or university
+  wdt:P749  @<OrgUnit> + ;            # at least one parent organization
+  rdfs:label xsd:string ;
+  wdt:P856  IRI ?
+}
+
+# Academic department under a school.
+<Department> {
+  wdt:P31   [ wd:Q2467461 wd:Q1183543 ] ;   # university/academic department
+  wdt:P749  @<OrgUnit> + ;
+  rdfs:label xsd:string ;
+  wdt:P856  IRI ?
+}
+
+# Program / lab / center / institute under a department.
+<Program> {
+  wdt:P31   [ wd:Q483242 wd:Q7315155 wd:Q43229 wd:Q4830453 wd:Q1664727 ] ;
+  wdt:P749  @<OrgUnit> + ;
+  rdfs:label xsd:string ;
+  wdt:P856  IRI ?
+}
+
+# Any organizational unit that may serve as a parent (has some P31 class).
+<OrgUnit> {
+  wdt:P31   . +
+}

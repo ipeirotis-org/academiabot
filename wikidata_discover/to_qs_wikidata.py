@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlparse
 
 from wikidata_discover.config import console
 
@@ -48,6 +49,7 @@ def export_quickstatements(
     university_label: str,
     max_items: Optional[int] = None,
     out_path: Optional[Path] = None,
+    validate: bool = True,
 ) -> Path:
     """
     Export missing or orphan divisions into QuickStatements format.
@@ -55,6 +57,8 @@ def export_quickstatements(
     Args:
         max_items: Optional cap on how many items to export. None means all.
         out_path: Optional explicit output path.
+        validate: When True, run ShEx validation and drop any block that fails
+            the schema (shapes/academia.shex) before writing.
     """
     qs_lines = build_quickstatements(
         missing,
@@ -63,10 +67,29 @@ def export_quickstatements(
         max_items=max_items,
     )
 
+    if validate:
+        qs_lines = validate_and_report(qs_lines)
+
     path = out_path or Path(f"quickstatements_{university_qid}.qs")
     path.write_text("\n".join(qs_lines))
     console.print(f"[green]QuickStatements file written to {path}[/green]")
     return path
+
+
+def validate_and_report(qs_lines: List[str]) -> List[str]:
+    """Validate QS lines against the ShEx schema, warn on drops, return valid lines."""
+    # Imported here to avoid a circular import (shex_validation imports TYPE_MAP).
+    from wikidata_discover.shex_validation import filter_valid_quickstatements
+
+    valid_lines, report = filter_valid_quickstatements(qs_lines)
+    if report.invalid:
+        console.print(
+            f"[yellow]ShEx validation dropped {len(report.invalid)} of "
+            f"{report.total_blocks} block(s):[/yellow]"
+        )
+        for _, describe, violations in report.invalid:
+            console.print(f"[yellow]  - {describe}: {'; '.join(violations)}[/yellow]")
+    return valid_lines
 
 
 def build_quickstatements(
@@ -130,9 +153,9 @@ def create_entity_lines(
         f"LAST|P31|{type_qid}",
     ]
 
-    website = item.get("url") or item.get("website")
+    website = normalize_website(item.get("url") or item.get("website"))
     if website:
-        lines.append(f'LAST|P856|"{escape_qs_string(str(website))}"')
+        lines.append(f'LAST|P856|"{escape_qs_string(website)}"')
 
     for parent in parent_specs:
         lines.append(parent_statement("LAST", parent))
@@ -262,3 +285,36 @@ def format_qs_value(value: Any) -> str:
 
 def escape_qs_string(value: str) -> str:
     return value.replace('"', '\\"')
+
+
+def normalize_website(value: Any) -> Optional[str]:
+    """Return a schemed URL for a P856 statement, or None to omit it.
+
+    P856 is optional, so a scheme-less but host-like value (e.g.
+    "www.law.example.edu") is upgraded to https:// rather than dropped, and a
+    value that cannot be a URL is omitted entirely instead of poisoning an
+    otherwise valid CREATE/link block.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.startswith("http://") or text.startswith("https://"):
+        # A scheme alone is not enough: reject values with whitespace or no
+        # hostname (e.g. "https://not a url") so a malformed P856 is omitted.
+        return text if is_valid_http_url(text) else None
+    # Host-like: at least one dot, a TLD, no spaces; optional path/query.
+    if re.fullmatch(r"[\w.-]+\.[A-Za-z]{2,}(/[^\s]*)?", text):
+        return "https://" + text
+    return None
+
+
+def is_valid_http_url(text: str) -> bool:
+    """True if text is a well-formed http(s) URL with a dotted hostname."""
+    if not text or any(ch.isspace() for ch in text):
+        return False
+    parsed = urlparse(text)
+    return bool(
+        parsed.scheme in ("http", "https")
+        and parsed.hostname
+        and "." in parsed.hostname
+    )
