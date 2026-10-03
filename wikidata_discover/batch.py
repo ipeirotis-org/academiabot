@@ -166,18 +166,20 @@ def export_paths(results_dir: Path, qid: str) -> list:
     return [results_dir / f"missing_divisions_{qid}.csv", results_dir / f"quickstatements_{qid}.qs"]
 
 
-def clear_stale_exports(bucket, run_id: str, results_dir: Path, run_dir: Path, qid: str) -> int:
+def clear_stale_exports(bucket, run_id: str, results_dir: Path, run_dir: Path, qid: str,
+                        reserve: float = 0) -> int:
     """After an attempt that produced no CSV or QuickStatements file for `qid`, delete the
     ones an earlier attempt may have uploaded, so the bucket never offers statements
     that the latest report contradicts. Returns how many objects were deleted. Each
-    bucket call is bounded by the kill time, like an upload."""
+    bucket call is bounded by the kill time, like an upload, keeping `reserve` seconds
+    for the run log upload that follows."""
     deleted = 0
     for p in export_paths(results_dir, qid):
         if p.exists():
             continue
         blob = bucket.blob(object_name(run_id, p, results_dir, run_dir))
-        if blob.exists(**bucket_call_kwargs()):
-            blob.delete(**bucket_call_kwargs())
+        if blob.exists(**bucket_call_kwargs(reserve)):
+            blob.delete(**bucket_call_kwargs(reserve))
             deleted += 1
     return deleted
 
@@ -209,13 +211,17 @@ def restore_caches(bucket, run_id: str, log_path: Path, results_dir: Path, done:
     restored = 0
     for name in sorted(wanted):
         local = cache_dir / name
-        if local.exists():
-            continue
         blob = bucket.blob(prefix + name)
-        if blob.exists(**bucket_call_kwargs()):
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            local.write_text(blob.download_as_text(**bucket_call_kwargs()))
-            restored += 1
+        if not blob.exists(**bucket_call_kwargs()):
+            continue
+        # A local file of the same name may belong to another run this instance
+        # served (same question, a different answer): this run's stored answer wins.
+        text = blob.download_as_text(**bucket_call_kwargs())
+        if local.exists() and local.read_text() == text:
+            continue
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        local.write_text(text)
+        restored += 1
     return restored
 
 
@@ -230,6 +236,23 @@ def sync_from_bucket(bucket, run_id: str, run_dir: Path, name: str) -> None:
         local_text = local.read_text() if local.exists() else ""
         if len(remote_text) > len(local_text):
             local.write_text(remote_text)
+
+
+def merge_from_bucket(bucket, run_id: str, run_dir: Path, name: str) -> None:
+    """Union of the bucket's and the local copy of an append-only file whose lines
+    may have been written on different instances: the bucket's lines first, then the
+    local lines the bucket does not have. Nothing is written when there is nothing
+    to merge, so a later upload can never erase another instance's lines."""
+    blob = bucket.blob(f"runs/{run_id}/{name}")
+    if not blob.exists(**bucket_call_kwargs()):
+        return
+    remote = blob.download_as_text(**bucket_call_kwargs()).splitlines()
+    local = run_dir / name
+    mine = local.read_text().splitlines() if local.exists() else []
+    seen = set(remote)
+    merged = remote + [line for line in mine if line not in seen]
+    if merged != mine:
+        local.write_text("".join(line + "\n" for line in merged))
 
 
 def fetch_if_missing(bucket, run_id: str, run_dir: Path, name: str) -> bool:
@@ -373,7 +396,8 @@ def source_patch(repo: Path = REPO_DIR) -> str:
     # --binary keeps the full content of a changed binary file in the patch, so that
     # git apply can rebuild it; without it the patch only says the files differ.
     patch = _git(repo, "diff", "--binary", "HEAD", "--", *SOURCE_PATHS)
-    untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "--", *SOURCE_PATHS).split()
+    # -z: one NUL per path, so a name with whitespace stays one path.
+    untracked = [f for f in _git(repo, "ls-files", "-z", "--others", "--exclude-standard", "--", *SOURCE_PATHS).split("\0") if f]
     for f in untracked:
         r = subprocess.run(["git", "-C", str(repo), "diff", "--binary", "--no-index", "--", "/dev/null", f],
                            capture_output=True, text=True, timeout=10)   # exit 1 means "differs"
@@ -454,6 +478,9 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     try:
         for name in ("log.jsonl", "invocations.jsonl"):
             sync_from_bucket(bucket, run_id, run_dir, name)
+        # Refusals are written by instances that could not reach the bucket, so two
+        # instances may each hold lines the other lacks: the two files are merged.
+        merge_from_bucket(bucket, run_id, run_dir, "refused.jsonl")
         # run.json is written once per run and never changed: the bucket's copy comes
         # down so that this instance keeps it through a later outage.
         fetch_if_missing(bucket, run_id, run_dir, "run.json")
@@ -554,7 +581,8 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         try:
             n = upload(artifact_paths(results_dir, run_dir, qid, since=t, extra=list(llm_helpers.cache_paths_touched)),
                        reserve=_LOG_UPLOAD_RESERVE_S)
-            stale = clear_stale_exports(bucket, run_id, results_dir, run_dir, qid) if rec["status"] == "ok" else 0
+            stale = (clear_stale_exports(bucket, run_id, results_dir, run_dir, qid, reserve=_LOG_UPLOAD_RESERVE_S)
+                     if rec["status"] == "ok" else 0)
             rec["uploaded"] = True
             note = f"uploaded {n} files to gs://{BUCKET}/runs/{run_id}/" + (f", removed {stale} stale export(s)" if stale else "")
         except Exception as e:  # noqa: BLE001

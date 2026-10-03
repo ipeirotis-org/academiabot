@@ -276,7 +276,8 @@ flowchart LR
   for every invocation; both carry an `invocation_id`, and so does every QID record that
   invocation wrote, so the history can be reconstructed exactly. An invocation that refused
   to run (cold instance, bucket unreachable) is recorded in `refused.jsonl` instead, a file
-  that can never replace bucket history.
+  that can never replace bucket history: before an upload it is merged with the bucket's copy
+  (the bucket's lines first, then the local lines it lacks).
 - A run id is one safe path component (letters, digits, `.`, `-`, `_`, max 100). Anything
   else is refused, because it names a folder under `results/runs` and a bucket prefix.
 - Request body (all optional): `run_id`, `list_object`, `max_universities` (60), `time_budget_s`
@@ -284,7 +285,8 @@ flowchart LR
   university so far, is left), `qids` (explicit list, still de-duplicated and capped).
 - LLM cache files that an unfinished university used, and cache files in the bucket that no
   log record mentions, are restored before a retry, so a fresh instance reuses the same
-  LLM answers.
+  LLM answers. The run's stored answer replaces a local file of the same name that another
+  run on the same instance wrote.
 - Hard deadline: the function passes its own timeout (1800 s) to the batch runner, which sets
   `config.DEADLINE` 90 s before it. Wikidata requests, retries, and 429 waits stop at that
   point and no new Wikidata request starts after it; LLM requests time out after 180 s (or

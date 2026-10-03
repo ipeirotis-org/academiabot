@@ -404,6 +404,48 @@ def test_upload_timeout_tracks_the_kill_time(monkeypatch):
     assert 10 <= batch.upload_timeout() <= 15                 # the log upload itself still fits
 
 
+def test_stale_cleanup_keeps_the_log_upload_reserve(stub, monkeypatch):
+    import wikidata_discover.config as config
+    from wikidata_discover.sparql_helpers import DeadlineExceeded
+    run_dir = stub / "runs" / "r37"; run_dir.mkdir(parents=True)
+    bucket = FakeBucket({"runs/r37/missing_divisions_Q1.csv": "old"})
+    monkeypatch.setattr(config, "HARD_DEADLINE", time.time() + 25)      # the log's 20 s plus the margin
+    with pytest.raises(DeadlineExceeded):
+        batch.clear_stale_exports(bucket, "r37", stub, run_dir, "Q1", reserve=batch._LOG_UPLOAD_RESERVE_S)
+    assert "runs/r37/missing_divisions_Q1.csv" in bucket.store             # untouched, retried next time
+    monkeypatch.setattr(config, "HARD_DEADLINE", time.time() + 40)
+    assert batch.clear_stale_exports(bucket, "r37", stub, run_dir, "Q1", reserve=batch._LOG_UPLOAD_RESERVE_S) == 1
+    assert all(t <= 10 for op, name, t in bucket.store["__calls__"])      # 40 - 10 - 20
+    monkeypatch.setattr(config, "HARD_DEADLINE", None)
+
+
+def test_restore_caches_prefers_this_runs_answer_over_a_local_file(stub):
+    """One warm instance served another run that wrote a different answer under the
+    same cache name: a retry of this run gets this run's stored answer back."""
+    log = stub / "runs" / "r38" / "log.jsonl"; log.parent.mkdir(parents=True)
+    log.write_text(json.dumps({"qid": "Q1", "status": "failed", "cache_files": ["k.json"]}) + "\n")
+    (stub / "cache").mkdir(); (stub / "cache" / "k.json").write_text('{"answer": "other run"}')
+    bucket = FakeBucket({"runs/r38/cache/k.json": '{"answer": "this run"}', "runs/r38/cache/same.json": "[]"})
+    (stub / "cache" / "same.json").write_text("[]")
+    assert batch.restore_caches(bucket, "r38", log, stub, done=set()) == 1   # same.json already matched
+    assert (stub / "cache" / "k.json").read_text() == '{"answer": "this run"}'
+
+
+def test_refusals_from_other_instances_are_merged_not_overwritten(stub):
+    """This instance refused once during an outage; another instance's refusal is in
+    the bucket. After recovery the bucket holds both, the bucket's first."""
+    theirs = json.dumps({"invocation_id": "them", "outcome": "failed"})
+    mine = json.dumps({"invocation_id": "me", "outcome": "failed"})
+    run_dir = stub / "runs" / "r39"; run_dir.mkdir(parents=True)
+    (run_dir / "refused.jsonl").write_text(mine + "\n")
+    bucket = FakeBucket({"runs/r39/refused.jsonl": theirs + "\n"})
+    batch.run_batch("r39", ["Q1"], bucket, results_dir=stub, report=lambda m: None)
+    assert bucket.store["runs/r39/refused.jsonl"].splitlines() == [theirs, mine]
+    # Running again changes nothing: the merge is idempotent.
+    batch.run_batch("r39", ["Q2"], bucket, results_dir=stub, report=lambda m: None)
+    assert bucket.store["runs/r39/refused.jsonl"].splitlines() == [theirs, mine]
+
+
 def test_run_dir_files_puts_the_records_first(tmp_path):
     for name in ("z.txt", "run.json", "invocations.jsonl", "a.txt", "log.jsonl"):
         (tmp_path / name).write_text("")
@@ -753,15 +795,19 @@ def test_source_identity_names_a_clean_commit_or_a_saved_patch(tmp_path):
     (repo / "wikidata_discover" / "y.py").write_text("new = True\n")        # untracked file
     blob = bytes(range(256)) * 4
     (repo / "wikidata_discover" / "model.bin").write_bytes(blob)            # untracked binary file
+    (repo / "wikidata_discover" / "my notes.txt").write_text("spaces\n")    # untracked, whitespace in the name
     identity = batch.source_identity(run_dir, repo=repo)
     assert identity.startswith(f"{sha}-dirty-") and len(identity) == len(sha) + len("-dirty-") + 12
     patch = run_dir / f"source-{identity}.patch"
     assert patch.exists()
-    run("checkout", "--", "."); (repo / "wikidata_discover" / "y.py").unlink(); (repo / "wikidata_discover" / "model.bin").unlink()
+    run("checkout", "--", ".")
+    for name in ("y.py", "model.bin", "my notes.txt"):
+        (repo / "wikidata_discover" / name).unlink()
     run("apply", str(patch))                                                  # rebuilds the exact source
     assert (repo / "wikidata_discover" / "x.py").read_text() == "a = 2\n"
     assert (repo / "wikidata_discover" / "y.py").read_text() == "new = True\n"
     assert (repo / "wikidata_discover" / "model.bin").read_bytes() == blob   # binary content, not a marker
+    assert (repo / "wikidata_discover" / "my notes.txt").read_text() == "spaces\n"
     assert batch.source_identity(run_dir, repo=repo) == identity              # same tree, same name
 
 

@@ -39,9 +39,9 @@ if [ -n "$(git status --porcelain -- wikidata_discover deploy)" ]; then
   if [ "${ALLOW_DIRTY:-}" = "1" ]; then
     PATCH=$(mktemp)
     git diff --binary HEAD -- wikidata_discover deploy > "$PATCH"
-    git ls-files --others --exclude-standard -- wikidata_discover deploy | while read -r f; do
+    git ls-files -z --others --exclude-standard -- wikidata_discover deploy | while IFS= read -r -d '' f; do
       git diff --binary --no-index -- /dev/null "$f" >> "$PATCH" || true   # exit 1 means "differs"
-    done
+    done   # -z and -d '': a path with whitespace stays one path
     GIT_COMMIT="${GIT_COMMIT}-dirty-$(sha256sum "$PATCH" | cut -c1-12)"
     gcloud storage cp "$PATCH" "gs://academiabot/deploys/${GIT_COMMIT}.patch" --project="$PROJECT" >/dev/null
     rm -f "$PATCH"
