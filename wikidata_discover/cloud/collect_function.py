@@ -30,7 +30,8 @@ import time
 import functions_framework
 from flask import jsonify
 
-from wikidata_discover.batch import (BUCKET, PROJECT, UnreachableBucket, ensure_user_agent,
+from wikidata_discover import config
+from wikidata_discover.batch import (BUCKET, PROJECT, UnreachableBucket, bucket_call_kwargs, ensure_user_agent,
                                      load_keys_from_secret_manager, parse_done, run_batch, validate_run_id)
 
 logging.basicConfig(level=logging.INFO)
@@ -133,6 +134,16 @@ def parse_request(body) -> dict:
 @functions_framework.http
 def collect(request):
     entered = time.time()   # the platform's timeout counts from here, not from run_batch
+    # The kill time is known now, so the preflight bucket reads below are bounded by
+    # it too (run_batch sets the same value again from hard_deadline_s).
+    config.HARD_DEADLINE = entered + FUNCTION_TIMEOUT_S
+    try:
+        return _collect(request, entered)
+    finally:
+        config.DEADLINE = config.HARD_DEADLINE = None
+
+
+def _collect(request, entered: float):
     headers = getattr(request, "headers", {}) or {}
     os.environ["ACADEMIABOT_OPERATOR"] = caller_identity(headers)
     raw = request.get_json(silent=True)
@@ -164,7 +175,8 @@ def collect(request):
         if "preflight_error" in args:
             raise RuntimeError(args["preflight_error"])
         log_blob = bucket.blob(f"runs/{run_id}/log.jsonl")
-        done = parse_done(log_blob.download_as_text()) if log_blob.exists() else set()
+        done = (parse_done(log_blob.download_as_text(**bucket_call_kwargs()))
+                if log_blob.exists(**bucket_call_kwargs()) else set())
         args["done_before"] = len(done)
         if "qids" in p:
             # An explicit list, even an empty one, never falls back to the bucket list.
@@ -172,7 +184,7 @@ def collect(request):
             qids = pick_qids(p["qids"], done, limit)
         else:
             args["list_object"] = list_object
-            rows = json.loads(bucket.blob(list_object).download_as_text())
+            rows = json.loads(bucket.blob(list_object).download_as_text(**bucket_call_kwargs()))
             qids = pick_qids(rows, done, limit)
             args["list_done"] = len(done)
     except Exception as e:  # noqa: BLE001

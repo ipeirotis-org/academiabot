@@ -42,7 +42,8 @@ flowchart TD
     S -->|found, not linked| O[orphan]
     S -->|not found| X[missing]
     S -->|search failed| U[unresolved]
-    L & O & X & U --> R[CSV + QuickStatements + report<br/>unresolved is never exported]
+    L & O & X --> R[CSV + QuickStatements + report]
+    U --> R2[report only<br/>never exported]
     style L fill:#d4edda,stroke:#333,color:#000
     style O fill:#fff3cd,stroke:#333,color:#000
     style X fill:#f8d7da,stroke:#333,color:#000

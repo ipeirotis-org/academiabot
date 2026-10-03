@@ -172,6 +172,36 @@ def test_collect_records_invocation_when_list_is_exhausted(monkeypatch):
         resp, status = cf.collect(Req())
     assert calls["qids"] == [] and calls["invocation_args"]["list_done"] == 1
     assert resp.get_json()["message"] == "nothing left to do"
+    # The preflight reads (run log, university list) were bounded by the kill time,
+    # which is set at handler entry and cleared on the way out.
+    import wikidata_discover.config as config
+    reads = {(op, name.rsplit("/", 1)[-1]) for op, name, t in store["__calls__"]}
+    assert ("exists", "log.jsonl") in reads and ("download", "universities_us.json") in reads
+    assert all(5 <= t <= 60 for op, name, t in store["__calls__"])
+    assert config.HARD_DEADLINE is None and config.DEADLINE is None
+
+
+def test_collect_refuses_preflight_reads_when_the_kill_is_imminent(monkeypatch):
+    import flask
+    import wikidata_discover.cloud.collect_function as cf
+    calls = {}
+    monkeypatch.setattr(cf, "load_keys_from_secret_manager", lambda: None)
+    monkeypatch.setattr(cf, "ensure_user_agent", lambda: None)
+    monkeypatch.setattr(cf, "FUNCTION_TIMEOUT_S", 5.0)          # as if entered with 5 s left
+    monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), **kw) or
+                        {"run_id": run_id, "failed": 1, "outcome": "failed"})
+    store = {"universities_us.json": json.dumps([["Q1", "a"]])}
+    class FakeClient:
+        def __init__(self, project=None): pass
+        def bucket(self, name): return FakeBucket(store)
+    import google.cloud.storage as gcs
+    monkeypatch.setattr(gcs, "Client", FakeClient)
+    class Req:
+        def get_json(self, silent=True): return {"run_id": "r12"}
+    with flask.Flask(__name__).app_context():
+        resp, status = cf.collect(Req())
+    assert "DeadlineExceeded" in calls["fail_reason"] and calls["qids"] == []   # recorded, nothing started
+    assert "__calls__" not in store                                            # no read even began
 
 
 def test_collect_records_a_preflight_failure(monkeypatch):

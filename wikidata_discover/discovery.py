@@ -267,17 +267,22 @@ class Discovery:
 
         console.print(table)
 
-        if missing:
+        # Unresolved candidates were never checked against Wikidata. They go to the
+        # report (names kept for a rerun or a reviewer), not to the CSV or the
+        # QuickStatements file, which hold only what a person may upload after review.
+        exportable = [r for r in missing if r.get("status") != "unresolved"]
+        unresolved = [r for r in missing if r.get("status") == "unresolved"]
+        if exportable:
             RESULTS_DIR.mkdir(parents=True, exist_ok=True)
             out_file = RESULTS_DIR / f"missing_divisions_{self.university_qid}.csv"
-            pd.DataFrame(missing).to_csv(out_file, index=False)
+            pd.DataFrame(exportable).to_csv(out_file, index=False)
             console.print(
-                f"[green]{len(missing)} missing divisions written to {out_file}.[/green]"
+                f"[green]{len(exportable)} missing or orphaned divisions written to {out_file}.[/green]"
             )
-            #quickstatements export 
+            #quickstatements export
             from wikidata_discover.to_qs_wikidata import export_quickstatements
             export_quickstatements(
-                missing,
+                exportable,
                 self.university_qid,
                 self.university_label,
                 out_dir=RESULTS_DIR,
@@ -285,6 +290,11 @@ class Discovery:
         else:
             console.print(
                 "[green]No missing divisions detected - Wikidata seems up to date![/green]"
+            )
+        if unresolved:
+            console.print(
+                f"[yellow]{len(unresolved)} candidate(s) could not be checked and are listed in the "
+                f"report only; rerun or review them.[/yellow]"
             )
 
         report = {
@@ -296,6 +306,7 @@ class Discovery:
             "exists_orphan": counts["exists_orphan"],
             "missing": counts["missing"],
             "unresolved": counts["unresolved"],
+            "unresolved_candidates": [{"name": r["name"], "url": r.get("url", "")} for r in unresolved],
         }
         reports_dir = RESULTS_DIR / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)

@@ -120,7 +120,8 @@ Minimum statement set for any new item: label, English description, P31, P749, P
    d. For each candidate: fuzzy-match against existing Wikidata children (rapidfuzz)
    e. Unmatched candidates go to LLM `choose_match` for disambiguation
    f. Results classified as: exists_linked, exists_orphan, missing, or unresolved (Wikidata could not be
-      checked for that candidate; it is reported but never exported)
+      checked for that candidate, or no LLM could judge the match; it is listed in the JSON report as
+      `unresolved_candidates` and never written to the CSV or QuickStatements file)
    g. Results exported to CSV + QuickStatements: missing entities as CREATE blocks, orphans as a single
       statement linking the existing QID to the university
 

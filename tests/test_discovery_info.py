@@ -84,7 +84,30 @@ def test_discover_missing_leaves_an_unjudged_candidate_unresolved(monkeypatch, t
     assert [r["status"] for r in rows] == ["unresolved"]
     report = __import__("json").loads((tmp_path / "reports" / "Q1_report.json").read_text())
     assert report["unresolved"] == 1 and report["missing"] == 0
+    assert report["unresolved_candidates"] == [{"name": "School of Law", "url": ""}]   # kept for a rerun
     assert not (tmp_path / "quickstatements_Q1.qs").exists()        # stale file removed, none written
+    assert not (tmp_path / "missing_divisions_Q1.csv").exists()     # unresolved is not a CSV row either
+
+
+def test_discover_missing_csv_holds_only_missing_and_orphans(monkeypatch, tmp_path):
+    import pandas as pd
+    monkeypatch.setattr(disc, "RESULTS_DIR", tmp_path)
+    d = disc.Discovery.__new__(disc.Discovery)
+    d.university_qid, d.university_label, d.university_website, d.university_lang = "Q1", "Test U", None, "en"
+    monkeypatch.setattr(d, "get_existing_children", lambda: [])
+    monkeypatch.setattr(d, "get_all_descendants_qids", lambda: set())
+    monkeypatch.setattr(d, "get_children_alt_labels", lambda: {})
+    def search(name):
+        if name == "Broken": raise OSError("search down")
+        return []
+    monkeypatch.setattr(d, "search_wikidata", search)
+    monkeypatch.setattr(disc.LLMHelper, "extract_divisions_best_available",
+                        staticmethod(lambda u, w: [{"name": "New School"}, {"name": "Broken"}]))
+    monkeypatch.setattr(disc.LLMHelper, "choose_match", staticmethod(lambda c, u, ch: None))
+    d.discover_missing()
+    csv = pd.read_csv(tmp_path / "missing_divisions_Q1.csv")
+    assert list(csv["name"]) == ["New School"] and set(csv["status"]) == {"missing"}
+    assert "Broken" not in (tmp_path / "quickstatements_Q1.qs").read_text()
 
 
 def test_search_adds_university_language_and_dedupes(monkeypatch):
