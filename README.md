@@ -1,71 +1,147 @@
-# Wikidata Discovery Toolkit
+# AcademiaBot
 
-A lightweight Python CLI suite for querying and synchronizing Wikidata entities.  
-It provides two core commands:
+**Putting the structure of every university into Wikidata.**
 
-1. **`harvest`** – Fetch and persist a full list of all U.S. universities (Q-IDs, labels, and websites) from Wikidata to JSON for downstream analysis.
-2. **`discover`** – Identify missing top-level academic or administrative units (“divisions”) of a university by combining SPARQL queries, LLM extraction (OpenAI with web search; Anthropic and Gemini as fallbacks without web search), and Wikidata API lookups, then output a CSV of items to add.
+Wikidata knows that New York University exists. It mostly does not know that NYU has a
+Stern School of Business, that Stern has a Department of Finance, or who teaches there.
+This project fills that gap: university, then school, then department, then faculty, all
+as linked Wikidata entities that anyone can query.
 
-See `TASKS.md` for project status and what to work on next, and `AGENTS.md` for the code map and conventions.
+We use large language models to propose the units, code to check them against what
+Wikidata already has, and people to approve every fact before it is published. Checking
+each proposal against the university's own website is being built now (see TASKS.md).
+The rule we are building toward: nothing goes into Wikidata without a written source that
+a person has checked.
 
----
-
-## Details
-
-- **CSV export** of missing divisions ready for batch Wikidata edits.
-- **JSON export** of U.S. universities for offline reuse.
-- **Configurable** via environment variables (`.env`):
-  - `OPENAI_API_KEY` – Your OpenAI API key. At least one of the three provider keys is required; OpenAI is the only one with web search
-  - `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` – Optional fallbacks. `discover` uses the first provider that returns results (OpenAI first). The multi-provider ensemble with a judge is available in `eval/run_eval.py` and `LLMHelper.extract_divisions_ensemble`, but is not yet wired into `discover`.
-  - `LLM_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL` – Override default models
-  - `WD_BOT_USERAGENT` – Custom `User-Agent` for Wikidata/SPARQL requests (defaults to `AcademiaBot/1.0`)
-- **Rich** console output and tables for easy debugging.
-
----
-
-## Usage
-
-The commands share a single entrypoint script. Run them as Python modules from the project root:
-
-```
-python -m wikidata_discover.scripts.wikidata_division_discover <command> [options]
+```mermaid
+flowchart LR
+    U[University] ---|parent| S[School or College]
+    S ---|parent| D[Department]
+    D ---|parent| P[Program, Lab, Center]
+    F[Faculty] -.->|P108 employer| P
+    style U fill:#dfe9f5,stroke:#333,color:#000
+    style S fill:#dfe9f5,stroke:#333,color:#000
+    style D fill:#fff3cd,stroke:#333,color:#000
+    style P fill:#f8f9fa,stroke:#999,stroke-dasharray: 5 5,color:#000
+    style F fill:#f8f9fa,stroke:#999,stroke-dasharray: 5 5,color:#000
 ```
 
-### 1. Harvest all U.S. universities
+Blue: works today. Yellow: being built this term. Dashed: later. The parent link will
+be P749 (parent organization); the exporter still writes P361 (part of) today, and
+Anya's week 8 switches it.
 
-```
-python -m wikidata_discover.scripts.wikidata_division_discover harvest
-```
-
-* Queries Wikidata for every U.S. university (P31/P279 → Q3918 & P17 → Q30).
-* Saves raw JSON to universities_us.json.
-* Prints a summary table of Q-IDs, labels, and websites.
-
-### 2. Discover missing divisions
-
-```
-python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210
-```
-
-* Q49210 – Wikidata Q-ID of the target university (e.g. New York University).
-* Outputs a table of each candidate unit and its match status.
-* Writes missing_divisions_<QID>.csv if any units are not yet linked in Wikidata.
-
-#### Options
-
-* --llm MODEL – Override the default OpenAI model (default: gpt-4o).
-
-### 3. Evaluate extraction quality
-
-```
-python -m wikidata_discover.eval.run_eval
-python -m wikidata_discover.eval.run_eval --providers openai anthropic --universities Q49210 Q49088
+```mermaid
+flowchart LR
+    L[LLM proposes<br/>a unit] --> C[Code checks<br/>Wikidata]
+    L -.-> U[a source URL<br/>per unit]
+    U -.-> V
+    C --> V[Code checks<br/>the source page]
+    V --> H[Person reviews<br/>and approves]
+    H --> W[(Wikidata)]
+    style L fill:#dfe9f5,stroke:#333,color:#000
+    style C fill:#dfe9f5,stroke:#333,color:#000
+    style U fill:#fff3cd,stroke:#333,color:#000
+    style V fill:#fff3cd,stroke:#333,color:#000
+    style H fill:#fff3cd,stroke:#333,color:#000
+    style W fill:#f8f9fa,stroke:#333,color:#000
 ```
 
-Scores each provider and judge combination against the hand-built ground truth in `wikidata_discover/eval/ground_truth.py`.
+Today the LLM gives one reference URL per answer, not one per unit. One URL per unit
+is Anya's week 3.
 
-### Tests
+## Who this is for
+
+Students on this project **direct a coding agent** (Claude Code or similar). You will not
+write most of the code. You decide what to build, check that it works on data you chose,
+judge the data, and own what goes into Wikidata. If you can run a command and open a CSV,
+you have the skills to start.
+
+## Start here
+
+Read these three files, in this order. They are short.
+
+| File | What it is | When to read it |
+|---|---|---|
+| **[TASKS.md](TASKS.md)** | The plan: what exists, your first week, the milestones, and how to work with the agent | Today, then every week |
+| **[docs/BACKGROUND.md](docs/BACKGROUND.md)** | Where the project came from and why we model things the way we do | Once, in your first week |
+| **[AGENTS.md](AGENTS.md)** | The instructions the coding agent reads: code map, conventions, data model, cloud access | Skim once; point the agent at it |
+
+## Your first hour
+
+```bash
+git clone https://github.com/ipeirotis-org/academiabot.git
+cd academiabot
+pip install -r wikidata_discover/requirements.txt pytest
+cp env.example .env          # then put at least one LLM API key in .env (ask Panos)
+python -m pytest tests -q    # all tests should pass
+python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210   # NYU
+```
+
+The last command asks an LLM for NYU's schools, checks each one against Wikidata, and
+prints a table: already linked, exists but not linked (an "orphan"), or missing. If any
+unit is missing or orphaned, it also writes two files to `wikidata_discover/results/`: a
+CSV of those units and a QuickStatements file that could create them. For NYU today
+nothing is missing, so only the JSON report is written, and any CSV or QuickStatements
+file an earlier run left for the same university is removed first, so what is in
+`results/` is always the latest result. **Do not upload a QuickStatements file.** Uploading is a human step, after review, described in TASKS.md (Anya's weeks 8
+and 9, Shuo's week 9).
+
+Or ask your agent to do all of this for you and explain the output. That is the normal
+way to work here.
+
+## What the code does today
+
+| Command | What it does | Output |
+|---|---|---|
+| `discover <QID>` | Finds the schools and colleges of one university | Always `results/reports/<QID>_report.json`. If anything is missing or orphaned, also `results/missing_divisions_<QID>.csv` and `results/quickstatements_<QID>.qs`; otherwise those two files are removed if an earlier run left them |
+| `harvest` | Lists every U.S. university in Wikidata | `results/universities_us.json` |
+| evaluation | Scores each LLM provider and judge setup against a hand-built answer key for 12 universities | `eval/results_summary.csv` |
+
+All paths are under `wikidata_discover/`. The first two run as
+`python -m wikidata_discover.scripts.wikidata_division_discover <command>`. The evaluation
+is its own module: `python -m wikidata_discover.eval.run_eval`.
+
+**Accuracy so far:** at the school level, the best configuration reaches about 95%
+precision and 95% recall on the 12 evaluated universities. Departments are the current
+work. The honest list of what does not work yet is in TASKS.md, section 1.
+
+## Configuration
+
+Copy `env.example` to `.env`. At least one LLM key is required.
+
+| Variable | Purpose |
+|---|---|
+| `OPENAI_API_KEY` | Preferred. The only provider that currently uses web search |
+| `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` | Fallbacks, and needed for the full evaluation |
+| `LLM_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL` | Override default model names |
+| `WD_BOT_USERAGENT` | Identifies our requests to Wikidata. Put your email in it |
+
+Keys also live in GCP Secret Manager; see AGENTS.md. Never commit `.env`.
+
+## Repository map
 
 ```
-python -m pytest tests -q
+TASKS.md                 The plan. Start here.
+AGENTS.md                Instructions for the coding agent.
+docs/                    Background, and later the review guide and modeling rules.
+wikidata_discover/       The code.
+  cli.py                 The two commands.
+  discovery.py           Orchestrates: Wikidata lookup, LLM extraction, matching.
+  llm_helpers.py         All LLM calls (OpenAI, Anthropic, Gemini).
+  to_qs_wikidata.py      Turns results into a QuickStatements file.
+  eval/                  Answer key for 12 universities and the scoring harness.
+  results/               Everything the commands write.
+tests/                   pytest suite. Run it before and after every change.
 ```
+
+## Three rules
+
+1. **Nothing goes into Wikidata without a person checking it against a source.** The
+   agent never uploads. You upload, after review, with a URL for every fact.
+2. **Verify what the agent tells you.** Run the command. Open the file. Count the rows.
+3. **Keep TASKS.md current.** It is the project's memory between sessions and between
+   students.
+
+## Contact
+
+Panos Ipeirotis, NYU Stern, pi1@stern.nyu.edu

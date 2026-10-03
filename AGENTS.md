@@ -20,14 +20,36 @@ academiabot/
 │   ├── sparql_helpers.py        # Thin wrapper around SPARQLWrapper
 │   ├── wikidata_api.py          # wbsearchentities wrapper
 │   ├── to_qs_wikidata.py        # Export missing entities as QuickStatements
+│   ├── batch.py                 # Resumable batch over many QIDs; uploads every artifact to the bucket
+│   ├── cloud/collect_function.py # Cloud Function (gen 2) entry point: one time slice of a run, on a schedule
 │   ├── requirements.txt
 │   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness
 │   ├── results/                 # Output CSVs, universities_us.json, LLM cache
 │   └── scripts/
-│       └── wikidata_division_discover.py   # Entrypoint
+│       ├── wikidata_division_discover.py   # Entrypoint
+│       └── batch_collect.py                # CLI wrapper around batch.py
+├── deploy/                      # deploy_collect_function.sh: Cloud Function + paused half-hourly Scheduler job
 ├── docs/                        # BACKGROUND.md (origins, decisions); later REVIEW_GUIDE.md, MODELING_RULES.md
 ├── tests/                       # pytest unit tests (fuzzy matching)
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
+```
+
+```mermaid
+flowchart LR
+    CLI[cli.py<br/>harvest, discover] --> DISC[discovery.py]
+    BATCH[batch.py] --> DISC
+    CF[cloud/collect_function.py] --> BATCH
+    BC[scripts/batch_collect.py] --> BATCH
+    DISC --> LLM[llm_helpers.py<br/>OpenAI, Anthropic, Gemini]
+    DISC --> SP[sparql_helpers.py]
+    DISC --> WA[wikidata_api.py<br/>search]
+    DISC --> HI[hierarchy.py<br/>descendants]
+    DISC --> QS[to_qs_wikidata.py<br/>QuickStatements]
+    HI --> SP
+    LLM & SP & WA --> CFG[config.py<br/>keys, models, user agent]
+    LLM --> CACHE[(results/cache)]
+    DISC & QS --> OUT[(results/<br/>CSV, .qs, reports)]
+    BATCH --> GCS[(gs://academiabot/runs)]
 ```
 
 ## How to run
@@ -97,7 +119,9 @@ Minimum statement set for any new item: label, English description, P31, P749, P
    c. (eval only) `extract_divisions_ensemble()` runs two generators and `judge_union()`; see known issue 9
    d. For each candidate: fuzzy-match against existing Wikidata children (rapidfuzz)
    e. Unmatched candidates go to LLM `choose_match` for disambiguation
-   f. Results classified as: exists_linked, exists_orphan, or missing
+   f. Results classified as: exists_linked, exists_orphan, missing, or unresolved (Wikidata could not be
+      checked for that candidate, or no LLM could judge the match; it is listed in the JSON report as
+      `unresolved_candidates` and never written to the CSV or QuickStatements file)
    g. Results exported to CSV + QuickStatements: missing entities as CREATE blocks, orphans as a single
       statement linking the existing QID to the university
 
@@ -110,18 +134,22 @@ Minimum statement set for any new item: label, English description, P31, P749, P
 - `extract_divisions_ensemble()`: OpenAI + Anthropic generate, Gemini judges. Used by the eval harness only
 - `judge_union()`: one provider reviews the union of all candidates and keeps only real units
 - `choose_match()`: single-token classification (QID / ORPHAN:QID / NONE)
-- Responses are cached in `results/cache/`, keyed by (university, provider, model)
+- Responses are cached in `results/cache/`, keyed by (university, provider, model, prompt hash).
+  Match decisions are also keyed by which providers are configured, and a cached decision
+  made by a fallback provider is asked again once the preferred provider answers
 - Models configured in `config.py`: `LLM_MODEL` (OpenAI), `ANTHROPIC_MODEL`, `GEMINI_MODEL`; all overridable in `.env`
 - Eval on 12 universities: best config is Anthropic judge over OpenAI + Gemini, about 0.95 precision and recall
   (see `eval/results_summary.csv`)
 
 ## Working norms (read first)
 
-Students on this project direct agents; they do not write most of the code. So:
+Students on this project direct agents; they do not write most of the code. There are two
+students with two tracks in `TASKS.md`: Anya builds the pipeline (section 4), Shuo builds the
+checks and the human review (section 5). So:
 
-- Work on exactly the milestone in `TASKS.md` that the student names. Do not start the next one.
+- Work on exactly the track and week in `TASKS.md` that the student names. Do not start the next one.
+- The "you check it by" cell for that week is the acceptance test. Make it pass and show it passing.
 - Before writing code, give a short plan (five lines or fewer) and wait for a go-ahead.
-- The milestone's "done when" line is the acceptance test. Show it passing, with the command and its output.
 - Explain what you did in plain language. Assume the reader can run a command and open a CSV but will not read a diff.
 - Run `python -m pytest tests -q` before saying anything is done. Add a test for every behavior you add.
 - At the end of a session: tick the boxes you completed in `TASKS.md`, add anything a future agent needs to this file, and leave the student a three-line summary.
@@ -158,6 +186,9 @@ Students on this project direct agents; they do not write most of the code. So:
     Fix when the exporter is reworked in Milestone 3
 12. ~~`choose_match()` could never return an orphan: it compared the whole `ORPHAN:QID` token to bare QIDs~~
     Fixed: `parse_match_answer()` handles QID, ORPHAN:QID, and NONE, with tests
+13. ~~Every Gemini call failed with `Part.from_text() takes 1 positional argument`: the code used an
+    old `google-genai` signature~~ Fixed: `Part.from_text(text=...)` and `config=GenerateContentConfig(...)`.
+    Gemini had silently never worked as a fallback or judge
 
 ## Cloud Credentials
 
@@ -178,11 +209,128 @@ Students on this project direct agents; they do not write most of the code. So:
   - `roles/run.developer` -- deploy Cloud Run services for long-running tasks
   - `roles/pubsub.editor` -- event-driven pipelines between collection, verification, and writing stages
   - `roles/cloudfunctions.invoker` -- allow scheduler and other functions to trigger Cloud Functions
+    (gen 1). The gen 2 function is invoked through `roles/run.developer`, which includes
+    `run.routes.invoke`; the deploy script checks this with a real OIDC call after every deploy
 - **Multi-user setup:** Each team member has their own `.cloud-credentials.<email>.enc` file, encrypted with their personal passphrase
 - **Authentication:** Handled automatically via the `cloud-bootstrap` skill and SessionStart hook (`.claude/hooks/cloud-auth.sh`). The hook matches the credentials file to `git config user.email`, so that must be set to the team member's email.
 - **Cross-project access:** The service account also has READER on dataset `nyu-datasets.academiabot` (granted 2026-10-02). See "BigQuery access" below.
 - **New team members:** The agent handles onboarding via the cloud-bootstrap "Add Team Member" flow
 - **Permission escalation:** Ask the agent to escalate; it will propose roles and ask you to approve via `gcloud`
+
+## Run log (planned, Anya week 2)
+
+Every run must be reproducible. Anya's week 2 creates the first four tables below in dataset
+`academiabot` of project `wikidata-academia`, with large text in Cloud Storage and the GCS path
+kept in the row. The fifth table, `reviews`, is Shuo's week 6; it is specified here so both
+tracks build to the same shape.
+
+| Table | One row per | Must contain |
+|---|---|---|
+| `runs` | command invocation | run_id, who, git commit, the exact command and arguments (subcommand, QIDs, flags), config (providers, models, depth), start and end time, outcome |
+| `llm_calls` | API call | llm_call_id, run_id, provider, model, purpose (extract, judge, match, verify), prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
+| `evidence` | web page fetched | evidence_id, run_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
+| `candidates` | unit proposed | candidate_id, run_id, parent_qid, name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, llm_call_ids, evidence_ids |
+| `reviews` | one reviewer's verdict on one candidate | review_id, candidate_id, reviewer, source (expert, prolific), verdict (accept, reject, fix), corrected_value, url_checked, notes, reviewed_at |
+
+Every table has its own stable id so that a candidate's `llm_call_ids` and `evidence_ids`
+resolve to exact rows. Reviews are append-only: a second reviewer adds a row, never
+overwrites one, so agreement between reviewers can be computed. The export honors the
+reviews a protocol says it should (for example, two accepts and no reject).
+
+Rules: write the raw LLM response to storage before parsing it. Cache keys include the prompt
+hash. Local JSON under `results/runs/` is the fallback when GCP is unreachable. Keys come from
+Secret Manager when `.env` has none (see "Secret Manager" below).
+
+## Running collection in the cloud
+
+Collection runs should not depend on a laptop or a sandbox session. `wikidata_discover/batch.py`
+holds the resumable batch logic; `scripts/batch_collect.py` runs it from a terminal and
+`cloud/collect_function.py` runs it as a Cloud Function (gen 2, HTTP, 30 minute timeout) that
+processes one time slice per invocation and resumes from the run log in the bucket. Cloud
+Scheduler calls it every 30 minutes (its HTTP deadline is 30 minutes at most, so a slice
+has a 25 minute budget). State and artifacts live only in `gs://academiabot/runs/<run_id>/`.
+
+```mermaid
+flowchart LR
+    S[Cloud Scheduler<br/>7 and 37 past the hour<br/>PAUSED until a person resumes it] -->|POST run_id| F[Cloud Function<br/>academiabot-collect<br/>1 instance, 25 min of work]
+    SM[Secret Manager<br/>3 API keys] --> F
+    F -->|read list, log, caches| B[(gs://academiabot<br/>runs/run_id/)]
+    F -->|next universities<br/>not yet done| D[discover]
+    D -->|CSV, .qs, report,<br/>cache, log line| B
+    P[Panos] -->|resume = start spending<br/>pause = stop| S
+    R[Student] -->|read log.jsonl| B
+```
+
+- Deploy or update: `bash deploy/deploy_collect_function.sh` (creates or updates the scheduler
+  job and leaves it PAUSED, even if it was running before).
+- Start collecting: `gcloud scheduler jobs resume academiabot-collect-slice --location=us-east1`.
+  Only a person does this; it spends LLM credit.
+- Stop: `gcloud scheduler jobs pause academiabot-collect-slice --location=us-east1`.
+- Progress: read `runs/<run_id>/log.jsonl` in the bucket. One line per university attempt.
+  The last record for a QID wins; a QID is done only when its last record is ok and uploaded
+  and has no unresolved candidates. A university with unresolved candidates, or a failed
+  attempt, is retried on later invocations, up to 3 attempts in total, then left for a
+  person. Three failures usually mean the item is not a university (the LLM returns no
+  units, and that counts as a failure).
+  `invocations.jsonl` has a start record and an end record (end time, outcome, summary)
+  for every invocation; both carry an `invocation_id`, and so does every QID record that
+  invocation wrote, so the history can be reconstructed exactly. An invocation that refused
+  to run (cold instance, bucket unreachable) is recorded in `refused.jsonl` instead, a file
+  that can never replace bucket history: before an upload it is merged with the bucket's copy
+  (the bucket's lines first, then the local lines it lacks).
+- A run id is one safe path component (letters, digits, `.`, `-`, `_`, max 100). Anything
+  else is refused, because it names a folder under `results/runs` and a bucket prefix.
+- Request body (all optional): `run_id`, `list_object`, `max_universities` (60), `time_budget_s`
+  (1500), `reserve_s` (420: no university starts unless that much budget, or the longest
+  university so far, is left), `qids` (explicit list, still de-duplicated and capped).
+- LLM cache files that an unfinished university used, and cache files in the bucket that no
+  log record mentions, are restored before a retry, so a fresh instance reuses the same
+  LLM answers. The run's stored answer replaces a local file of the same name that another
+  run on the same instance wrote.
+- Hard deadline: the function passes its own timeout (1800 s) to the batch runner, which sets
+  `config.DEADLINE` 90 s before it. Wikidata requests, retries, and 429 waits stop at that
+  point and no new Wikidata request starts after it; LLM requests time out after 180 s (or
+  sooner, at the deadline), the OpenAI and Anthropic SDKs retry only as often as still fits
+  before the deadline (their default is 2), and no LLM call starts in the last 30 s. Secret
+  Manager reads carry the same bound as bucket calls. A university caught by
+  the deadline fails that attempt (never "missing") and is retried in a later slice, so the
+  attempt's records are always written. No university starts once the work deadline is
+  closer than the reserve. Every bucket call (the resume reads at the start, uploads,
+  stale-export checks and deletes) is bounded by the kill time (`config.HARD_DEADLINE`),
+  retries included, and none starts in the last 10 s; the 90 s after the work deadline
+  are for the final uploads. Artifact uploads keep 20 s for the run log upload that
+  follows them, the run folder is uploaded records first (log, invocations, run.json), and
+  the invocation's end record is uploaded on its own before the final run-folder upload.
+- The deploy script ships only the package: `.env` files, `*.enc`, credential files, and
+  caches are removed from the staging tree, and the deploy stops if a secrets file remains.
+  A bad request or a missing key is still recorded in the bucket's run history, because
+  the storage client is built before and independently of those checks, in the Cloud
+  Function and in the terminal runner alike. A supplied `run_id` is always validated; the
+  daily default applies only when the field is absent.
+- A QID must look like `Q49210`. The Cloud Function rejects a request with anything else in
+  `qids`, skips such rows in the university list, and the terminal runner refuses them.
+- A candidate that no LLM provider could judge (every one failed or answered nothing) is
+  `unresolved`, never `missing`. Gemini runs the match question with thinking off, because
+  its thinking counts against the tiny output budget and would leave the answer empty.
+- Every invocation record carries `git_commit`, `providers` (which API keys were set), and
+  the models; every university record carries `provider` (whose answer was used), so a run
+  can be repeated with the same setup.
+- Uncommitted code is recorded as `<sha>-dirty-<hash>` with the patch saved next to the
+  record: the deploy script (`ALLOW_DIRTY=1`) puts it at
+  `gs://academiabot/deploys/<name>.patch`, the terminal runner at `runs/<run_id>/source-<name>.patch`.
+  `git checkout <sha> && git apply <patch>` rebuilds the source that ran.
+- `needs_review` in every summary and end record: universities given up on after 3 attempts.
+  They are skipped by later slices, not finished. Their log records say why.
+- Deployed 2026-10-02: function `academiabot-collect` (us-east1), scheduler job
+  `academiabot-collect-slice` (paused). The Cloud Functions, Run, Build, Artifact Registry,
+  Scheduler, Eventarc, and Resource Manager APIs are enabled. The service account cannot
+  enable APIs; a project owner does that.
+- Test one slice by hand (spends a little LLM credit):
+  `gcloud functions call academiabot-collect --gen2 --region=us-east1 --data '{"run_id": "test", "qids": ["Q49213"], "time_budget_s": 500, "reserve_s": 120}'`
+- The `gcloud` CLI in a Claude Code cloud session needs `env -u CLOUDSDK_AUTH_ACCESS_TOKEN` in
+  front of it, because the session proxy sets that variable to a placeholder.
+- Wikidata rate limits are per IP, so one instance at a time (`--max-instances=1`), about 40
+  universities per hour over two slices. The full U.S. list is roughly three days.
 
 ## BigQuery access
 

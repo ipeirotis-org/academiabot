@@ -4,8 +4,9 @@ from typing import List, Dict, Any, Tuple
 from wikidata_discover.sparql_helpers import run_sparql
 from wikidata_discover.sparql_helpers import execute_sparql_bindings
 from wikidata_discover.wikidata_api import quick_wd_search
-from wikidata_discover.hierarchy       import all_descendants
-from wikidata_discover.llm_helpers import LLMHelper
+from wikidata_discover.hierarchy import descendant_qids
+from wikidata_discover import llm_helpers
+from wikidata_discover.llm_helpers import LLMHelper, LLMUnavailable
 from wikidata_discover.config import console, RESULTS_DIR
 
 from rapidfuzz import fuzz
@@ -17,61 +18,83 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# Child labels: English first, then the language the university's own label is in
+# (the same one for an English-labelled university). %(qid)s and %(lang)s.
 CHILDREN_SPARQL_TEMPLATE = """
 SELECT ?child ?childLabel WHERE {
-  VALUES ?univ { wd:%s }
+  VALUES ?univ { wd:%(qid)s }
   ?child (wdt:P361|wdt:P355|wdt:P749) ?univ .
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en,%(lang)s". }
 }
 """
 
 CHILDREN_ALT_LABELS_SPARQL_TEMPLATE = """
 SELECT ?child (GROUP_CONCAT(DISTINCT ?alt; separator="|") AS ?altLabels) WHERE {
-  VALUES ?univ { wd:%s }
+  VALUES ?univ { wd:%(qid)s }
   ?child (wdt:P361|wdt:P355|wdt:P749) ?univ .
-  OPTIONAL { ?child skos:altLabel ?alt . FILTER(LANG(?alt)="en") }
+  OPTIONAL { ?child skos:altLabel ?alt . FILTER(LANG(?alt) IN ("en", "%(lang)s")) }
 }
 GROUP BY ?child
 """
 
+# English label preferred; any language as a fallback (a few hundred U.S.
+# institutions on Wikidata have labels only in other languages). The label's
+# language is returned so that child lookups and searches can use it too. Ties
+# among fallback languages are broken by language code, then label, so the same
+# QID always gets the same label (it feeds the LLM prompt and the cache key).
 UNIV_INFO_SPARQL = """
-SELECT ?label ?website WHERE {
-  wd:%s rdfs:label   ?label     . FILTER(LANG(?label)="en")
-  OPTIONAL { wd:%s wdt:P856  ?website }
+SELECT ?label ?lang ?website WHERE {
+  OPTIONAL { wd:%s rdfs:label ?en . FILTER(LANG(?en)="en") }
+  OPTIONAL { wd:%s rdfs:label ?any }
+  OPTIONAL { wd:%s wdt:P856 ?website }
+  BIND(COALESCE(?en, ?any) AS ?label)
+  BIND(LANG(?label) AS ?lang)
 }
+ORDER BY DESC(BOUND(?en)) ?lang ?label ?website
+LIMIT 1
 """
+
+_LANG_RE = re.compile(r"^[a-z]{2,3}(-[a-z0-9]+)*$", re.I)
 
 
 class Discovery:
     def __init__(self, university_qid: str):
         self.university_qid = university_qid
+        self.university_lang = "en"
         self.university_label, self.university_website = self.fetch_university_info()
 
     def fetch_university_info(self) -> tuple[str, str | None]:
         """
-        Returns (label, website) for the given QID.
+        Returns (label, website) for the given QID and records the label's language
+        in self.university_lang ("en" unless only another language had a label).
         Website will be None if there's no P856 claim.
         """
         bindings = execute_sparql_bindings(
-            UNIV_INFO_SPARQL % (self.university_qid, self.university_qid)
+            UNIV_INFO_SPARQL % (self.university_qid, self.university_qid, self.university_qid)
         )
-        if not bindings:
+        if not bindings or "label" not in bindings[0]:
             console.print(f"[red]Could not find info for {self.university_qid}[/red]")
             raise ValueError(f"Info not found for {self.university_qid}")
 
         b = bindings[0]
         label = b["label"]["value"]
+        lang = b.get("lang", {}).get("value") or b["label"].get("xml:lang") or "en"
+        self.university_lang = lang if _LANG_RE.match(lang) else "en"
         website = b.get("website", {}).get("value")  # None if missing
         return label, website
 
+    def _sparql_params(self) -> Dict[str, str]:
+        return {"qid": self.university_qid, "lang": self.university_lang}
+
     def get_existing_children(self) -> List[Tuple[str, str]]:
         # fetch only direct children (already-linked via P361/P355/P749)
-        return run_sparql(CHILDREN_SPARQL_TEMPLATE % self.university_qid, as_tuples=True, main_key="child", label_key="childLabel")
+        return run_sparql(CHILDREN_SPARQL_TEMPLATE % self._sparql_params(), as_tuples=True, main_key="child", label_key="childLabel")
 
     def get_children_alt_labels(self) -> Dict[str, List[str]]:
-        """Return a dict mapping child QID -> list of English altLabels."""
+        """Return a dict mapping child QID -> list of altLabels (English plus the
+        university's own label language)."""
         bindings = execute_sparql_bindings(
-            CHILDREN_ALT_LABELS_SPARQL_TEMPLATE % self.university_qid
+            CHILDREN_ALT_LABELS_SPARQL_TEMPLATE % self._sparql_params()
         )
         result: Dict[str, List[str]] = {}
         for b in bindings:
@@ -82,18 +105,30 @@ class Discovery:
 
 
     def get_all_descendants_qids(self) -> set[str]:
-        # fetch every descendant (for filtering deeper nodes)
-        edges, _ = all_descendants(self.university_qid)
-        return {child for _, child, _, _ in edges}
+        # fetch every descendant (for filtering deeper nodes), one query
+        return descendant_qids(self.university_qid)
+
+    def search_wikidata(self, name: str) -> List[Tuple[str, str]]:
+        """Search labels and aliases in English and, for a university whose own
+        label is in another language, in that language too. One hit per QID."""
+        hits = list(quick_wd_search(name))
+        if self.university_lang != "en":
+            hits += quick_wd_search(name, language=self.university_lang)
+        seen, out = set(), []
+        for qid, label in hits:
+            if qid not in seen:
+                seen.add(qid)
+                out.append((qid, label))
+        return out
 
     def find_potential_orphans_for(
         self, candidate_name: str, existing_qids: set
     ) -> List[Tuple[str, str]]:
         """
-        Search Wikidata for entities whose English label matches the
-        candidate division name and aren't already in existing_qids.
+        Search Wikidata for entities whose label matches the candidate division
+        name and aren't already in existing_qids.
         """
-        hits = quick_wd_search(candidate_name)
+        hits = self.search_wikidata(candidate_name)
         return [(qid, label) for qid, label in hits if qid not in existing_qids]
 
 
@@ -101,6 +136,7 @@ class Discovery:
         console.print(
             f"[bold blue]University:[/bold blue] {self.university_label} ({self.university_qid})"
         )
+        clear_exports(self.university_qid)
 
         direct_children = self.get_existing_children()
         direct_qids = {qid for qid, _ in direct_children}
@@ -120,7 +156,7 @@ class Discovery:
         )
 
         missing: List[Dict[str, Any]] = []
-        counts = {"exists_linked": 0, "exists_orphan": 0, "missing": 0}
+        counts = {"exists_linked": 0, "exists_orphan": 0, "missing": 0, "unresolved": 0}
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("Division")
         table.add_column("Status")
@@ -135,21 +171,50 @@ class Discovery:
             for qid, label in direct_children:
                 alt_labels = alt_labels_map.get(qid, [])
                 all_names = [label] + alt_labels
-                if any(normalize_name(name) == normalize_name(n) or is_fuzzy_match(name, n) for n in all_names):
+                if any(is_fuzzy_match(name, n) for n in all_names if n):
                     matched = (qid, label)
                     logger.debug("fuzzy match: '%s' -> %s (%s)", name, qid, label)
                     break
 
             # step 2: if no fuzzy match, fall back to LLM with Wikidata search results
+            search_failed = False
             if not matched:
-                qsearch_hits = quick_wd_search(name)
+                try:
+                    qsearch_hits = self.search_wikidata(name)
+                except Exception as e:  # noqa: BLE001 - one failed search must not sink the university
+                    logger.warning("Wikidata search failed for '%s' (%s); leaving it unresolved", name, e)
+                    qsearch_hits = []
+                    search_failed = True
                 choices = direct_children + [
                     (qid, lbl) for qid, lbl in qsearch_hits if qid not in direct_qids
                 ]
-                matched = LLMHelper.choose_match(name, self.university_label, choices)
+                try:
+                    matched = LLMHelper.choose_match(name, self.university_label, choices)
+                except LLMUnavailable as e:
+                    # No provider gave an answer (all failed or replied with nothing).
+                    # That is not a NONE: the candidate stays unresolved.
+                    logger.warning("No match decision for '%s' (%s); leaving it unresolved", name, e)
+                    matched = None
+                    search_failed = True
 
             # step 3: classify the outcome
-            if matched is None:
+            if matched is None and search_failed:
+                # We could not check Wikidata, or nobody could judge the match, so we do
+                # not know. Never call it missing: that would create a duplicate on
+                # upload. Recorded for a rerun or review.
+                status = "unresolved"
+                counts["unresolved"] += 1
+                missing.append(
+                    {
+                        "name": name,
+                        "unit_type": division.get("unit_type", "faculty"),
+                        "url": division.get("website", ""),
+                        "university_qid": self.university_qid,
+                        "university_label": self.university_label,
+                        "status": "unresolved",
+                    }
+                )
+            elif matched is None:
                 status = "missing"
                 counts["missing"] += 1
                 missing.append(
@@ -202,32 +267,46 @@ class Discovery:
 
         console.print(table)
 
-        if missing:
+        # Unresolved candidates were never checked against Wikidata. They go to the
+        # report (names kept for a rerun or a reviewer), not to the CSV or the
+        # QuickStatements file, which hold only what a person may upload after review.
+        exportable = [r for r in missing if r.get("status") != "unresolved"]
+        unresolved = [r for r in missing if r.get("status") == "unresolved"]
+        if exportable:
             RESULTS_DIR.mkdir(parents=True, exist_ok=True)
             out_file = RESULTS_DIR / f"missing_divisions_{self.university_qid}.csv"
-            pd.DataFrame(missing).to_csv(out_file, index=False)
+            pd.DataFrame(exportable).to_csv(out_file, index=False)
             console.print(
-                f"[green]{len(missing)} missing divisions written to {out_file}.[/green]"
+                f"[green]{len(exportable)} missing or orphaned divisions written to {out_file}.[/green]"
             )
-            #quickstatements export 
+            #quickstatements export
             from wikidata_discover.to_qs_wikidata import export_quickstatements
             export_quickstatements(
-                missing,
+                exportable,
                 self.university_qid,
-                self.university_label
+                self.university_label,
+                out_dir=RESULTS_DIR,
             )
         else:
             console.print(
                 "[green]No missing divisions detected - Wikidata seems up to date![/green]"
+            )
+        if unresolved:
+            console.print(
+                f"[yellow]{len(unresolved)} candidate(s) could not be checked and are listed in the "
+                f"report only; rerun or review them.[/yellow]"
             )
 
         report = {
             "university_qid": self.university_qid,
             "university_label": self.university_label,
             "total_candidates": len(divisions),
+            "extraction_provider": llm_helpers.last_extraction_provider,
             "exists_linked": counts["exists_linked"],
             "exists_orphan": counts["exists_orphan"],
             "missing": counts["missing"],
+            "unresolved": counts["unresolved"],
+            "unresolved_candidates": [{"name": r["name"], "url": r.get("url", "")} for r in unresolved],
         }
         reports_dir = RESULTS_DIR / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
@@ -238,6 +317,19 @@ class Discovery:
         return missing
     
 #helper functions for matching logic
+def clear_exports(qid: str, results_dir: Path = None) -> int:
+    """Remove the CSV and QuickStatements files an earlier run wrote for this
+    university, so that a run which finds nothing leaves no stale statements behind.
+    The batch runner does the same before every attempt. Returns how many were removed."""
+    results_dir = RESULTS_DIR if results_dir is None else results_dir
+    removed = 0
+    for p in (results_dir / f"missing_divisions_{qid}.csv", results_dir / f"quickstatements_{qid}.qs"):
+        if p.exists():
+            p.unlink()
+            removed += 1
+    return removed
+
+
 def normalize_name(name: str) -> str:
     """Generic normalizer for academic division names."""
     name = name.lower().strip()
@@ -246,7 +338,10 @@ def normalize_name(name: str) -> str:
     name = re.sub(r"\b(the|of|for|and|at|by)\b", " ", name)
     name = re.sub(r"&", " and ", name)
     name = re.sub(r"\b[a-z]\.? ?[a-z]\.? ", "", name)  # removes "n.", "a. b."
-    name = re.sub(r"[^a-z\s]", "", name)
+    # Keep letters in any script (Chinese, Arabic, accented Latin), drop digits,
+    # punctuation and symbols. An ASCII-only filter would reduce every
+    # non-Latin name to the same empty string.
+    name = re.sub(r"[^\w\s]|[\d_]", "", name)
     name = re.sub(r"\s+", " ", name)
     return name.strip()
 
@@ -254,6 +349,9 @@ def normalize_name(name: str) -> str:
 
 def is_fuzzy_match(a: str, b: str) -> bool:
     na, nb = normalize_name(a), normalize_name(b)
+
+    if not na or not nb:
+        return False  # nothing left to compare; never match on emptiness
 
     if na == nb:
         return True

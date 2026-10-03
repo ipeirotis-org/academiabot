@@ -7,12 +7,10 @@ import hashlib
 from pathlib import Path
 
 from wikidata_discover import config
-from wikidata_discover.config import (
-    OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY,
-    require_key,
-)
-# Model names are read from config at call time (config.LLM_MODEL etc.), never
-# captured at import, so that the CLI --llm override and tests can change them.
+from wikidata_discover.config import require_key
+# Model names and API keys are read from config at call time (config.LLM_MODEL,
+# config.OPENAI_API_KEY etc.), never captured at import, so that the CLI --llm
+# override, Secret Manager loading in batch.py, and tests can change them.
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -92,13 +90,71 @@ _CACHE_DIR = Path(__file__).parent / "results" / "cache"
 _openai_client = None
 _anthropic_client = None
 _gemini_client = None
+LLM_TIMEOUT_S = 180  # one LLM request; the SDK defaults (10 minutes) are too long for a timed slice
+_MIN_TIME_FOR_LLM_CALL_S = 30  # below this much time before config.DEADLINE, no LLM call is started
+
+
+class LLMUnavailable(RuntimeError):
+    """Raised by choose_match when no provider produced a usable answer (every one
+    failed, was not configured, or replied with nothing). It is not a NONE: the
+    caller leaves the candidate unresolved instead of calling it missing."""
+
+
+class LLMDeadline(RuntimeError):
+    """Raised when a decision could not be asked for because the process deadline
+    is too close. The attempt fails and is retried; it is never an answer."""
+
+
+def llm_timeout() -> float:
+    """Timeout for one LLM request: LLM_TIMEOUT_S, or less when config.DEADLINE is
+    closer (never below 5 seconds)."""
+    left = config.seconds_left()
+    return LLM_TIMEOUT_S if left is None else max(5.0, min(LLM_TIMEOUT_S, left))
+
+
+LLM_MAX_RETRIES = 2   # the OpenAI and Anthropic SDK default
+
+
+def llm_retries() -> int:
+    """How many times the OpenAI or Anthropic SDK may retry one request. The SDK
+    applies the timeout to each try, so the tries together must still fit before
+    config.DEADLINE: the default 2 when there is room, fewer when there is not."""
+    left = config.seconds_left()
+    if left is None:
+        return LLM_MAX_RETRIES
+    return max(0, min(LLM_MAX_RETRIES, int(left // llm_timeout()) - 1))
+
+
+def _client_options() -> dict:
+    """with_options() arguments for one OpenAI or Anthropic request: a timeout and a
+    retry count that together end before the deadline."""
+    return {"timeout": llm_timeout(), "max_retries": llm_retries()}
+
+
+def _gemini_http_options():
+    """Per-request Gemini timeout, capped at the deadline like the other providers."""
+    from google.genai import types as genai_types
+    return genai_types.HttpOptions(timeout=int(llm_timeout() * 1000))
+
+
+def enough_time_for_llm_call() -> bool:
+    """False once config.DEADLINE is too close to start another LLM request."""
+    left = config.seconds_left()
+    return left is None or left >= _MIN_TIME_FOR_LLM_CALL_S
+
+
+def reset_clients() -> None:
+    """Forget the cached provider clients so the next call builds them from the
+    current keys in config (used after a key is loaded or rotated)."""
+    global _openai_client, _anthropic_client, _gemini_client
+    _openai_client = _anthropic_client = _gemini_client = None
 
 
 def _get_openai_client():
     global _openai_client
     if _openai_client is None:
         from openai import OpenAI
-        _openai_client = OpenAI(api_key=require_key("OPENAI_API_KEY", OPENAI_API_KEY))
+        _openai_client = OpenAI(api_key=require_key("OPENAI_API_KEY", config.OPENAI_API_KEY), timeout=LLM_TIMEOUT_S)
     return _openai_client
 
 
@@ -107,7 +163,7 @@ def _get_anthropic_client():
     if _anthropic_client is None:
         import anthropic
         _anthropic_client = anthropic.Anthropic(
-            api_key=require_key("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY)
+            api_key=require_key("ANTHROPIC_API_KEY", config.ANTHROPIC_API_KEY), timeout=LLM_TIMEOUT_S
         )
     return _anthropic_client
 
@@ -116,7 +172,9 @@ def _get_gemini_client():
     global _gemini_client
     if _gemini_client is None:
         from google import genai
-        _gemini_client = genai.Client(api_key=require_key("GOOGLE_API_KEY", GOOGLE_API_KEY))
+        from google.genai import types as genai_types
+        _gemini_client = genai.Client(api_key=require_key("GOOGLE_API_KEY", config.GOOGLE_API_KEY),
+                                      http_options=genai_types.HttpOptions(timeout=int(LLM_TIMEOUT_S * 1000)))
     return _gemini_client
 
 # ─────────────────────────  NAME MATCHING  ─────────────────────────
@@ -130,16 +188,46 @@ def _names_match(a: str, b: str) -> bool:
     return na == nb or fuzz.token_sort_ratio(na, nb) >= 88
 
 
-def _cache_key(univ_label: str, provider: str, model: str) -> str:
-    """Cache key includes provider to avoid collisions between providers."""
-    return hashlib.sha256(f"{provider}|{univ_label}|{model}".encode()).hexdigest()
+def _prompt_hash(*parts: Any) -> str:
+    """Short hash of the prompt text and schema a call uses, so a changed prompt
+    never reads an answer produced by the old one."""
+    return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+EXTRACT_PROMPT_HASH = _prompt_hash(SYSTEM_EXTRACT, UNIVERSITY_UNITS_SCHEMA)
+
+
+def _cache_key(univ_label: str, provider: str, model: str, purpose: str = "extract",
+               prompt_hash: str = EXTRACT_PROMPT_HASH, extra: str = "") -> str:
+    """Cache key: provider, model, purpose, university, the hash of the prompt and
+    schema (so a new prompt gets a new file), and `extra` for anything else the
+    request depends on (the website, so two institutions with one name differ)."""
+    return hashlib.sha256(f"{provider}|{purpose}|{prompt_hash}|{univ_label}|{model}|{extra}".encode()).hexdigest()
+
+
+# Cache files read or written since the last reset. A batch runner uses this to
+# upload exactly the cache entries a run depended on, including old ones it reused.
+cache_paths_touched: set = set()
+
+# The provider whose answer the last extract_divisions_best_available() call used
+# (None before any call, or when every provider failed). Recorded per university.
+last_extraction_provider = None
+
+
+def available_providers() -> dict:
+    """Which providers have a key right now, in call order. Recorded with every run so
+    a replay with a different set of keys cannot pass for the same configuration."""
+    return {"openai": bool(config.OPENAI_API_KEY), "anthropic": bool(config.ANTHROPIC_API_KEY),
+            "gemini": bool(config.GOOGLE_API_KEY)}
 
 
 def _load_cache(key: str) -> Optional[List[Dict[str, Any]]]:
     path = _CACHE_DIR / f"{key}.json"
     if path.exists():
         try:
-            return json.loads(path.read_text())
+            data = json.loads(path.read_text())
+            cache_paths_touched.add(path)
+            return data
         except Exception:
             pass
     return None
@@ -147,7 +235,9 @@ def _load_cache(key: str) -> Optional[List[Dict[str, Any]]]:
 
 def _save_cache(key: str, units: List[Dict[str, Any]]) -> None:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    (_CACHE_DIR / f"{key}.json").write_text(json.dumps(units, indent=2))
+    path = _CACHE_DIR / f"{key}.json"
+    path.write_text(json.dumps(units, indent=2))
+    cache_paths_touched.add(path)
 
 
 def _parse_json_text(text: str) -> Any:
@@ -202,7 +292,7 @@ class LLMHelper:
     def extract_divisions_openai(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using OpenAI API."""
         model = config.LLM_MODEL
-        key = _cache_key(univ_label, "openai", model)
+        key = _cache_key(univ_label, "openai", model, extra=website or "")
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_openai: cache hit for %s", univ_label)
@@ -211,8 +301,11 @@ class LLMHelper:
         client = _get_openai_client()
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
+            if not enough_time_for_llm_call():
+                logger.warning("extract_divisions_openai: deadline too close, not calling for %s", univ_label)
+                break
             try:
-                resp = client.responses.create(
+                resp = client.with_options(**_client_options()).responses.create(
                     model=model,
                     input=[
                         {"role": "system", "content": SYSTEM_EXTRACT},
@@ -266,7 +359,7 @@ class LLMHelper:
     def extract_divisions_anthropic(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using Anthropic Claude API."""
         model = config.ANTHROPIC_MODEL
-        key = _cache_key(univ_label, "anthropic", model)
+        key = _cache_key(univ_label, "anthropic", model, extra=website or "")
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_anthropic: cache hit for %s", univ_label)
@@ -275,8 +368,11 @@ class LLMHelper:
         client = _get_anthropic_client()
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
+            if not enough_time_for_llm_call():
+                logger.warning("extract_divisions_anthropic: deadline too close, not calling for %s", univ_label)
+                break
             try:
-                resp = client.messages.create(
+                resp = client.with_options(**_client_options()).messages.create(
                     model=model,
                     max_tokens=2048,
                     system=SYSTEM_EXTRACT,
@@ -332,7 +428,7 @@ class LLMHelper:
     def extract_divisions_gemini(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using Google Gemini API."""
         model = config.GEMINI_MODEL
-        key = _cache_key(univ_label, "gemini", model)
+        key = _cache_key(univ_label, "gemini", model, extra=website or "")
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_gemini: cache hit for %s", univ_label)
@@ -341,6 +437,9 @@ class LLMHelper:
         client = _get_gemini_client()
 
         for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
+            if not enough_time_for_llm_call():
+                logger.warning("extract_divisions_gemini: deadline too close, not calling for %s", univ_label)
+                break
             try:
                 from google.genai import types as genai_types
 
@@ -349,13 +448,14 @@ class LLMHelper:
                     contents=[
                         genai_types.Content(
                             parts=[
-                                genai_types.Part.from_text(f"System: {SYSTEM_EXTRACT}\n\nInput: {univ_label} -- {website}")
+                                genai_types.Part.from_text(text=f"System: {SYSTEM_EXTRACT}\n\nInput: {univ_label} -- {website}")
                             ]
                         )
                     ],
-                    generation_config=genai_types.GenerationConfig(
+                    config=genai_types.GenerateContentConfig(
                         temperature=0.7,
                         max_output_tokens=2048,
+                        http_options=_gemini_http_options(),
                     ),
                 )
 
@@ -410,6 +510,8 @@ class LLMHelper:
         Falls back to next provider if current one fails or is not configured.
         Raises ValueError if no providers are available.
         """
+        global last_extraction_provider
+        last_extraction_provider = None
         providers = [
             ("openai", LLMHelper.extract_divisions_openai),
             ("anthropic", LLMHelper.extract_divisions_anthropic),
@@ -422,6 +524,7 @@ class LLMHelper:
                 result = extractor(univ_label, website)
                 if result:  # Successfully extracted non-empty list
                     logger.info("extract_divisions_best_available: %s returned %d units", provider_name, len(result))
+                    last_extraction_provider = provider_name
                     return result
                 else:
                     logger.debug("extract_divisions_best_available: %s returned empty list", provider_name)
@@ -433,11 +536,12 @@ class LLMHelper:
                 logger.warning("extract_divisions_best_available: %s raised error (%s), trying next", provider_name, e)
                 continue
 
-        logger.error("extract_divisions_best_available: all providers failed or unavailable for %s", univ_label)
+        logger.error("extract_divisions_best_available: all providers failed, unavailable, or empty for %s", univ_label)
         raise ValueError(
-            f"No LLM providers available for extraction. "
-            f"Please configure at least one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY. "
-            f"University: {univ_label}"
+            f"No LLM provider returned any units for {univ_label!r}: each one was not "
+            f"configured, failed, or answered with an empty list (an empty list usually "
+            f"means the item is not a university). Configure at least one of "
+            f"OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY if none is set."
         )
 
     @staticmethod
@@ -536,8 +640,8 @@ class LLMHelper:
                 from google.genai import types as genai_types
                 resp = client.models.generate_content(
                     model=config.GEMINI_MODEL,
-                    contents=[genai_types.Content(parts=[genai_types.Part.from_text(prompt)])],
-                    generation_config=genai_types.GenerationConfig(max_output_tokens=1024),
+                    contents=[genai_types.Content(parts=[genai_types.Part.from_text(text=prompt)])],
+                    config=genai_types.GenerateContentConfig(max_output_tokens=1024, http_options=_gemini_http_options()),
                 )
                 raw_text = resp.text if resp.text else None
                 # Extract JSON if wrapped in markdown
@@ -593,10 +697,40 @@ class LLMHelper:
             ("gemini", _get_gemini_client, config.GEMINI_MODEL),
         ]
 
+        # A match decision is cached on the full prompt (candidate, university, and
+        # the exact list of choices), the models in use, and which providers are
+        # configured, so a retry of the same university repeats no paid call and
+        # cannot flip an earlier decision. A decision that a fallback provider made
+        # while the preferred one was failing is not reused once the preferred one
+        # is configured again: it is asked afresh and the new answer replaces it.
+        configured = [n for n, on in available_providers().items() if on]
+        match_key = _cache_key(univ_label, "match", "|".join(m for _, _, m in providers),
+                               purpose="match", prompt_hash=_prompt_hash(prompt), extra=",".join(configured))
+        cached = _load_cache(match_key)
+        fallback_cached = None
+        if isinstance(cached, dict) and "answer" in cached:
+            if not configured or cached.get("provider") == configured[0]:
+                return parse_match_answer(cached["answer"], children)
+            # A fallback provider decided while the preferred one was failing. Ask
+            # the preferred one again; if it still fails, the cached decision stands
+            # rather than paying a fallback provider a second time for a new one.
+            fallback_cached = cached
+            logger.info("choose_match: cached answer came from %s, not the preferred %s; asking it again",
+                        cached.get("provider"), configured[0])
+
+        deadline_hit = False
         for provider_name, get_client, model in providers:
+            if fallback_cached is not None and provider_name != configured[0]:
+                logger.info("choose_match: %s still gives no answer; keeping the cached %s decision",
+                            configured[0], fallback_cached.get("provider"))
+                return parse_match_answer(fallback_cached["answer"], children)
+            if not enough_time_for_llm_call():
+                logger.warning("choose_match: deadline too close, not calling for candidate '%s'", candidate)
+                deadline_hit = True
+                break
             try:
                 if provider_name == "openai":
-                    client = get_client()
+                    client = get_client().with_options(**_client_options())
                     resp = client.responses.create(
                         model=model,
                         input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
@@ -605,7 +739,7 @@ class LLMHelper:
                     answer = (resp.output_text or "").strip()
 
                 elif provider_name == "anthropic":
-                    client = get_client()
+                    client = get_client().with_options(**_client_options())
                     resp = client.messages.create(
                         model=model,
                         max_tokens=16,
@@ -616,9 +750,15 @@ class LLMHelper:
                 elif provider_name == "gemini":
                     client = get_client()
                     from google.genai import types as genai_types
+                    # One token is wanted. Gemini counts its thinking against
+                    # max_output_tokens and answers with nothing when thinking uses
+                    # it all, so thinking is off for this classification.
                     resp = client.models.generate_content(
                         model=model,
-                        contents=[genai_types.Content(parts=[genai_types.Part.from_text(prompt)])],
+                        contents=[genai_types.Content(parts=[genai_types.Part.from_text(text=prompt)])],
+                        config=genai_types.GenerateContentConfig(
+                            max_output_tokens=32, http_options=_gemini_http_options(),
+                            thinking_config=genai_types.ThinkingConfig(thinking_budget=0)),
                     )
                     answer = (resp.text or "").strip()
 
@@ -628,10 +768,12 @@ class LLMHelper:
 
                 if answer.upper() == "NONE":
                     logger.debug("choose_match (%s): returned NONE for candidate '%s'", provider_name, candidate)
+                    _save_cache(match_key, {"answer": "NONE", "provider": provider_name})
                     return None
 
                 parsed = parse_match_answer(answer, children)
                 if parsed is not None:
+                    _save_cache(match_key, {"answer": answer, "provider": provider_name})
                     return parsed
 
                 logger.debug("choose_match (%s): answer '%s' did not match any child QID", provider_name, answer)
@@ -645,8 +787,14 @@ class LLMHelper:
                 logger.warning("choose_match: %s failed (%s), trying next provider", provider_name, e)
                 continue
 
-        logger.warning("choose_match: all providers failed for candidate '%s'", candidate)
-        return None
+        if deadline_hit:
+            # Not an answer: nobody was asked. Returning None here would make the
+            # candidate "missing" and export a possible duplicate. Fail the attempt
+            # instead; the university is retried in a later slice.
+            raise LLMDeadline(f"no time left to match candidate {candidate!r} before the deadline")
+        # Not an answer either: every provider failed or said nothing. None would make
+        # the candidate "missing" and export a possible duplicate.
+        raise LLMUnavailable(f"no provider could judge candidate {candidate!r}")
 
 
 def parse_match_answer(answer: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:
