@@ -276,7 +276,7 @@ QuickStatements. Each node:
 | name, aliases | Name as the unit uses it; other names and abbreviations found |
 | unit_type | school, department, program, center, campus, office, other (as `docs/MODELING_RULES.md` defines them) |
 | parent_ids | List of node_ids. Two for a joint unit. The university is the root node |
-| parent_links | One entry per parent: parent_id and whether Wikidata already has P749 from this QID to that parent's QID (present, missing, or not applicable when either side has no QID). Each entry also carries the rank and qualifiers `docs/MODELING_RULES.md` sets for that link (joint units get normal rank and the qualifiers the rules name). The exporter writes one P749 per missing entry, with them, so a joint unit linked to one parent and not the other gets exactly the missing link |
+| parent_links | One entry per parent: parent_id and whether Wikidata already has P749 from this QID to that parent's QID (present, missing, or not applicable when either side has no QID). Each entry also carries the rank and qualifiers `docs/MODELING_RULES.md` sets for that link (joint units get normal rank and the qualifiers the rules name). For an existing item (orphan), the exporter writes one P749 per missing entry, with them, so a joint unit linked to one parent and not the other gets exactly the missing link. For a new item, every entry is "not applicable" and the exporter writes a P749 to every parent |
 | qid | Wikidata QID, or null |
 | country | Country QID for P17, with the evidence it came from (the page, an address, or the Wikidata item). Never assumed from the university: NYU Abu Dhabi and NYU Shanghai are not in the U.S. |
 | node_version | Hash of everything the review sheet shows: name, aliases, description, unit_type, parent_ids, each parent's current name and QID, parent_links, qid, country, alignment, alignment_candidates, wikidata_duplicates, website, source_url, and the content hashes of the evidence. Changes whenever any of them changes, so new alignment evidence also sends a unit back for review |
@@ -296,10 +296,12 @@ The export emits no statement for a linked unit and lists it in the manifest as 
 Which verdicts authorize a unit is read from `review_protocol.json` (number of accepts,
 whether a reject blocks, which sources count, `url_checked` required); the export and the
 pre-upload check both refuse to run when it is missing or invalid. Accepts are counted per
-distinct reviewer (the reviewer's latest verdict on that version), never per row. A "fix"
+distinct reviewer, never per row: the reviewer's latest blind-pass verdict on that version is
+the one that counts toward the accepts, and the reviewer's latest verdict in either pass blocks
+if it is a reject. A "fix"
 verdict is applied to the hierarchy file and the affected steps are rerun: a corrected source
 URL is fetched and saved, a corrected country or parent link must come with its own URL,
-which is fetched and saved as that fact's evidence, a corrected QID or parent goes back through alignment so that
+which is fetched and saved as that fact's evidence, a correction to anything alignment searches with (name, aliases, type, website, QID, or parent) goes back through alignment so that
 parent_links and alignment are recomputed. That makes a new node version, which needs its own
 accept before export. Right before each
 upload batch (schools, then departments), alignment for that level is rerun against current
@@ -324,7 +326,7 @@ request (Shuo's week 3) carry a sample number in the cache key, so they are dist
 replay deterministically. Cited URLs are untrusted input: fetch only `http`/`https`, refuse
 non-public addresses (loopback, private, link-local, metadata) on the first request and every
 redirect, and cap redirects (5), size (5 MB), and time (20 s). Connect to the address that was checked
-(resolve once, then connect to that IP), so DNS rebinding cannot reach a private address. Cache keys include the prompt
+(resolve once, then connect to that IP), so DNS rebinding cannot reach a private address. Cache keys include the whole request configuration (provider, model, tools such as web search or grounding, extraction mode, sample number), so a search-on run never reads a search-off answer. Cache keys include the prompt
 hash. Local JSON under `results/runs/` is the fallback when GCP is unreachable. Keys come from
 Secret Manager when `.env` has none (see "Secret Manager" below).
 

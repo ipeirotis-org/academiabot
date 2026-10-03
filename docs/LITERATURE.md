@@ -336,7 +336,9 @@ question A1.
   Accuracy." PVLDB 17(9). https://doi.org/10.14778/3665844.3665865
   - Finding: when accuracy is high, the usual (Wald) interval breaks: it can have zero
     width or pass 1. Use Wilson intervals instead.
-  - For us: our precision is near 0.95, so always report Wilson intervals.
+  - For us: our precision is near 0.95, so report Wilson intervals for precision measured on
+    human labels alone. An estimate that also uses verifier labels (S2) needs the
+    prediction-powered inference interval instead, which accounts for the verifier's errors.
 - **Ojha, Talukdar (2017),** KGEval, EMNLP 2017, https://aclanthology.org/D17-1183/, and
   **Qi et al. (2022),** KDD 2022, https://doi.org/10.1145/3534678.3539233
   - Finding: one human judgment can settle related facts.
