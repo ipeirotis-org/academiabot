@@ -279,7 +279,7 @@ QuickStatements. Each node:
 | parent_links | One entry per parent: parent_id and whether Wikidata already has P749 from this QID to that parent's QID (present, missing, or not applicable when either side has no QID). Each entry also carries the rank and qualifiers `docs/MODELING_RULES.md` sets for that link (joint units get normal rank and the qualifiers the rules name). The exporter writes one P749 per missing entry, with them, so a joint unit linked to one parent and not the other gets exactly the missing link |
 | qid | Wikidata QID, or null |
 | country | Country QID for P17, with the evidence it came from (the page, an address, or the Wikidata item). Never assumed from the university: NYU Abu Dhabi and NYU Shanghai are not in the U.S. |
-| node_version | Hash of everything the review sheet shows: name, aliases, unit_type, parent_ids, parent_links, qid, country, alignment, alignment_candidates, wikidata_duplicates, website, source_url, and the content hashes of the evidence. Changes whenever any of them changes, so new alignment evidence also sends a unit back for review |
+| node_version | Hash of everything the review sheet shows: name, aliases, unit_type, parent_ids, each parent's current name and QID, parent_links, qid, country, alignment, alignment_candidates, wikidata_duplicates, website, source_url, and the content hashes of the evidence. Changes whenever any of them changes, so new alignment evidence also sends a unit back for review |
 | alignment | Summary of parent_links: linked (QID, and P749 present to every parent), orphan (QID, and P749 missing to at least one parent; a unit connected only through P361, P527, P355, or P199 counts as missing, so the export adds the P749), new (no item; searched), uncertain (could not decide; never exported) |
 | alignment_candidates | QIDs considered, how each was found (prefix search, full-text search, website, parent), and the reason for the choice |
 | wikidata_duplicates | QIDs that look like a second item for the same unit on Wikidata; flagged for a person, never merged by us |
@@ -293,9 +293,13 @@ other node. Otherwise a school the LLM forgot would drop out with all its depart
 
 The export emits no statement for a linked unit and lists it in the manifest as already linked.
 Which verdicts authorize a unit is read from `review_protocol.json` (number of accepts,
-whether a reject blocks, which sources count, `url_checked` required). A "fix" verdict is
-applied to the hierarchy file, which makes a new node version (a corrected source URL is
-fetched and saved first), and that version needs its own accept before export. Right before a
+whether a reject blocks, which sources count, `url_checked` required); the export and the
+pre-upload check both refuse to run when it is missing or invalid. Accepts are counted per
+distinct reviewer (the reviewer's latest verdict on that version), never per row. A "fix"
+verdict is applied to the hierarchy file and the affected steps are rerun: a corrected source
+URL is fetched and saved, a corrected QID or parent goes back through alignment so that
+parent_links and alignment are recomputed. That makes a new node version, which needs its own
+accept before export. Right before a
 first upload, alignment is rerun against current Wikidata, and changed nodes go back for review.
 
 Export is staged by level. A department whose parent is new has no parent QID yet, so it is
@@ -311,7 +315,8 @@ Rules: write the raw LLM response to storage before parsing it. Repeated samples
 request (Shuo's week 3) carry a sample number in the cache key, so they are distinct calls that
 replay deterministically. Cited URLs are untrusted input: fetch only `http`/`https`, refuse
 non-public addresses (loopback, private, link-local, metadata) on the first request and every
-redirect, and cap redirects (5), size (5 MB), and time (20 s). Cache keys include the prompt
+redirect, and cap redirects (5), size (5 MB), and time (20 s). Connect to the address that was checked
+(resolve once, then connect to that IP), so DNS rebinding cannot reach a private address. Cache keys include the prompt
 hash. Local JSON under `results/runs/` is the fallback when GCP is unreachable. Keys come from
 Secret Manager when `.env` has none (see "Secret Manager" below).
 
@@ -327,7 +332,10 @@ node id registers at `gs://academiabot/hierarchy/<QID>/ids.json`, which must sur
 runs. Every run that builds a hierarchy loads the register at the start, writes it back at the
 end with a generation-match precondition (so two runs never silently overwrite each other; on
 a conflict, reload and redo the assignment), and keeps a local copy under
-`results/hierarchy/<QID>/` as the offline fallback.
+`results/hierarchy/<QID>/`. The local copy is read-only: when the bucket register cannot be
+read or written, the run assigns no new ids and writes no hierarchy file (the rest of the run
+log still goes to `results/runs/`), so ids are only ever allocated against the canonical
+register.
 
 ```mermaid
 flowchart LR
