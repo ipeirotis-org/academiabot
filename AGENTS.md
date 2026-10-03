@@ -329,7 +329,8 @@ flowchart LR
 - `needs_review` in every summary and end record: universities given up on after 3 attempts.
   They are skipped by later slices, not finished. Their log records say why.
 - Deployed 2026-10-02: function `academiabot-collect` (us-east1), scheduler job
-  `academiabot-collect-slice` (paused). The Cloud Functions, Run, Build, Artifact Registry,
+  `academiabot-collect-slice`. Run `us-tier1` (1,519 institutions) was started on 2026-10-03 at
+  04:38 UTC by resuming the job; progress is in `gs://academiabot/runs/us-tier1/log.jsonl`. The Cloud Functions, Run, Build, Artifact Registry,
   Scheduler, Eventarc, and Resource Manager APIs are enabled. The service account cannot
   enable APIs; a project owner does that.
 - Test one slice by hand (spends a little LLM credit):
