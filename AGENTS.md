@@ -238,7 +238,7 @@ same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, we
 
 | Table | One row per | Must contain |
 |---|---|---|
-| `runs` | command invocation | run_id, who, git commit, the exact command and arguments (subcommand, QIDs, flags), config (providers, models, depth), start and end time, outcome |
+| `runs` | command invocation | run_id, invocation_id (a resumable cloud run keeps one run_id across many scheduled invocations, so each invocation has its own id and row), who, git commit, the exact command and arguments (subcommand, QIDs, flags), config (providers, models, depth), start and end time, outcome |
 | `llm_calls` | API call | llm_call_id, run_id, provider, model, purpose (extract, judge, match, verify), prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
 | `evidence` | web page fetched | evidence_id, run_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
 | `candidates` | unit proposed | candidate_id, run_id, parent_qid (or parent_candidate_id when the parent has no QID), name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, provider, llm_call_ids, evidence_ids |
@@ -247,7 +247,9 @@ same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, we
 | `reviews` | one reviewer's verdict on one unit | review_id, node_id or candidate_id, run_id and node_version of what was shown (or the candidate's evidence content hash), shown_hash (hash of the whole review row as displayed, checks and confidence included), reviewer, source (expert, prolific), pass or arm (blind: checks hidden; shown: checks visible), verdict (accept, reject, fix), corrections (field to corrected value, for any value the export writes, including each parent link's target, rank, qualifiers, and source), url_checked (one yes/no per evidence page shown), notes, reviewed_at |
 
 Every table has its own stable id so that the `llm_call_ids` and `evidence_ids` of a candidate
-or a check resolve to exact rows. Reviews are append-only: a second reviewer adds a row, never
+or a check resolve to exact rows. `llm_calls`, `evidence`, `candidates`, `nodes`, and `checks`
+rows carry the invocation_id as well as the run_id, so each row leads to the exact invocation,
+arguments, and time that produced it. Reviews are append-only: a second reviewer adds a row, never
 overwrites one, so agreement between reviewers can be computed. Checks are append-only too. The
 export honors the reviews a protocol says it should (for example, two accepts and no reject),
 and only reviews whose node_version equals the node's current version: node ids are reused
@@ -276,7 +278,7 @@ QuickStatements. Each node:
 | name, aliases | Name as the unit uses it; other names and abbreviations found |
 | unit_type | school, department, program, center, campus, office, other (as `docs/MODELING_RULES.md` defines them) |
 | parent_ids | List of node_ids. Two for a joint unit. The university is the root node. A parent in another university's hierarchy is written `<owner QID>/<node_id>` |
-| parent_links | One entry per parent: parent_id and whether Wikidata already has P749 from this QID to that parent's QID (present, present but different, missing, or not applicable when either side has no QID). Each entry also carries the rank and qualifiers `docs/MODELING_RULES.md` sets for that link (joint units get normal rank and the qualifiers the rules name); "present but different" means the existing statement's rank or qualifiers differ from those, and the entry records both. For an existing item (orphan), the exporter writes one P749 per missing entry, with them, so a joint unit linked to one parent and not the other gets exactly the missing link. For a "present but different" entry it writes the missing qualifiers onto the existing statement (QuickStatements adds them to a statement with the same value); a rank, or a qualifier value, that differs is listed in the manifest as a hand edit for a person, with the existing and expected values, because QuickStatements cannot change a rank and changing another editor's statement is a judgment call. For a new item, every entry is "not applicable" and the exporter writes a P749 to every parent |
+| parent_links | One entry per parent: parent_id and whether Wikidata already has P749 from this QID to that parent's QID (present, present but different, missing, or not applicable when either side has no QID). Each entry also carries the rank and qualifiers `docs/MODELING_RULES.md` sets for that link (joint units get normal rank and the qualifiers the rules name); "present but different" means the existing statement's rank or qualifiers differ from those, and the entry records both. For an existing item (orphan), the exporter writes one P749 per missing entry, with them, so a joint unit linked to one parent and not the other gets exactly the missing link. For a "present but different" entry it writes the missing qualifiers onto the existing statement only when that item has exactly one P749 statement with that parent as its value (QuickStatements adds qualifiers to the first statement with the same value and cannot pick one by statement id); with two or more, the whole correction goes into the manifest as a hand edit; a rank, or a qualifier value, that differs is listed in the manifest as a hand edit for a person, with the existing and expected values, because QuickStatements cannot change a rank and changing another editor's statement is a judgment call. For a new item, every entry is "not applicable" and the exporter writes a P749 to every parent |
 | qid | Wikidata QID, or null |
 | country | Country QID for P17, with the evidence it came from (the page, an address, or the Wikidata item). Never assumed from the university: NYU Abu Dhabi and NYU Shanghai are not in the U.S. |
 | node_version | Hash of everything the review sheet shows: name, aliases, description, unit_type, parent_ids, each parent's current name and QID, parent_links, qid, country, alignment, alignment_candidates, wikidata_duplicates, website, source_url, and the content hashes of the evidence. Changes whenever any of them changes, so new alignment evidence also sends a unit back for review |
@@ -352,7 +354,9 @@ end with a generation-match precondition (so two runs never silently overwrite e
 a conflict, reload and redo the assignment), and keeps a local copy under
 `results/hierarchy/<QID>/`. `cross_register.json` is written the same way: generation-match
 precondition, and on a conflict reload, reapply this run's decisions, and retry, so two people
-resolving different pairs at once both keep their answers. The local copy is read-only: when the bucket register cannot be
+resolving different pairs at once both keep their answers. Only decisions on pairs the reloaded
+file does not already have are reapplied; when it already has a different answer for the same
+pair, the write stops and both answers go to a person, so neither silently wins. The local copy is read-only: when the bucket register cannot be
 read or written, the run assigns no new ids and writes no hierarchy file (the rest of the run
 log still goes to `results/runs/`), so ids are only ever allocated against the canonical
 register.
