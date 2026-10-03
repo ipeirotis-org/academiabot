@@ -707,14 +707,23 @@ class LLMHelper:
         match_key = _cache_key(univ_label, "match", "|".join(m for _, _, m in providers),
                                purpose="match", prompt_hash=_prompt_hash(prompt), extra=",".join(configured))
         cached = _load_cache(match_key)
+        fallback_cached = None
         if isinstance(cached, dict) and "answer" in cached:
             if not configured or cached.get("provider") == configured[0]:
                 return parse_match_answer(cached["answer"], children)
-            logger.info("choose_match: cached answer came from %s, not the preferred %s; asking again",
+            # A fallback provider decided while the preferred one was failing. Ask
+            # the preferred one again; if it still fails, the cached decision stands
+            # rather than paying a fallback provider a second time for a new one.
+            fallback_cached = cached
+            logger.info("choose_match: cached answer came from %s, not the preferred %s; asking it again",
                         cached.get("provider"), configured[0])
 
         deadline_hit = False
         for provider_name, get_client, model in providers:
+            if fallback_cached is not None and provider_name != configured[0]:
+                logger.info("choose_match: %s still gives no answer; keeping the cached %s decision",
+                            configured[0], fallback_cached.get("provider"))
+                return parse_match_answer(fallback_cached["answer"], children)
             if not enough_time_for_llm_call():
                 logger.warning("choose_match: deadline too close, not calling for candidate '%s'", candidate)
                 deadline_hit = True

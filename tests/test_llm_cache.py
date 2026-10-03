@@ -101,3 +101,18 @@ def test_match_cache_is_keyed_by_the_configured_providers(monkeypatch, tmp_path)
     assert len(openai_calls) == 2
     assert LLMHelper.choose_match("Law School", "NYU", children) is None
     assert len(openai_calls) == 2                                          # replaced answer is reused
+    # Same configuration, cached fallback answer, and the preferred provider still
+    # failing: the cached decision stands and the fallback is not paid again.
+    for p in tmp_path.glob("*.json"):
+        if json.loads(p.read_text()).get("provider") == "openai":
+            p.write_text(json.dumps({"answer": "Q2", "provider": "anthropic"}))
+    class OpenAIDown:
+        def with_options(self, **kw): return self
+        class responses:
+            @staticmethod
+            def create(**kw): openai_calls.append(1); raise RuntimeError("503")
+    monkeypatch.setattr(lh, "_get_openai_client", lambda: OpenAIDown())
+    assert LLMHelper.choose_match("Law School", "NYU", children) == ("Q2", "School of Law")
+    assert len(openai_calls) == 3 and len(anthropic_calls) == 1            # asked once, fallback not called
+    assert json.loads(next(p for p in tmp_path.glob("*.json")
+                           if json.loads(p.read_text()).get("provider") == "anthropic").read_text())["answer"] == "Q2"

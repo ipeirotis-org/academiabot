@@ -626,17 +626,25 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
                             "ended": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                             "outcome": summary["outcome"], "summary": summary}) + "\n")
     try:
+        # The end record first: it is the one file nothing later can replace, and a
+        # stalled upload of anything else must not cost it the time it needs.
+        upload([run_dir / "invocations.jsonl"])
         upload(run_dir_files(run_dir))
     except Exception as e:  # noqa: BLE001
         report(f"final run metadata upload failed: {type(e).__name__}: {str(e)[:120]}")
         summary["outcome"] = "failed"
         summary["failed"] = max(summary["failed"], 1)  # usually the same outage already counted
         # The end record above says the earlier outcome; correct it locally so that a
-        # later upload (same instance, next slice) carries the true outcome.
+        # later upload (same instance, next slice) carries the true outcome, and try
+        # once more to get the corrected history out while time remains.
         with (run_dir / "invocations.jsonl").open("a") as f:
             f.write(json.dumps({"invocation_id": invocation_id, "started": invocation["started"], "host": invocation["host"],
                                 "ended": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                 "outcome": "failed", "summary": summary,
                                 "note": f"final run metadata upload failed: {type(e).__name__}"}) + "\n")
+        try:
+            upload([run_dir / "invocations.jsonl"])
+        except Exception as e2:  # noqa: BLE001
+            report(f"invocation history upload failed again: {type(e2).__name__}: {str(e2)[:120]}")
     clear_deadlines()
     return summary

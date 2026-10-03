@@ -188,11 +188,13 @@ def test_collect_treats_malformed_json_as_a_bad_request(monkeypatch):
     calls = {}
     monkeypatch.setattr(cf, "load_keys_from_secret_manager", lambda: None)
     monkeypatch.setattr(cf, "ensure_user_agent", lambda: None)
-    monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), **kw) or
+    monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), bucket=bucket, **kw) or
                         {"run_id": run_id, "failed": 1, "outcome": "failed"})
+    store = {"universities_us.json": json.dumps([["Q1", "a"]])}
+    healthy = FakeBucket(store)
     class FakeClient:
         def __init__(self, project=None): pass
-        def bucket(self, name): raise AssertionError("the bucket must not be touched")
+        def bucket(self, name): return healthy
     import google.cloud.storage as gcs
     monkeypatch.setattr(gcs, "Client", FakeClient)
     class Req:
@@ -201,6 +203,8 @@ def test_collect_treats_malformed_json_as_a_bad_request(monkeypatch):
     with flask.Flask(__name__).app_context():
         resp, status = cf.collect(Req())
     assert status == 207 and calls["qids"] == [] and "not valid JSON" in calls["fail_reason"]
+    assert calls["bucket"] is healthy                                         # the failure is recorded in the bucket
+    assert "__calls__" not in store                                           # but the list was never read
     class Empty:
         data = b"   "
         def get_json(self, silent=True): return None
@@ -272,6 +276,12 @@ def test_collect_records_an_initialisation_failure(monkeypatch):
     monkeypatch.setattr(cf, "load_keys_from_secret_manager", no_keys)
     monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), bucket=bucket, **kw) or
                         {"run_id": run_id, "failed": 1, "outcome": "failed"})
+    healthy = FakeBucket({"universities_us.json": "[]"})
+    class FakeClient:
+        def __init__(self, project=None): pass
+        def bucket(self, name): return healthy
+    import google.cloud.storage as gcs
+    monkeypatch.setattr(gcs, "Client", FakeClient)
     class Req:
         headers = {}
         def get_json(self, silent=True): return {"run_id": "r20"}
@@ -279,7 +289,15 @@ def test_collect_records_an_initialisation_failure(monkeypatch):
         resp, status = cf.collect(Req())
     assert status == 207 and calls["qids"] == []
     assert calls["fail_reason"].startswith("init: RuntimeError: No LLM API key")
-    assert isinstance(calls["bucket"], cf.UnreachableBucket)            # run_batch can still record locally
+    assert calls["bucket"] is healthy                                   # the failure reaches the run history
+    # Only when storage itself cannot be built does run_batch get the stand-in.
+    class NoStorage:
+        def __init__(self, project=None): raise OSError("no credentials")
+    monkeypatch.setattr(gcs, "Client", NoStorage)
+    monkeypatch.setattr(cf, "load_keys_from_secret_manager", lambda: None)
+    with flask.Flask(__name__).app_context():
+        resp, status = cf.collect(Req())
+    assert isinstance(calls["bucket"], cf.UnreachableBucket) and calls["fail_reason"].startswith("storage: OSError")
 
 
 def test_collect_records_a_bad_request(monkeypatch):
@@ -444,6 +462,16 @@ def test_refusals_from_other_instances_are_merged_not_overwritten(stub):
     # Running again changes nothing: the merge is idempotent.
     batch.run_batch("r39", ["Q2"], bucket, results_dir=stub, report=lambda m: None)
     assert bucket.store["runs/r39/refused.jsonl"].splitlines() == [theirs, mine]
+
+
+def test_final_upload_sends_the_end_record_first(stub):
+    bucket = FakeBucket()
+    batch.run_batch("r40", ["Q1"], bucket, results_dir=stub, report=lambda m: None)
+    uploads = [n.rsplit("/", 1)[-1] for op, n, t in bucket.store["__calls__"] if op == "upload"]
+    # The final sequence: the end record on its own, then the run folder, records first.
+    assert uploads[-4:] == ["invocations.jsonl", "log.jsonl", "invocations.jsonl", "run.json"]
+    end = json.loads(bucket.store["runs/r40/invocations.jsonl"].splitlines()[-1])
+    assert end["outcome"] == "ok" and end["ended"]
 
 
 def test_run_dir_files_puts_the_records_first(tmp_path):

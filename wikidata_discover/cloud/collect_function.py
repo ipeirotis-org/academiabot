@@ -173,16 +173,23 @@ def _collect(request, entered: float):
     budget, reserve = p["time_budget_s"], p["reserve_s"]
     args.update({"run_id": run_id, "list_object": None, "max_universities": limit,
                  "time_budget_s": budget, "reserve_s": reserve, "explicit_qids": "qids" in p})
+    # The bucket is built whatever else failed: a bad request or a missing key is
+    # still recorded in the run history, not only on an instance that may vanish.
+    storage_error = None
+    try:
+        from google.cloud import storage
+        bucket = storage.Client(project=PROJECT).bucket(BUCKET)
+    except Exception as e:  # noqa: BLE001
+        storage_error = f"storage: {type(e).__name__}: {str(e)[:200]}"
     if "preflight_error" not in args:
         try:
             load_keys_from_secret_manager()
             ensure_user_agent()
-            from google.cloud import storage
-            bucket = storage.Client(project=PROJECT).bucket(BUCKET)
         except Exception as e:  # noqa: BLE001
             args["preflight_error"] = f"init: {type(e).__name__}: {str(e)[:200]}"
     if bucket is None:
-        bucket = UnreachableBucket(args.get("preflight_error", "no bucket"))
+        args.setdefault("preflight_error", storage_error)
+        bucket = UnreachableBucket(storage_error)
     try:
         if "preflight_error" in args:
             raise RuntimeError(args["preflight_error"])

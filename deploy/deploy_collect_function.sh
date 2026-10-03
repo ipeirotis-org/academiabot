@@ -56,6 +56,13 @@ fi
 SRC=$(mktemp -d)
 cp -r wikidata_discover "$SRC/"
 rm -rf "$SRC"/wikidata_discover/results/cache "$SRC"/wikidata_discover/results/runs "$SRC"/wikidata_discover/results/reports
+# Local secrets and caches never ship: a developer's .env would otherwise be read
+# by the function before Secret Manager and put unrecorded keys into cloud runs.
+find "$SRC" \( -name '.env' -o -name '.env.*' -o -name '*.enc' -o -name '*.pem' -o -name '*credentials*' \
+  -o -name '__pycache__' -o -name '.pytest_cache' \) -prune -exec rm -rf {} +
+if find "$SRC" \( -name '.env' -o -name '.env.*' -o -name '*.enc' \) | grep -q .; then
+  echo "Refusing to deploy: a secrets file is still in the staging tree." >&2; exit 1
+fi
 cp wikidata_discover/cloud/requirements.txt "$SRC/requirements.txt"
 printf 'from wikidata_discover.cloud.collect_function import collect  # noqa: F401\n' > "$SRC/main.py"
 
