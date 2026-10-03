@@ -112,6 +112,25 @@ def llm_timeout() -> float:
     return LLM_TIMEOUT_S if left is None else max(5.0, min(LLM_TIMEOUT_S, left))
 
 
+LLM_MAX_RETRIES = 2   # the OpenAI and Anthropic SDK default
+
+
+def llm_retries() -> int:
+    """How many times the OpenAI or Anthropic SDK may retry one request. The SDK
+    applies the timeout to each try, so the tries together must still fit before
+    config.DEADLINE: the default 2 when there is room, fewer when there is not."""
+    left = config.seconds_left()
+    if left is None:
+        return LLM_MAX_RETRIES
+    return max(0, min(LLM_MAX_RETRIES, int(left // llm_timeout()) - 1))
+
+
+def _client_options() -> dict:
+    """with_options() arguments for one OpenAI or Anthropic request: a timeout and a
+    retry count that together end before the deadline."""
+    return {"timeout": llm_timeout(), "max_retries": llm_retries()}
+
+
 def _gemini_http_options():
     """Per-request Gemini timeout, capped at the deadline like the other providers."""
     from google.genai import types as genai_types
@@ -286,7 +305,7 @@ class LLMHelper:
                 logger.warning("extract_divisions_openai: deadline too close, not calling for %s", univ_label)
                 break
             try:
-                resp = client.with_options(timeout=llm_timeout()).responses.create(
+                resp = client.with_options(**_client_options()).responses.create(
                     model=model,
                     input=[
                         {"role": "system", "content": SYSTEM_EXTRACT},
@@ -353,7 +372,7 @@ class LLMHelper:
                 logger.warning("extract_divisions_anthropic: deadline too close, not calling for %s", univ_label)
                 break
             try:
-                resp = client.with_options(timeout=llm_timeout()).messages.create(
+                resp = client.with_options(**_client_options()).messages.create(
                     model=model,
                     max_tokens=2048,
                     system=SYSTEM_EXTRACT,
@@ -702,7 +721,7 @@ class LLMHelper:
                 break
             try:
                 if provider_name == "openai":
-                    client = get_client().with_options(timeout=llm_timeout())
+                    client = get_client().with_options(**_client_options())
                     resp = client.responses.create(
                         model=model,
                         input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
@@ -711,7 +730,7 @@ class LLMHelper:
                     answer = (resp.output_text or "").strip()
 
                 elif provider_name == "anthropic":
-                    client = get_client().with_options(timeout=llm_timeout())
+                    client = get_client().with_options(**_client_options())
                     resp = client.messages.create(
                         model=model,
                         max_tokens=16,

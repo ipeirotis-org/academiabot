@@ -288,7 +288,9 @@ flowchart LR
 - Hard deadline: the function passes its own timeout (1800 s) to the batch runner, which sets
   `config.DEADLINE` 90 s before it. Wikidata requests, retries, and 429 waits stop at that
   point and no new Wikidata request starts after it; LLM requests time out after 180 s (or
-  sooner, at the deadline) and no LLM call starts in the last 30 s. A university caught by
+  sooner, at the deadline), the OpenAI and Anthropic SDKs retry only as often as still fits
+  before the deadline (their default is 2), and no LLM call starts in the last 30 s. Secret
+  Manager reads carry the same bound as bucket calls. A university caught by
   the deadline fails that attempt (never "missing") and is retried in a later slice, so the
   attempt's records are always written. No university starts once the work deadline is
   closer than the reserve. Every bucket call (the resume reads at the start, uploads,

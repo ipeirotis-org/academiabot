@@ -86,6 +86,48 @@ def test_llm_calls_respect_the_deadline(monkeypatch):
     assert calls == []                                               # no request was even prepared
 
 
+def test_sdk_retries_fit_before_the_deadline(monkeypatch):
+    """The OpenAI and Anthropic SDKs retry twice by default and apply the timeout to
+    each try, so the retry count shrinks with the time left."""
+    import wikidata_discover.llm_helpers as lh
+    monkeypatch.setattr(config, "DEADLINE", None)
+    assert lh._client_options() == {"timeout": 180, "max_retries": 2}
+    monkeypatch.setattr(config, "DEADLINE", time.time() + 1500)
+    assert lh.llm_retries() == 2                                   # 8 tries would fit; keep the default
+    monkeypatch.setattr(config, "DEADLINE", time.time() + 400)
+    assert lh.llm_retries() == 1                                   # 2 tries of 180 s fit, 3 do not
+    monkeypatch.setattr(config, "DEADLINE", time.time() + 50)
+    o = lh._client_options()
+    assert o["max_retries"] == 0 and 40 <= o["timeout"] <= 50     # one try, ending at the deadline
+
+
+def test_secret_manager_reads_are_bounded_by_the_kill_time(monkeypatch):
+    import wikidata_discover.batch as batch
+    from wikidata_discover.sparql_helpers import DeadlineExceeded
+    monkeypatch.setattr(config, "HARD_DEADLINE", None)
+    assert batch.secret_call_kwargs()["timeout"] == 60
+    monkeypatch.setattr(config, "HARD_DEADLINE", time.time() + 40)
+    kw = batch.secret_call_kwargs()
+    assert 25 <= kw["timeout"] <= 30 and kw["retry"]._deadline == kw["timeout"]
+    monkeypatch.setattr(config, "HARD_DEADLINE", time.time() + 5)
+    import pytest
+    with pytest.raises(DeadlineExceeded):
+        batch.secret_call_kwargs()
+    # Through load_keys_from_secret_manager: the read is refused, the key counts as
+    # missing, and with no other key the call fails instead of hanging into the kill.
+    seen = []
+    class SM:
+        def access_secret_version(self, request, **kw):
+            seen.append(kw); raise AssertionError("must not be called")
+    monkeypatch.setattr(batch, "_injected", {})
+    for env in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(env, raising=False); monkeypatch.setattr(config, env, None)
+    with pytest.raises(RuntimeError):
+        batch.load_keys_from_secret_manager(client=SM())
+    assert seen == []
+    monkeypatch.setattr(config, "HARD_DEADLINE", None)
+
+
 def test_no_wikidata_request_starts_after_the_deadline(monkeypatch):
     import pytest
     monkeypatch.setattr(config, "DEADLINE", time.time() - 1)

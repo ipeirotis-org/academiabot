@@ -96,6 +96,19 @@ def _new_secret_manager_client():
     return secretmanager.SecretManagerServiceClient()
 
 
+def secret_call_kwargs() -> dict:
+    """Bound one Secret Manager read by the kill time, like a bucket call: the same
+    timeout, and an api_core retry whose total deadline is that timeout."""
+    timeout = upload_timeout()
+    kwargs = {"timeout": timeout}
+    try:
+        from google.api_core import retry as api_retry
+        kwargs["retry"] = api_retry.Retry(deadline=timeout)
+    except Exception:  # noqa: BLE001 - client library absent: the timeout alone
+        pass
+    return kwargs
+
+
 def load_keys_from_secret_manager(client=None) -> dict:
     """Fill in any missing LLM key from Secret Manager, into this process only.
 
@@ -119,7 +132,8 @@ def load_keys_from_secret_manager(client=None) -> dict:
                 # laptop with keys in .env and no Google credentials still works.
                 if client is None:
                     client = _new_secret_manager_client()
-                value = client.access_secret_version(request={"name": name}).payload.data.decode().strip()
+                value = client.access_secret_version(request={"name": name},
+                                                     **secret_call_kwargs()).payload.data.decode().strip()
                 sources[env] = "secret_manager"
             except Exception as e:  # noqa: BLE001 - one missing optional key must not stop a run
                 logger.warning("Secret %s not available (%s: %s); provider %s disabled", secret, type(e).__name__, str(e)[:120], env)
@@ -450,7 +464,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     summary["needs_review"] = len(parse_exhausted(log_path.read_text())) if log_path.exists() else 0
 
     invocation = {"invocation_id": invocation_id,
-                  "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                  "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),   # before the sync
                   "git_commit": source_identity(run_dir), "operator": operator_identity(),
                   "providers": llm_helpers.available_providers(),
                   "args": invocation_args if invocation_args is not None else {"argv": sys.argv},

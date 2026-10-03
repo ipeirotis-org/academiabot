@@ -501,7 +501,7 @@ def test_secret_manager_keys_reach_config(monkeypatch):
     class Resp:
         def __init__(self, d): self.payload = Payload(d)
     class FakeSM:
-        def access_secret_version(self, request):
+        def access_secret_version(self, request, **kw):
             return Resp(f"secret-for-{request['name'].split('/')[3]}\n".encode())
 
     batch.load_keys_from_secret_manager(client=FakeSM())
@@ -521,7 +521,7 @@ def test_missing_optional_secret_is_tolerated(monkeypatch):
     class Resp:
         def __init__(self, d): self.payload = Payload(d)
     class OnlyOpenAI:
-        def access_secret_version(self, request):
+        def access_secret_version(self, request, **kw):
             if "openai" in request["name"]:
                 return Resp(b"sk-only")
             raise PermissionError("denied")
@@ -531,7 +531,7 @@ def test_missing_optional_secret_is_tolerated(monkeypatch):
     assert config.OPENAI_API_KEY == "sk-only" and config.ANTHROPIC_API_KEY is None
 
     class Nothing:
-        def access_secret_version(self, request):
+        def access_secret_version(self, request, **kw):
             raise PermissionError("denied")
     monkeypatch.setattr(config, "OPENAI_API_KEY", None)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)   # the first call exported it
@@ -732,12 +732,14 @@ def test_run_batch_resumes_from_bucket_and_keeps_invocation_history(stub):
     prior_inv = json.dumps({"started": "earlier", "qids": ["Q1"]}) + "\n"
     bucket = FakeBucket({"runs/r2/log.jsonl": prior_log, "runs/r2/invocations.jsonl": prior_inv,
                          "runs/r2/run.json": "{}"})
+    t0 = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     s = batch.run_batch("r2", ["Q1", "Q2"], bucket, results_dir=stub, report=lambda m: None)
     assert (s["skipped_done"], s["processed"]) == (1, 1)
     assert bucket.store["runs/r2/run.json"] == "{}"                       # never rewritten on resume
     lines = [json.loads(l) for l in bucket.store["runs/r2/invocations.jsonl"].splitlines()]
     assert len(lines) == 3 and lines[0]["started"] == "earlier"
     assert lines[1]["resumed"] is True
+    assert t0 <= lines[1]["started"] <= lines[2]["ended"]                 # the start is the real start
     assert lines[2]["outcome"] == "ok" and lines[2]["ended"] and lines[2]["summary"]["processed"] == 1
     assert s["outcome"] == "ok"
 
@@ -829,7 +831,7 @@ def test_rotated_secret_is_picked_up_on_a_warm_instance(monkeypatch):
         def __init__(self, d): self.payload = Payload(d)
     class Rotating:
         version = 1
-        def access_secret_version(self, request):
+        def access_secret_version(self, request, **kw):
             return Resp(f"v{self.version}-{request['name'].split('/')[3]}".encode())
 
     sm = Rotating()
