@@ -243,8 +243,8 @@ same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, we
 | `evidence` | web page fetched | evidence_id, run_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
 | `candidates` | unit proposed | candidate_id, run_id, parent_qid (or parent_candidate_id when the parent has no QID), name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, provider, llm_call_ids, evidence_ids |
 | `nodes` | unit in a hierarchy file | the fields of the hierarchy file below, plus run_id |
-| `checks` | one automated check of one unit | check_id, run_id, node_id or candidate_id, kind (agreement, judge, page_status, name_on_page, verifier), result (pass, fail, unclear), score, detail (for example the quoted sentence or the providers that agreed), llm_call_id, evidence_id, checked_at |
-| `reviews` | one reviewer's verdict on one unit | review_id, node_id or candidate_id, run_id and node_version of what was shown (or the candidate's evidence content hash), shown_hash (hash of the whole review row as displayed, checks and confidence included), reviewer, source (expert, prolific), pass or arm (blind: checks hidden; shown: checks visible), verdict (accept, reject, fix), corrections (field to corrected value: name, unit_type, parent, qid, country, website, source_url), url_checked, notes, reviewed_at |
+| `checks` | one automated check of one unit | check_id, run_id, node_id or candidate_id, node_version it evaluated (a check on an older version never counts toward the current confidence), kind (agreement, judge, page_status, name_on_page, verifier), result (pass, fail, unclear), score, detail (for example the quoted sentence or the providers that agreed), llm_call_id, evidence_id, checked_at |
+| `reviews` | one reviewer's verdict on one unit | review_id, node_id or candidate_id, run_id and node_version of what was shown (or the candidate's evidence content hash), shown_hash (hash of the whole review row as displayed, checks and confidence included), reviewer, source (expert, prolific), pass or arm (blind: checks hidden; shown: checks visible), verdict (accept, reject, fix), corrections (field to corrected value: name, unit_type, parent, qid, country, description, website, source_url), url_checked, notes, reviewed_at |
 
 Every table has its own stable id so that a candidate's `llm_call_ids` and `evidence_ids`
 resolve to exact rows. Reviews are append-only: a second reviewer adds a row, never
@@ -279,12 +279,13 @@ QuickStatements. Each node:
 | parent_links | One entry per parent: parent_id and whether Wikidata already has P749 from this QID to that parent's QID (present, missing, or not applicable when either side has no QID). Each entry also carries the rank and qualifiers `docs/MODELING_RULES.md` sets for that link (joint units get normal rank and the qualifiers the rules name). The exporter writes one P749 per missing entry, with them, so a joint unit linked to one parent and not the other gets exactly the missing link |
 | qid | Wikidata QID, or null |
 | country | Country QID for P17, with the evidence it came from (the page, an address, or the Wikidata item). Never assumed from the university: NYU Abu Dhabi and NYU Shanghai are not in the U.S. |
-| node_version | Hash of everything the review sheet shows: name, aliases, unit_type, parent_ids, each parent's current name and QID, parent_links, qid, country, alignment, alignment_candidates, wikidata_duplicates, website, source_url, and the content hashes of the evidence. Changes whenever any of them changes, so new alignment evidence also sends a unit back for review |
+| node_version | Hash of everything the review sheet shows: name, aliases, description, unit_type, parent_ids, each parent's current name and QID, parent_links, qid, country, alignment, alignment_candidates, wikidata_duplicates, website, source_url, and the content hashes of the evidence. Changes whenever any of them changes, so new alignment evidence also sends a unit back for review |
 | alignment | Summary of parent_links: linked (QID, and P749 present to every parent), orphan (QID, and P749 missing to at least one parent; a unit connected only through P361, P527, P355, or P199 counts as missing, so the export adds the P749), new (no item; searched), uncertain (could not decide; never exported) |
 | alignment_candidates | QIDs considered, how each was found (prefix search, full-text search, website, parent), and the reason for the choice |
 | wikidata_duplicates | QIDs that look like a second item for the same unit on Wikidata; flagged for a person, never merged by us |
 | website | P856 value or the URL found |
-| source_url, evidence_ids | Where the unit was found, and the saved page(s) |
+| description | English description a new item would get; shown to reviewers like every other exported value |
+| source_url, evidence_ids | Where the unit was found, and the saved page(s). Evidence is kept per fact: each parent link and the country carry their own evidence ids, and each exported statement is referenced with the evidence for that fact |
 | candidate_ids, run_id | Which `candidates` rows and run proposed it |
 
 Every unit in the Wikidata snapshot (Anya's week 3) that the modeling rules put in scope
