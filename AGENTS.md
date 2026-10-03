@@ -239,7 +239,7 @@ same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, we
 | Table | One row per | Must contain |
 |---|---|---|
 | `runs` | command invocation | run_id, invocation_id (a resumable cloud run keeps one run_id across many scheduled invocations, so each invocation has its own id and row), who, git commit, the exact command and arguments (subcommand, QIDs, flags), config (providers, models, depth), start and end time, outcome |
-| `llm_calls` | API call | llm_call_id, run_id, invocation_id, provider, model, purpose (extract, judge, match, verify), prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
+| `llm_calls` | API call | llm_call_id, run_id, invocation_id, provider, model, purpose (extract, judge, match, verify), the request configuration (tools such as web search or grounding, extraction mode, sample number), the cache key, prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
 | `evidence` | web page fetched | evidence_id, run_id, invocation_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
 | `candidates` | unit proposed | candidate_id, run_id, invocation_id, parent_qid (or parent_candidate_id when the parent has no QID), name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, provider, llm_call_ids, evidence_ids |
 | `nodes` | unit in a hierarchy file | the fields of the hierarchy file below, plus run_id and invocation_id |
@@ -360,7 +360,9 @@ file does not already have are reapplied; when it already has a different answer
 pair, the write stops and both answers go to a person, so neither silently wins. The local copy is read-only: when the bucket register cannot be
 read or written, the run assigns no new ids and writes no hierarchy file (the rest of the run
 log still goes to `results/runs/`), so ids are only ever allocated against the canonical
-register.
+register. Each run records the generation of the register and of `cross_register.json` it
+loaded, and saves a copy of both in its run folder; a replay uses that copy, read-only, so a
+later merge or ownership decision cannot change a replayed run's ids or counts.
 
 ```mermaid
 flowchart LR
