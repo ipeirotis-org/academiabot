@@ -183,7 +183,7 @@ def test_collect_records_a_preflight_failure(monkeypatch):
     monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), **kw) or
                         {"run_id": run_id, "failed": 1, "outcome": "failed"})
     class DeadBlob:
-        def exists(self): raise OSError("bucket unreachable")
+        def exists(self, **kw): raise OSError("bucket unreachable")
     class DeadBucket:
         def blob(self, name): return DeadBlob()
     class FakeClient:
@@ -248,6 +248,32 @@ def test_parse_request_rejects_non_objects_and_bad_lists():
         cf.parse_request({"qids": "Q1"})
     p = cf.parse_request({"qids": None, "time_budget_s": "900"})
     assert p["qids"] == [] and p["time_budget_s"] == 900.0 and p["max_universities"] == 60
+
+
+def test_parse_request_rejects_non_finite_and_negative_numbers():
+    import wikidata_discover.cloud.collect_function as cf
+    for bad in ({"reserve_s": "nan"}, {"reserve_s": float("nan")}, {"time_budget_s": "inf"},
+                {"time_budget_s": -5}, {"max_universities": -1}, {"max_universities": float("inf")}):
+        with pytest.raises(ValueError):
+            cf.parse_request(bad)
+    assert cf.parse_request({"reserve_s": 0, "max_universities": 0})["reserve_s"] == 0.0
+
+
+def test_resume_reads_are_bounded_like_writes(stub):
+    prior_log = json.dumps({"qid": "Q1", "status": "ok", "uploaded": True, "cache_files": ["c.json"]}) + "\n"
+    bucket = FakeBucket({"runs/r34/log.jsonl": prior_log, "runs/r34/invocations.jsonl": "{}\n",
+                         "runs/r34/run.json": "{}", "runs/r34/cache/c.json": "[]", "runs/r34/cache/orphan.json": "[]"})
+    batch.run_batch("r34", ["Q1", "Q2"], bucket, results_dir=stub, report=lambda m: None, hard_deadline_s=1800)
+    ops = {op for op, name, t in bucket.store["__calls__"]}
+    assert {"exists", "download", "list", "upload"} <= ops                  # every read carried a timeout
+    assert all(5 <= t <= 60 for op, name, t in bucket.store["__calls__"])
+    assert (stub / "cache" / "orphan.json").exists()                        # the restore itself still works
+    # Almost no platform time at entry: the first read is refused, the cold start is
+    # recorded as refused instead of running past the kill.
+    bucket = FakeBucket({"runs/r35/log.jsonl": prior_log})
+    s = batch.run_batch("r35", ["Q1"], bucket, results_dir=stub, report=lambda m: None, hard_deadline_s=8)
+    assert s["outcome"] == "failed" and s["processed"] == 0 and "DeadlineExceeded" in s["sync_error"]
+    assert (stub / "runs" / "r35" / "refused.jsonl").exists()
 
 
 def test_caller_identity_from_scheduler_header_or_verified_token():
@@ -322,7 +348,7 @@ def test_resume_keeps_the_original_run_json_through_a_warm_outage(stub):
     assert (stub / "runs" / "r29" / "run.json").read_text() == original   # came down with the histories
     # Same instance, bucket gone: the run continues and no second run.json is minted.
     class DeadBlob(FakeBlob):
-        def exists(self): raise OSError("bucket unreachable")
+        def exists(self, **kw): raise OSError("bucket unreachable")
         def upload_from_filename(self, path, **kw): raise OSError("bucket unreachable")
     class DeadBucket(FakeBucket):
         def blob(self, name): return DeadBlob(self.store, name)
@@ -498,7 +524,9 @@ class FakeBlob:
         if timeout is not None:
             self._note("exists", timeout)
         return self.name in self.store
-    def download_as_text(self):
+    def download_as_text(self, timeout=None, **kw):
+        if timeout is not None:
+            self._note("download", timeout)
         return self.store[self.name]
     def upload_from_filename(self, path, timeout=None, **kw):
         if any(self.name.endswith(s) for s in self.fail_on):
@@ -516,7 +544,10 @@ class FakeBucket:
         self.fail_on = fail_on
     def blob(self, name):
         return FakeBlob(self.store, name, self.fail_on)
-    def list_blobs(self, prefix=""):
+    def list_blobs(self, prefix="", timeout=None, **kw):
+        if timeout is not None and isinstance(self.store.get("__timeouts__", []), list):
+            self.store.setdefault("__timeouts__", []).append(timeout)
+            self.store.setdefault("__calls__", []).append(("list", prefix, timeout))
         return [FakeBlob(self.store, n, self.fail_on) for n in sorted(self.store) if n.startswith(prefix)]
 
 
@@ -769,12 +800,12 @@ def test_correction_record_keeps_failed_status(stub):
 
 def test_run_batch_survives_an_unreachable_bucket(stub):
     class DeadBlob(FakeBlob):
-        def exists(self): raise OSError("bucket unreachable")
-        def download_as_text(self): raise OSError("bucket unreachable")
-        def upload_from_filename(self, path): raise OSError("bucket unreachable")
+        def exists(self, **kw): raise OSError("bucket unreachable")
+        def download_as_text(self, **kw): raise OSError("bucket unreachable")
+        def upload_from_filename(self, path, **kw): raise OSError("bucket unreachable")
     class DeadBucket(FakeBucket):
         def blob(self, name): return DeadBlob(self.store, name)
-        def list_blobs(self, prefix=""): raise OSError("bucket unreachable")
+        def list_blobs(self, prefix="", **kw): raise OSError("bucket unreachable")
     # Cold start (no local log): refuse to run, record the failure, touch nothing else.
     s = batch.run_batch("r15", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
     assert s["outcome"] == "failed" and s["processed"] == 0 and s["sync_error"].startswith("OSError")
@@ -785,9 +816,9 @@ def test_run_batch_survives_an_unreachable_bucket(stub):
 
     # Partial sync: log.jsonl came down but invocations.jsonl did not. Still refuse.
     class HalfDeadBlob(FakeBlob):
-        def exists(self):
+        def exists(self, **kw):
             if self.name.endswith("invocations.jsonl"): raise OSError("bucket unreachable")
-            return super().exists()
+            return super().exists(**kw)
     class HalfDeadBucket(FakeBucket):
         def blob(self, name): return HalfDeadBlob(self.store, name)
     prior = json.dumps({"qid": "Q1", "started": "t", "status": "ok", "uploaded": True}) + "\n"

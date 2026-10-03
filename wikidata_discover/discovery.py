@@ -6,7 +6,7 @@ from wikidata_discover.sparql_helpers import execute_sparql_bindings
 from wikidata_discover.wikidata_api import quick_wd_search
 from wikidata_discover.hierarchy import descendant_qids
 from wikidata_discover import llm_helpers
-from wikidata_discover.llm_helpers import LLMHelper
+from wikidata_discover.llm_helpers import LLMHelper, LLMUnavailable
 from wikidata_discover.config import console, RESULTS_DIR
 
 from rapidfuzz import fuzz
@@ -136,6 +136,7 @@ class Discovery:
         console.print(
             f"[bold blue]University:[/bold blue] {self.university_label} ({self.university_qid})"
         )
+        clear_exports(self.university_qid)
 
         direct_children = self.get_existing_children()
         direct_qids = {qid for qid, _ in direct_children}
@@ -187,12 +188,20 @@ class Discovery:
                 choices = direct_children + [
                     (qid, lbl) for qid, lbl in qsearch_hits if qid not in direct_qids
                 ]
-                matched = LLMHelper.choose_match(name, self.university_label, choices)
+                try:
+                    matched = LLMHelper.choose_match(name, self.university_label, choices)
+                except LLMUnavailable as e:
+                    # No provider gave an answer (all failed or replied with nothing).
+                    # That is not a NONE: the candidate stays unresolved.
+                    logger.warning("No match decision for '%s' (%s); leaving it unresolved", name, e)
+                    matched = None
+                    search_failed = True
 
             # step 3: classify the outcome
             if matched is None and search_failed:
-                # We could not check Wikidata, so we do not know. Never call it missing:
-                # that would create a duplicate on upload. Recorded for a rerun or review.
+                # We could not check Wikidata, or nobody could judge the match, so we do
+                # not know. Never call it missing: that would create a duplicate on
+                # upload. Recorded for a rerun or review.
                 status = "unresolved"
                 counts["unresolved"] += 1
                 missing.append(
@@ -270,7 +279,8 @@ class Discovery:
             export_quickstatements(
                 missing,
                 self.university_qid,
-                self.university_label
+                self.university_label,
+                out_dir=RESULTS_DIR,
             )
         else:
             console.print(
@@ -296,6 +306,19 @@ class Discovery:
         return missing
     
 #helper functions for matching logic
+def clear_exports(qid: str, results_dir: Path = None) -> int:
+    """Remove the CSV and QuickStatements files an earlier run wrote for this
+    university, so that a run which finds nothing leaves no stale statements behind.
+    The batch runner does the same before every attempt. Returns how many were removed."""
+    results_dir = RESULTS_DIR if results_dir is None else results_dir
+    removed = 0
+    for p in (results_dir / f"missing_divisions_{qid}.csv", results_dir / f"quickstatements_{qid}.qs"):
+        if p.exists():
+            p.unlink()
+            removed += 1
+    return removed
+
+
 def normalize_name(name: str) -> str:
     """Generic normalizer for academic division names."""
     name = name.lower().strip()

@@ -288,9 +288,13 @@ flowchart LR
   sooner, at the deadline) and no LLM call starts in the last 30 s. A university caught by
   the deadline fails that attempt (never "missing") and is retried in a later slice, so the
   attempt's records are always written. No university starts once the work deadline is
-  closer than the reserve. The 90 s after it are for bucket calls (uploads, stale-export
-  checks and deletes): each is bounded by the kill time (`config.HARD_DEADLINE`), retries
-  included, and none starts in the last 10 s.
+  closer than the reserve. Every bucket call (the resume reads at the start, uploads,
+  stale-export checks and deletes) is bounded by the kill time (`config.HARD_DEADLINE`),
+  retries included, and none starts in the last 10 s; the 90 s after the work deadline
+  are for the final uploads.
+- A candidate that no LLM provider could judge (every one failed or answered nothing) is
+  `unresolved`, never `missing`. Gemini runs the match question with thinking off, because
+  its thinking counts against the tiny output budget and would leave the answer empty.
 - Every invocation record carries `git_commit`, `providers` (which API keys were set), and
   the models; every university record carries `provider` (whose answer was used), so a run
   can be repeated with the same setup.

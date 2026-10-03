@@ -113,13 +113,13 @@ def test_run_batch_sets_and_clears_the_deadline(monkeypatch, tmp_path):
     class Blob:
         def __init__(self, store, name): self.store, self.name = store, name
         def exists(self, **kw): return self.name in self.store
-        def download_as_text(self): return self.store[self.name]
+        def download_as_text(self, **kw): return self.store[self.name]
         def upload_from_filename(self, p, **kw): self.store[self.name] = open(p).read()
         def delete(self, **kw): self.store.pop(self.name, None)
     class Bucket:
         store = {}
         def blob(self, name): return Blob(self.store, name)
-        def list_blobs(self, prefix=""): return []
+        def list_blobs(self, prefix="", **kw): return []
     t0 = time.time()
     batch.run_batch("d1", ["Q1"], Bucket(), results_dir=tmp_path, report=lambda m: None, hard_deadline_s=1800)
     assert t0 + 1800 - 95 <= seen["deadline"] <= t0 + 1800 - 85   # 90 s before the kill

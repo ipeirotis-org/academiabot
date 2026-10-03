@@ -55,6 +55,38 @@ def test_child_queries_use_university_language(monkeypatch):
     assert 'IN ("en", "es")' in seen[1]
 
 
+def test_clear_exports_removes_only_this_universitys_files(tmp_path):
+    for name in ("missing_divisions_Q1.csv", "quickstatements_Q1.qs", "missing_divisions_Q2.csv"):
+        (tmp_path / name).write_text("old")
+    assert disc.clear_exports("Q1", tmp_path) == 2
+    assert not (tmp_path / "quickstatements_Q1.qs").exists() and (tmp_path / "missing_divisions_Q2.csv").exists()
+    assert disc.clear_exports("Q1", tmp_path) == 0                   # nothing left, nothing fails
+
+
+def test_discover_missing_leaves_an_unjudged_candidate_unresolved(monkeypatch, tmp_path):
+    """Search works but no LLM can judge the match: unresolved, never missing, and the
+    stale export files from an earlier run are gone."""
+    import wikidata_discover.llm_helpers as lh
+    monkeypatch.setattr(disc, "RESULTS_DIR", tmp_path)
+    (tmp_path / "quickstatements_Q1.qs").write_text("stale")
+    d = disc.Discovery.__new__(disc.Discovery)
+    d.university_qid, d.university_label, d.university_website, d.university_lang = "Q1", "Test U", None, "en"
+    monkeypatch.setattr(d, "get_existing_children", lambda: [("Q5", "School of Art")])
+    monkeypatch.setattr(d, "get_all_descendants_qids", lambda: set())
+    monkeypatch.setattr(d, "get_children_alt_labels", lambda: {})
+    monkeypatch.setattr(d, "search_wikidata", lambda name: [("Q7", "Law School")])
+    monkeypatch.setattr(disc.LLMHelper, "extract_divisions_best_available",
+                        staticmethod(lambda u, w: [{"name": "School of Law"}]))
+    def nobody(candidate, univ, children):
+        raise lh.LLMUnavailable("no provider")
+    monkeypatch.setattr(disc.LLMHelper, "choose_match", staticmethod(nobody))
+    rows = d.discover_missing()
+    assert [r["status"] for r in rows] == ["unresolved"]
+    report = __import__("json").loads((tmp_path / "reports" / "Q1_report.json").read_text())
+    assert report["unresolved"] == 1 and report["missing"] == 0
+    assert not (tmp_path / "quickstatements_Q1.qs").exists()        # stale file removed, none written
+
+
 def test_search_adds_university_language_and_dedupes(monkeypatch):
     calls = []
     def fake_search(name, language="en"):

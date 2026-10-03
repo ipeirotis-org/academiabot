@@ -31,6 +31,27 @@ def test_choose_match_gemini_call_shape(monkeypatch):
     assert LLMHelper.choose_match("School of Law", "NYU", [("Q1", "Stern"), ("Q2", "School of Law")]) == ("Q2", "School of Law")
     model, contents, config = models.calls[0]
     assert contents[0].parts[0].text.startswith("You are assisting")
+    # One token is wanted: thinking is off, or it would spend the output budget and
+    # the reply would be empty.
+    assert config.thinking_config.thinking_budget == 0 and config.max_output_tokens >= 16
+
+
+def test_choose_match_raises_when_nobody_answers(monkeypatch):
+    """An empty reply from every provider is not a NONE: the caller must not call the
+    candidate missing. Discovery turns this into an unresolved row."""
+    import pytest
+    models = FakeModels("")                                   # Gemini says nothing
+    class Client:
+        pass
+    c = Client(); c.models = models
+    monkeypatch.setattr(lh, "_get_gemini_client", lambda: c)
+    monkeypatch.setattr(lh, "_load_cache", lambda key: None)
+    monkeypatch.setattr(lh, "_save_cache", lambda key, v: None)
+    for name in ("_get_openai_client", "_get_anthropic_client"):
+        monkeypatch.setattr(lh, name, lambda: (_ for _ in ()).throw(ValueError("not configured")))
+    with pytest.raises(lh.LLMUnavailable):
+        LLMHelper.choose_match("School of Law", "NYU", [("Q1", "Stern")])
+    assert len(models.calls) == 1
 
 
 def test_extract_gemini_call_shape(monkeypatch):

@@ -23,6 +23,7 @@ Deploy with deploy/deploy_collect_function.sh. Keys come from Secret Manager at 
 import base64
 import json
 import logging
+import math
 import os
 import time
 
@@ -114,9 +115,14 @@ def parse_request(body) -> dict:
         raise ValueError(f"invalid list_object {p['list_object']!r}")
     for key, default, cast in (("max_universities", 60, int), ("time_budget_s", 1500.0, float), ("reserve_s", 420.0, float)):
         try:
-            p[key] = cast(body.get(key, default))
-        except (TypeError, ValueError) as e:
+            value = cast(body.get(key, default))
+        except (TypeError, ValueError, OverflowError) as e:
             raise ValueError(f"{key} must be a number, got {body.get(key)!r}") from e
+        # "nan" and "inf" pass float(); a NaN reserve makes every time check false and
+        # the loop would start universities after the deadline, failing each of them.
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{key} must be a finite number >= 0, got {body.get(key)!r}")
+        p[key] = value
     if "qids" in body:
         if body["qids"] is not None and not isinstance(body["qids"], list):
             raise ValueError("qids must be a list")

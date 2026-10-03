@@ -94,6 +94,12 @@ LLM_TIMEOUT_S = 180  # one LLM request; the SDK defaults (10 minutes) are too lo
 _MIN_TIME_FOR_LLM_CALL_S = 30  # below this much time before config.DEADLINE, no LLM call is started
 
 
+class LLMUnavailable(RuntimeError):
+    """Raised by choose_match when no provider produced a usable answer (every one
+    failed, was not configured, or replied with nothing). It is not a NONE: the
+    caller leaves the candidate unresolved instead of calling it missing."""
+
+
 class LLMDeadline(RuntimeError):
     """Raised when a decision could not be asked for because the process deadline
     is too close. The attempt fails and is retried; it is never an answer."""
@@ -709,10 +715,15 @@ class LLMHelper:
                 elif provider_name == "gemini":
                     client = get_client()
                     from google.genai import types as genai_types
+                    # One token is wanted. Gemini counts its thinking against
+                    # max_output_tokens and answers with nothing when thinking uses
+                    # it all, so thinking is off for this classification.
                     resp = client.models.generate_content(
                         model=model,
                         contents=[genai_types.Content(parts=[genai_types.Part.from_text(text=prompt)])],
-                        config=genai_types.GenerateContentConfig(max_output_tokens=16, http_options=_gemini_http_options()),
+                        config=genai_types.GenerateContentConfig(
+                            max_output_tokens=32, http_options=_gemini_http_options(),
+                            thinking_config=genai_types.ThinkingConfig(thinking_budget=0)),
                     )
                     answer = (resp.text or "").strip()
 
@@ -746,8 +757,9 @@ class LLMHelper:
             # candidate "missing" and export a possible duplicate. Fail the attempt
             # instead; the university is retried in a later slice.
             raise LLMDeadline(f"no time left to match candidate {candidate!r} before the deadline")
-        logger.warning("choose_match: all providers failed for candidate '%s'", candidate)
-        return None
+        # Not an answer either: every provider failed or said nothing. None would make
+        # the candidate "missing" and export a possible duplicate.
+        raise LLMUnavailable(f"no provider could judge candidate {candidate!r}")
 
 
 def parse_match_answer(answer: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:

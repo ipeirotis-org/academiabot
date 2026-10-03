@@ -49,6 +49,13 @@ def test_unresolved_is_never_exported():
     assert quickstatements_lines(items, "Q1", "U") == []
 
 
+def test_all_unresolved_writes_no_file_and_removes_a_stale_one(tmp_path):
+    stale = tmp_path / "quickstatements_Q1.qs"; stale.write_text("CREATE\n")
+    items = [{"name": "Unknown Dept", "unit_type": "department", "status": "unresolved"}]
+    assert export_quickstatements(items, "Q1", "U", out_dir=tmp_path) is None
+    assert not stale.exists()                                   # no empty or stale .qs left behind
+
+
 def test_cap_applies_after_removing_unresolved():
     items = [{"name": "U", "status": "unresolved"}, {"name": "M", "unit_type": "school", "status": "missing"}]
     assert quickstatements_lines(items, "Q1", "U", max_items=1).count("CREATE") == 1

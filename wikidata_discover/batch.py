@@ -187,7 +187,7 @@ def restore_caches(bucket, run_id: str, log_path: Path, results_dir: Path, done:
     # record never reached the bucket (the log upload failed after the artifact upload).
     # They are few, and restoring them keeps that attempt's LLM answers in use.
     prefix = f"runs/{run_id}/cache/"
-    for blob in bucket.list_blobs(prefix=prefix):
+    for blob in bucket.list_blobs(prefix=prefix, **bucket_call_kwargs()):
         name = blob.name[len(prefix):]
         if name and name not in attributed:
             wanted.add(name)
@@ -198,19 +198,20 @@ def restore_caches(bucket, run_id: str, log_path: Path, results_dir: Path, done:
         if local.exists():
             continue
         blob = bucket.blob(prefix + name)
-        if blob.exists():
+        if blob.exists(**bucket_call_kwargs()):
             cache_dir.mkdir(parents=True, exist_ok=True)
-            local.write_text(blob.download_as_text())
+            local.write_text(blob.download_as_text(**bucket_call_kwargs()))
             restored += 1
     return restored
 
 
 def sync_from_bucket(bucket, run_id: str, run_dir: Path, name: str) -> None:
     """Replace the local copy of an append-only run file with the bucket's when the
-    bucket's is longer (a fresh Cloud Function instance has no local state)."""
+    bucket's is longer (a fresh Cloud Function instance has no local state). Reads
+    are bounded by the kill time like every other bucket call."""
     blob = bucket.blob(f"runs/{run_id}/{name}")
-    if blob.exists():
-        remote_text = blob.download_as_text()
+    if blob.exists(**bucket_call_kwargs()):
+        remote_text = blob.download_as_text(**bucket_call_kwargs())
         local = run_dir / name
         local_text = local.read_text() if local.exists() else ""
         if len(remote_text) > len(local_text):
@@ -224,8 +225,8 @@ def fetch_if_missing(bucket, run_id: str, run_dir: Path, name: str) -> bool:
     if local.exists():
         return True
     blob = bucket.blob(f"runs/{run_id}/{name}")
-    if blob.exists():
-        local.write_text(blob.download_as_text())
+    if blob.exists(**bucket_call_kwargs()):
+        local.write_text(blob.download_as_text(**bucket_call_kwargs()))
         return True
     return False
 

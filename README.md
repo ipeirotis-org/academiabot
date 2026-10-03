@@ -81,8 +81,9 @@ The last command asks an LLM for NYU's schools, checks each one against Wikidata
 prints a table: already linked, exists but not linked (an "orphan"), or missing. If any
 unit is missing or orphaned, it also writes two files to `wikidata_discover/results/`: a
 CSV of those units and a QuickStatements file that could create them. For NYU today
-nothing is missing, so only the JSON report is written. **Do not upload a QuickStatements
-file.** Uploading is a human step, after review, described in TASKS.md (Anya's weeks 8
+nothing is missing, so only the JSON report is written, and any CSV or QuickStatements
+file an earlier run left for the same university is removed first, so what is in
+`results/` is always the latest result. **Do not upload a QuickStatements file.** Uploading is a human step, after review, described in TASKS.md (Anya's weeks 8
 and 9, Shuo's week 9).
 
 Or ask your agent to do all of this for you and explain the output. That is the normal
@@ -92,7 +93,7 @@ way to work here.
 
 | Command | What it does | Output |
 |---|---|---|
-| `discover <QID>` | Finds the schools and colleges of one university | Always `results/reports/<QID>_report.json`. If anything is missing or orphaned, also `results/missing_divisions_<QID>.csv` and `results/quickstatements_<QID>.qs` |
+| `discover <QID>` | Finds the schools and colleges of one university | Always `results/reports/<QID>_report.json`. If anything is missing or orphaned, also `results/missing_divisions_<QID>.csv` and `results/quickstatements_<QID>.qs`; otherwise those two files are removed if an earlier run left them |
 | `harvest` | Lists every U.S. university in Wikidata | `results/universities_us.json` |
 | evaluation | Scores each LLM provider and judge setup against a hand-built answer key for 12 universities | `eval/results_summary.csv` |
 

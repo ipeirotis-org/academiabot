@@ -72,8 +72,15 @@ def export_quickstatements(missing, university_qid, university_label, max_items=
     qs_lines = quickstatements_lines(missing, university_qid, university_label, max_items)
 
     out_dir = Path(out_dir) if out_dir else RESULTS_DIR
-    out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"quickstatements_{university_qid}.qs"
+    if not qs_lines:
+        # Only unresolved rows: nothing may be uploaded, so no file is written and
+        # none from an earlier run is left behind.
+        if out_path.exists():
+            out_path.unlink()
+        console.print("[yellow]No QuickStatements written: every row is unresolved.[/yellow]")
+        return None
+    out_dir.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(qs_lines))
     console.print(f"[green]QuickStatements file written → {out_path}[/green]")
 
