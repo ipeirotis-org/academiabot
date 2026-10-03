@@ -29,7 +29,7 @@ SA=claude-agent@wikidata-academia.iam.gserviceaccount.com
 # a new run (and a new log) every time the function is redeployed on a later day.
 RUN_ID=${RUN_ID:-us-tier1}
 LIST_OBJECT=${LIST_OBJECT:-universities_us_tier1.json}   # from scripts/filter_universities.py --upload
-MAX_PER_SLICE=${MAX_PER_SLICE:-60}
+MAX_PER_SLICE=${MAX_PER_SLICE:-150}   # a 25 min slice does about 100 at 4 a minute; the cap must not be the limit
 SCHEDULE="7,37 * * * *"
 
 # The deployed code must be the committed code, so that GIT_COMMIT in every run record
