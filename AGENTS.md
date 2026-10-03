@@ -244,7 +244,7 @@ same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, we
 | `candidates` | unit proposed | candidate_id, run_id, parent_qid (or parent_candidate_id when the parent has no QID), name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, provider, llm_call_ids, evidence_ids |
 | `nodes` | unit in a hierarchy file | the fields of the hierarchy file below, plus run_id |
 | `checks` | one automated check of one unit | check_id, run_id, node_id or candidate_id, node_version it evaluated (a check on an older version never counts toward the current confidence), kind (agreement, judge, page_status, name_on_page, verifier), result (pass, fail, unclear), score, detail (for example the quoted sentence or the providers that agreed), llm_call_id, evidence_id, checked_at |
-| `reviews` | one reviewer's verdict on one unit | review_id, node_id or candidate_id, run_id and node_version of what was shown (or the candidate's evidence content hash), shown_hash (hash of the whole review row as displayed, checks and confidence included), reviewer, source (expert, prolific), pass or arm (blind: checks hidden; shown: checks visible), verdict (accept, reject, fix), corrections (field to corrected value: name, unit_type, parent, qid, country, description, website, source_url), url_checked, notes, reviewed_at |
+| `reviews` | one reviewer's verdict on one unit | review_id, node_id or candidate_id, run_id and node_version of what was shown (or the candidate's evidence content hash), shown_hash (hash of the whole review row as displayed, checks and confidence included), reviewer, source (expert, prolific), pass or arm (blind: checks hidden; shown: checks visible), verdict (accept, reject, fix), corrections (field to corrected value, for any value the export writes, including each parent link's target, rank, qualifiers, and source), url_checked (one yes/no per evidence page shown), notes, reviewed_at |
 
 Every table has its own stable id so that a candidate's `llm_call_ids` and `evidence_ids`
 resolve to exact rows. Reviews are append-only: a second reviewer adds a row, never
@@ -301,8 +301,12 @@ verdict is applied to the hierarchy file and the affected steps are rerun: a cor
 URL is fetched and saved, a corrected country or parent link must come with its own URL,
 which is fetched and saved as that fact's evidence, a corrected QID or parent goes back through alignment so that
 parent_links and alignment are recomputed. That makes a new node version, which needs its own
-accept before export. Right before a
-first upload, alignment is rerun against current Wikidata, and changed nodes go back for review.
+accept before export. Right before each
+upload batch (schools, then departments), alignment for that level is rerun against current
+Wikidata, and changed nodes go back for review. The pre-upload check regenerates the export
+from the hierarchy file, reviews, and protocol, and refuses any difference from the file to
+be uploaded. Reviewers confirm each evidence page on the row separately (`url_checked` per
+page), and every value the export writes has a correction field.
 
 Export is staged by level. A department whose parent is new has no parent QID yet, so it is
 held back. After a person uploads the school batch, an `ingest-qids` step records the new
