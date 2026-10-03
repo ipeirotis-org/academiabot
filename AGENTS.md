@@ -244,7 +244,7 @@ same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, we
 | `candidates` | unit proposed | candidate_id, run_id, parent_qid (or parent_candidate_id when the parent has no QID), name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, provider, llm_call_ids, evidence_ids |
 | `nodes` | unit in a hierarchy file | the fields of the hierarchy file below, plus run_id |
 | `checks` | one automated check of one unit | check_id, run_id, node_id or candidate_id, kind (agreement, judge, page_status, name_on_page, verifier), result (pass, fail, unclear), score, detail (for example the quoted sentence or the providers that agreed), llm_call_id, evidence_id, checked_at |
-| `reviews` | one reviewer's verdict on one unit | review_id, node_id or candidate_id, run_id and node_version of what was shown (or the candidate's evidence content hash), reviewer, source (expert, prolific), arm (verifier shown or hidden), verdict (accept, reject, fix), corrected_value, url_checked, notes, reviewed_at |
+| `reviews` | one reviewer's verdict on one unit | review_id, node_id or candidate_id, run_id and node_version of what was shown (or the candidate's evidence content hash), shown_hash (hash of the whole review row as displayed, checks and confidence included), reviewer, source (expert, prolific), pass or arm (blind: checks hidden; shown: checks visible), verdict (accept, reject, fix), corrections (field to corrected value: name, unit_type, parent, qid, website, source_url), url_checked, notes, reviewed_at |
 
 Every table has its own stable id so that a candidate's `llm_call_ids` and `evidence_ids`
 resolve to exact rows. Reviews are append-only: a second reviewer adds a row, never
@@ -252,8 +252,16 @@ overwrites one, so agreement between reviewers can be computed. Checks are appen
 export honors the reviews a protocol says it should (for example, two accepts and no reject),
 and only reviews whose node_version equals the node's current version: node ids are reused
 across runs, so a verdict on an earlier version (different name, parent, QID, alignment, or
-evidence) never authorizes the new one. Only reviews from the arm that hid the verifier's
-answer enter precision estimates.
+evidence) never authorizes the new one. A verdict judges the facts and their evidence, so
+node_version deliberately leaves out the machine checks: rerunning a verifier does not void a
+person's verdict, and shown_hash records what that person saw. Only blind verdicts (checks
+hidden) enter precision estimates and the evaluation of confidence scores.
+
+The exporter writes a manifest next to each QuickStatements file: one line per statement with
+node_id, node_version, and the review ids that authorize it, plus every in-scope node of that
+level that was left out and why. The pre-upload check validates file, manifest, hierarchy,
+and reviews together, so a statement without a current verdict, or a node silently dropped,
+is caught.
 
 ### Hierarchy file (planned, Anya week 5)
 
