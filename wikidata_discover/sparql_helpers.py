@@ -85,7 +85,8 @@ def _get(query: str) -> requests.Response:
     check_deadline("a SPARQL request")
     gap = time.time() - _last_call
     if gap < _SPARQL_DELAY:
-        time.sleep(_SPARQL_DELAY - gap)
+        time.sleep(bounded_wait(_SPARQL_DELAY - gap))
+        check_deadline("a SPARQL request")   # the polite pause may have crossed the deadline
     resp = requests.get(
         SPARQL_ENDPOINT,
         params={"query": query, "format": "json"},

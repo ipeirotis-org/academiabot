@@ -32,7 +32,7 @@ from flask import jsonify
 
 from wikidata_discover import config
 from wikidata_discover.batch import (BUCKET, PROJECT, UnreachableBucket, bucket_call_kwargs, ensure_user_agent,
-                                     load_keys_from_secret_manager, parse_done, run_batch, validate_run_id)
+                                     is_qid, load_keys_from_secret_manager, parse_done, run_batch, validate_run_id)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -63,7 +63,11 @@ def pick_qids(list_rows, done: set, limit: int):
         return out
     for row in list_rows:
         qid = row_qid(row)
-        if not qid or qid in seen or qid in done:
+        if not is_qid(qid):
+            if qid:
+                logger.warning("university list row %r is not a QID; skipped", row)
+            continue
+        if qid in seen or qid in done:
             continue
         seen.add(qid)
         out.append(qid)
@@ -127,7 +131,10 @@ def parse_request(body) -> dict:
     if "qids" in body:
         if body["qids"] is not None and not isinstance(body["qids"], list):
             raise ValueError("qids must be a list")
-        p["qids"] = [str(q) for q in (body["qids"] or [])]
+        bad = [q for q in (body["qids"] or []) if not is_qid(q)]
+        if bad:
+            raise ValueError(f"qids must be Wikidata item ids like Q49210, got {bad[:3]!r}")
+        p["qids"] = list(body["qids"] or [])
     return p
 
 

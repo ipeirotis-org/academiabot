@@ -10,7 +10,7 @@ wikidata_discover/cloud/collect_function.py. See wikidata_discover/batch.py.
 import logging
 import sys
 
-from wikidata_discover.batch import (BUCKET, PROJECT, RESULTS_DIR, UnreachableBucket, ensure_user_agent,
+from wikidata_discover.batch import (BUCKET, PROJECT, RESULTS_DIR, UnreachableBucket, ensure_user_agent, is_qid,
                                      load_keys_from_secret_manager, run_batch, validate_run_id)
 from wikidata_discover.batch import artifact_paths, load_done  # noqa: F401  (re-exported)
 
@@ -24,6 +24,9 @@ def main(argv=None) -> int:
         validate_run_id(run_id)          # before anything is created on disk
     except ValueError as e:
         print(e); return 2
+    bad = [q for q in qids if not is_qid(q)]
+    if bad:
+        print(f"not Wikidata item ids (expected Q49210 and the like): {bad}"); return 2
     run_dir = RESULTS_DIR / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",

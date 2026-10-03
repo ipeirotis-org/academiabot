@@ -296,7 +296,10 @@ flowchart LR
   closer than the reserve. Every bucket call (the resume reads at the start, uploads,
   stale-export checks and deletes) is bounded by the kill time (`config.HARD_DEADLINE`),
   retries included, and none starts in the last 10 s; the 90 s after the work deadline
-  are for the final uploads.
+  are for the final uploads. Artifact uploads keep 20 s for the run log upload that
+  follows them, and the run folder is uploaded records first (log, invocations, run.json).
+- A QID must look like `Q49210`. The Cloud Function rejects a request with anything else in
+  `qids`, skips such rows in the university list, and the terminal runner refuses them.
 - A candidate that no LLM provider could judge (every one failed or answered nothing) is
   `unresolved`, never `missing`. Gemini runs the match question with thinking off, because
   its thinking counts against the tiny output budget and would leave the answer empty.

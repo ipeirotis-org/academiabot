@@ -251,23 +251,39 @@ _UPLOAD_MARGIN_S = 10
 _UPLOAD_TIMEOUT_S = 60
 
 
-def upload_timeout() -> float:
+# Artifact uploads leave this much time for the run log upload that follows them, so
+# a stalled artifact cannot use up the buffer the attempt's record needs.
+_LOG_UPLOAD_RESERVE_S = 20
+_RUN_FILES_FIRST = ("log.jsonl", "invocations.jsonl", "refused.jsonl", "run.json")
+
+
+def upload_timeout(reserve: float = 0) -> float:
     """Timeout for one bucket call (upload, exists, delete): 60 s, or less when the
-    kill is closer. Raises DeadlineExceeded when the call could not finish before it."""
+    kill is closer, keeping `reserve` seconds for calls that must follow. Raises
+    DeadlineExceeded when the call could not finish in time."""
     from wikidata_discover.sparql_helpers import DeadlineExceeded
     left = config.hard_seconds_left()
     if left is None:
         return _UPLOAD_TIMEOUT_S
-    if left <= _UPLOAD_MARGIN_S:
+    room = left - _UPLOAD_MARGIN_S - reserve
+    if room <= 0:
         raise DeadlineExceeded("process about to be killed; not starting a bucket call")
-    return max(5.0, min(_UPLOAD_TIMEOUT_S, left - _UPLOAD_MARGIN_S))
+    return max(5.0, min(_UPLOAD_TIMEOUT_S, room))
 
 
-def bucket_call_kwargs() -> dict:
+def run_dir_files(run_dir: Path) -> list:
+    """Every file of the run folder, the attempt and invocation records first, so
+    that they reach the bucket before anything less important."""
+    files = [p for p in run_dir.rglob("*") if p.is_file()]
+    rank = {name: i for i, name in enumerate(_RUN_FILES_FIRST)}
+    return sorted(files, key=lambda p: (rank.get(p.name, len(rank)), p.name))
+
+
+def bucket_call_kwargs(reserve: float = 0) -> dict:
     """Keyword arguments that bound one google-cloud-storage call: the timeout above,
     and a retry policy whose total deadline is the same, so the client's own retries
     (120 s by default) cannot outlive it either."""
-    timeout = upload_timeout()
+    timeout = upload_timeout(reserve)
     kwargs = {"timeout": timeout}
     try:
         from google.cloud.storage.retry import DEFAULT_RETRY
@@ -285,6 +301,13 @@ def object_name(run_id: str, path: Path, results_dir: Path, run_dir: Path) -> st
 
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+_QID_RE = re.compile(r"^Q[1-9][0-9]{0,15}$")
+
+
+def is_qid(value) -> bool:
+    """True for a Wikidata item id such as Q49210. Anything else is refused before it
+    can be put into a SPARQL query or counted as a university attempt."""
+    return isinstance(value, str) and bool(_QID_RE.match(value))
 
 
 def validate_run_id(run_id) -> str:
@@ -347,10 +370,12 @@ def git_commit(repo: Path = REPO_DIR) -> str:
 def source_patch(repo: Path = REPO_DIR) -> str:
     """The uncommitted changes to the code paths, as one patch: tracked edits plus
     every untracked file. Empty when the worktree is clean. Mirrors the deploy script."""
-    patch = _git(repo, "diff", "HEAD", "--", *SOURCE_PATHS)
+    # --binary keeps the full content of a changed binary file in the patch, so that
+    # git apply can rebuild it; without it the patch only says the files differ.
+    patch = _git(repo, "diff", "--binary", "HEAD", "--", *SOURCE_PATHS)
     untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "--", *SOURCE_PATHS).split()
     for f in untracked:
-        r = subprocess.run(["git", "-C", str(repo), "diff", "--no-index", "--", "/dev/null", f],
+        r = subprocess.run(["git", "-C", str(repo), "diff", "--binary", "--no-index", "--", "/dev/null", f],
                            capture_output=True, text=True, timeout=10)   # exit 1 means "differs"
         patch += r.stdout
     return patch
@@ -409,14 +434,15 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     def clear_deadlines():
         config.DEADLINE = config.HARD_DEADLINE = None
 
-    def upload(paths) -> int:
+    def upload(paths, reserve: float = 0) -> int:
         # Work stops at config.DEADLINE; the 90 s after it exist so the attempt's
         # records and artifacts still reach the bucket. Each upload is bounded by the
         # kill time instead, and none starts once it could not finish before it.
+        # Artifact uploads pass a reserve so the run log upload after them has time.
         n = 0
         for p in paths:
             bucket.blob(object_name(run_id, p, results_dir, run_dir)).upload_from_filename(
-                str(p), **bucket_call_kwargs()); n += 1
+                str(p), **bucket_call_kwargs(reserve)); n += 1
         return n
 
     summary = {"run_id": run_id, "requested": len(qids), "skipped_done": 0, "processed": 0, "ok": 0,
@@ -479,7 +505,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
 
     # The invocation is part of the record even when no university gets processed.
     try:
-        upload([p for p in run_dir.rglob("*") if p.is_file()])
+        upload(run_dir_files(run_dir))
     except Exception as e:  # noqa: BLE001
         report(f"run metadata upload failed: {type(e).__name__}: {str(e)[:120]}")
         summary["failed"] += 1
@@ -526,7 +552,8 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         longest = max(longest, rec["seconds"])
         rec["cache_files"] = sorted(p.name for p in llm_helpers.cache_paths_touched)
         try:
-            n = upload(artifact_paths(results_dir, run_dir, qid, since=t, extra=list(llm_helpers.cache_paths_touched)))
+            n = upload(artifact_paths(results_dir, run_dir, qid, since=t, extra=list(llm_helpers.cache_paths_touched)),
+                       reserve=_LOG_UPLOAD_RESERVE_S)
             stale = clear_stale_exports(bucket, run_id, results_dir, run_dir, qid) if rec["status"] == "ok" else 0
             rec["uploaded"] = True
             note = f"uploaded {n} files to gs://{BUCKET}/runs/{run_id}/" + (f", removed {stale} stale export(s)" if stale else "")
@@ -537,7 +564,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         with log_path.open("a") as f:
             f.write(json.dumps(rec) + "\n")
         try:
-            upload([p for p in run_dir.rglob("*") if p.is_file()])
+            upload(run_dir_files(run_dir))
         except Exception as e:  # noqa: BLE001
             # The bucket may not have this record, so a resume from the bucket would
             # retry the QID anyway. Make the local log agree: a second record with
@@ -571,7 +598,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
                             "ended": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                             "outcome": summary["outcome"], "summary": summary}) + "\n")
     try:
-        upload([p for p in run_dir.rglob("*") if p.is_file()])
+        upload(run_dir_files(run_dir))
     except Exception as e:  # noqa: BLE001
         report(f"final run metadata upload failed: {type(e).__name__}: {str(e)[:120]}")
         summary["outcome"] = "failed"

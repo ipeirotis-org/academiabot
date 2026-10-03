@@ -391,12 +391,58 @@ def test_upload_timeout_tracks_the_kill_time(monkeypatch):
     import wikidata_discover.config as config
     from wikidata_discover.sparql_helpers import DeadlineExceeded
     monkeypatch.setattr(config, "HARD_DEADLINE", None)
-    assert batch.upload_timeout() == 60
+    assert batch.upload_timeout() == 60 and batch.upload_timeout(reserve=20) == 60
     monkeypatch.setattr(config, "HARD_DEADLINE", time.time() + 40)
     assert 25 <= batch.upload_timeout() <= 30                 # 40 s left minus the 10 s margin
+    assert 5 <= batch.upload_timeout(reserve=20) <= 10        # and minus what the log upload needs
     monkeypatch.setattr(config, "HARD_DEADLINE", time.time() + 8)
     with pytest.raises(DeadlineExceeded):
         batch.upload_timeout()
+    monkeypatch.setattr(config, "HARD_DEADLINE", time.time() + 25)
+    with pytest.raises(DeadlineExceeded):
+        batch.upload_timeout(reserve=20)                      # an artifact may not eat the log's time
+    assert 10 <= batch.upload_timeout() <= 15                 # the log upload itself still fits
+
+
+def test_run_dir_files_puts_the_records_first(tmp_path):
+    for name in ("z.txt", "run.json", "invocations.jsonl", "a.txt", "log.jsonl"):
+        (tmp_path / name).write_text("")
+    assert [p.name for p in batch.run_dir_files(tmp_path)] == ["log.jsonl", "invocations.jsonl", "run.json", "a.txt", "z.txt"]
+
+
+def test_log_upload_is_reserved_time_and_goes_first(stub, monkeypatch):
+    """Discovery ends 25 s before the kill: the artifacts cannot be uploaded without
+    taking the log's reserve, so they are refused, and the attempt record still
+    reaches the bucket, before anything else."""
+    import wikidata_discover.config as config
+    import wikidata_discover.discovery as disc
+    class Late(StubDiscovery):
+        def discover_missing(self):
+            r = super().discover_missing(); config.HARD_DEADLINE = time.time() + 25; return r
+    monkeypatch.setattr(disc, "Discovery", Late)
+    bucket = FakeBucket()
+    s = batch.run_batch("r36", ["Q1"], bucket, results_dir=stub, report=lambda m: None, hard_deadline_s=1800)
+    rec = json.loads(bucket.store["runs/r36/log.jsonl"].splitlines()[0])
+    assert rec["uploaded"] is False and "DeadlineExceeded" in rec.get("note", "") or rec["uploaded"] is False
+    assert "runs/r36/reports/Q1_report.json" not in bucket.store         # the artifact gave way
+    uploads = [n.rsplit("/", 1)[-1] for op, n, t in bucket.store["__calls__"] if op == "upload"]
+    after_attempt = uploads[uploads.index("log.jsonl"):]
+    assert after_attempt[0] == "log.jsonl" and s["outcome"] == "failed"  # record first, retried later
+
+
+def test_parse_request_rejects_entries_that_are_not_qids():
+    import wikidata_discover.cloud.collect_function as cf
+    for bad in ([None], [{"a": 1}], ["Q1x"], ["foo"], ["Q0"], [" Q1"], [1]):
+        with pytest.raises(ValueError):
+            cf.parse_request({"qids": bad})
+    assert cf.parse_request({"qids": ["Q49210", "Q1"]})["qids"] == ["Q49210", "Q1"]
+
+
+def test_batch_collect_refuses_non_qids_before_touching_disk(monkeypatch, tmp_path):
+    import wikidata_discover.scripts.batch_collect as bc
+    monkeypatch.setattr(bc, "RESULTS_DIR", tmp_path)
+    assert bc.main(["run1", "Q1", "notaqid"]) == 2
+    assert not list(tmp_path.iterdir())
 
 
 def test_resume_keeps_the_original_run_json_through_a_warm_outage(stub):
@@ -485,6 +531,8 @@ def test_pick_qids_accepts_every_list_shape():
     assert row_qid(binding) == "Q5"
     assert row_qid({"univ": {"value": "http://www.wikidata.org/entity/Q6"}}) == "Q6"
     assert pick_qids([binding, "Q7", ("Q8", "Eight"), {}], done=set(), limit=10) == ["Q5", "Q7", "Q8"]
+    # rows that are not QIDs (a bad list, a null, an object) are skipped, never queried
+    assert pick_qids(["Q9", "junk", None, {"university": {"value": "x"}}, ["Q10x"], "Q11"], done=set(), limit=10) == ["Q9", "Q11"]
 
 
 def test_secret_manager_keys_reach_config(monkeypatch):
@@ -703,14 +751,17 @@ def test_source_identity_names_a_clean_commit_or_a_saved_patch(tmp_path):
     assert batch.source_identity(run_dir, repo=repo) == sha and not list(run_dir.iterdir())
     (repo / "wikidata_discover" / "x.py").write_text("a = 2\n")             # tracked edit
     (repo / "wikidata_discover" / "y.py").write_text("new = True\n")        # untracked file
+    blob = bytes(range(256)) * 4
+    (repo / "wikidata_discover" / "model.bin").write_bytes(blob)            # untracked binary file
     identity = batch.source_identity(run_dir, repo=repo)
     assert identity.startswith(f"{sha}-dirty-") and len(identity) == len(sha) + len("-dirty-") + 12
     patch = run_dir / f"source-{identity}.patch"
     assert patch.exists()
-    run("checkout", "--", "."); (repo / "wikidata_discover" / "y.py").unlink()
+    run("checkout", "--", "."); (repo / "wikidata_discover" / "y.py").unlink(); (repo / "wikidata_discover" / "model.bin").unlink()
     run("apply", str(patch))                                                  # rebuilds the exact source
     assert (repo / "wikidata_discover" / "x.py").read_text() == "a = 2\n"
     assert (repo / "wikidata_discover" / "y.py").read_text() == "new = True\n"
+    assert (repo / "wikidata_discover" / "model.bin").read_bytes() == blob   # binary content, not a marker
     assert batch.source_identity(run_dir, repo=repo) == identity              # same tree, same name
 
 

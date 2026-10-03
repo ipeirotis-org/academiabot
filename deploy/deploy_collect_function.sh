@@ -38,9 +38,9 @@ GIT_COMMIT=$(git rev-parse --short HEAD)
 if [ -n "$(git status --porcelain -- wikidata_discover deploy)" ]; then
   if [ "${ALLOW_DIRTY:-}" = "1" ]; then
     PATCH=$(mktemp)
-    git diff HEAD -- wikidata_discover deploy > "$PATCH"
+    git diff --binary HEAD -- wikidata_discover deploy > "$PATCH"
     git ls-files --others --exclude-standard -- wikidata_discover deploy | while read -r f; do
-      git diff --no-index -- /dev/null "$f" >> "$PATCH" || true   # exit 1 means "differs"
+      git diff --binary --no-index -- /dev/null "$f" >> "$PATCH" || true   # exit 1 means "differs"
     done
     GIT_COMMIT="${GIT_COMMIT}-dirty-$(sha256sum "$PATCH" | cut -c1-12)"
     gcloud storage cp "$PATCH" "gs://academiabot/deploys/${GIT_COMMIT}.patch" --project="$PROJECT" >/dev/null

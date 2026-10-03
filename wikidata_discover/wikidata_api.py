@@ -29,7 +29,8 @@ def quick_wd_search(label: str, language: str = "en") -> List[Tuple[str, str]]:
     """Search Wikidata labels and aliases in `language`. Honors Retry-After on 429
     instead of failing fast."""
     check_deadline("a Wikidata search")
-    time.sleep(_WD_API_DELAY)
+    time.sleep(bounded_wait(_WD_API_DELAY))
+    check_deadline("a Wikidata search")   # the polite pause may have crossed the deadline
     resp = requests.get(
         _SEARCH_URL,
         params={"action": "wbsearchentities", "format": "json", "language": language, "limit": 10, "search": label},

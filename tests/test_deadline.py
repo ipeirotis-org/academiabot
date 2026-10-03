@@ -128,6 +128,24 @@ def test_secret_manager_reads_are_bounded_by_the_kill_time(monkeypatch):
     monkeypatch.setattr(config, "HARD_DEADLINE", None)
 
 
+def test_the_polite_pause_cannot_carry_a_request_past_the_deadline(monkeypatch):
+    """The deadline check passes with 0.1 s left, the 0.3 s pause would cross it: the
+    pause is cut to what is left and the request is refused after it."""
+    import pytest
+    monkeypatch.setattr(sh.requests, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not be called")))
+    monkeypatch.setattr(wa.requests, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not be called")))
+    wa.quick_wd_search.retry.sleep = lambda s: None
+    monkeypatch.setattr(config, "DEADLINE", time.time() + 0.1)
+    t0 = time.time()
+    with pytest.raises(sh.DeadlineExceeded):
+        wa.quick_wd_search("x")
+    assert time.time() - t0 < 0.3                                    # the pause was bounded too
+    monkeypatch.setattr(config, "DEADLINE", time.time() + 0.1)
+    monkeypatch.setattr(sh, "_last_call", time.time())               # forces the SPARQL pause
+    with pytest.raises(sh.DeadlineExceeded):
+        sh._get("SELECT 1")
+
+
 def test_no_wikidata_request_starts_after_the_deadline(monkeypatch):
     import pytest
     monkeypatch.setattr(config, "DEADLINE", time.time() - 1)
