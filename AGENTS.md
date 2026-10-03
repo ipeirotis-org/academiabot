@@ -298,7 +298,8 @@ whether a reject blocks, which sources count, `url_checked` required); the expor
 pre-upload check both refuse to run when it is missing or invalid. Accepts are counted per
 distinct reviewer (the reviewer's latest verdict on that version), never per row. A "fix"
 verdict is applied to the hierarchy file and the affected steps are rerun: a corrected source
-URL is fetched and saved, a corrected QID or parent goes back through alignment so that
+URL is fetched and saved, a corrected country or parent link must come with its own URL,
+which is fetched and saved as that fact's evidence, a corrected QID or parent goes back through alignment so that
 parent_links and alignment are recomputed. That makes a new node version, which needs its own
 accept before export. Right before a
 first upload, alignment is rerun against current Wikidata, and changed nodes go back for review.
@@ -306,7 +307,9 @@ first upload, alignment is rerun against current Wikidata, and changed nodes go 
 Export is staged by level. A department whose parent is new has no parent QID yet, so it is
 held back. After a person uploads the school batch, an `ingest-qids` step records the new
 QIDs in the register and the hierarchy file (from the batch result, or a SPARQL lookup by
-label and parent, each match confirmed by a person), and only then is the department file
+label and parent, each match confirmed by a person), reruns alignment for the children of those
+schools so their parent_links and versions are recomputed (an existing department under a new
+school now shows that link as missing), and only then is the department file
 written.
 
 Units that the LLM proposed but alignment found nowhere on the web (no URL, dead URL) stay in
