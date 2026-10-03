@@ -18,7 +18,9 @@ def test_extract_cache_key_changes_with_the_prompt(monkeypatch):
 
 
 def test_choose_match_reuses_a_cached_decision(monkeypatch, tmp_path):
+    import wikidata_discover.config as config
     monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "k")                    # the preferred provider is configured
     children = [("Q1", "Stern School of Business"), ("Q2", "School of Law")]
     calls = []
 
@@ -49,3 +51,53 @@ def test_choose_match_reuses_a_cached_decision(monkeypatch, tmp_path):
     # a different list of choices is a different question
     LLMHelper.choose_match("Law School", "NYU", children + [("Q3", "Law Library")])
     assert len(calls) == 2
+
+
+def test_match_cache_is_keyed_by_the_configured_providers(monkeypatch, tmp_path):
+    """A decision made while a provider was missing is not the same question as one
+    made with all providers configured, and a fallback provider's decision is asked
+    again once the preferred provider is back."""
+    import wikidata_discover.config as config
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path)
+    children = [("Q1", "Stern School of Business"), ("Q2", "School of Law")]
+    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(config, "GOOGLE_API_KEY", None)
+    anthropic_calls, openai_calls = [], []
+    class Msg:
+        content = [type("T", (), {"text": "Q2"})()]
+    class Anthropic:
+        def with_options(self, **kw): return self
+        class messages:
+            @staticmethod
+            def create(**kw): anthropic_calls.append(1); return Msg()
+    class OpenAI:
+        def with_options(self, **kw): return self
+        class responses:
+            @staticmethod
+            def create(**kw): openai_calls.append(1); return type("R", (), {"output_text": "NONE"})()
+    def unavailable():
+        raise ValueError("not configured")
+    monkeypatch.setattr(lh, "_get_openai_client", unavailable)
+    monkeypatch.setattr(lh, "_get_anthropic_client", lambda: Anthropic())
+    monkeypatch.setattr(lh, "_get_gemini_client", unavailable)
+    # OpenAI key missing: Anthropic decides, and the decision is cached under that configuration.
+    assert LLMHelper.choose_match("Law School", "NYU", children) == ("Q2", "School of Law")
+    assert LLMHelper.choose_match("Law School", "NYU", children) == ("Q2", "School of Law")
+    assert len(anthropic_calls) == 1
+    # OpenAI key back: a different configuration, so the preferred provider is asked.
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "k")
+    monkeypatch.setattr(lh, "_get_openai_client", lambda: OpenAI())
+    assert LLMHelper.choose_match("Law School", "NYU", children) is None
+    assert len(openai_calls) == 1 and len(anthropic_calls) == 1
+    # Same configuration, but the cached answer came from a fallback provider (OpenAI
+    # was failing at the time): the preferred provider is asked again, once.
+    files = list(tmp_path.glob("*.json"))
+    for p in files:
+        d = json.loads(p.read_text())
+        if d.get("provider") == "openai":
+            p.write_text(json.dumps({"answer": "Q2", "provider": "anthropic"}))
+    assert LLMHelper.choose_match("Law School", "NYU", children) is None
+    assert len(openai_calls) == 2
+    assert LLMHelper.choose_match("Law School", "NYU", children) is None
+    assert len(openai_calls) == 2                                          # replaced answer is reused

@@ -431,9 +431,12 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
             # bucket history) and stop.
             report(f"bucket sync failed on a cold start; refusing to run blind: {sync_error}")
             summary.update({"outcome": "failed", "sync_error": sync_error})
-            ended = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            fmt = "%Y-%m-%dT%H:%M:%SZ"
             with (run_dir / "refused.jsonl").open("a") as f:
-                f.write(json.dumps({"invocation_id": invocation_id, "started": ended, "ended": ended,
+                f.write(json.dumps({"invocation_id": invocation_id,
+                                    "started": time.strftime(fmt, time.gmtime(started)),   # before the sync waited
+                                    "ended": time.strftime(fmt, time.gmtime()),
+                                    "seconds": round(time.time() - started, 1),
                                     "host": os.getenv("K_SERVICE", "local"),
                                     "operator": operator_identity(), "qids": qids, "outcome": "failed",
                                     "sync_error": sync_error, "summary": summary}) + "\n")

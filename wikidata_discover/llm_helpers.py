@@ -679,13 +679,20 @@ class LLMHelper:
         ]
 
         # A match decision is cached on the full prompt (candidate, university, and
-        # the exact list of choices) and the models in use, so a retry of the same
-        # university repeats no paid call and cannot flip an earlier decision.
+        # the exact list of choices), the models in use, and which providers are
+        # configured, so a retry of the same university repeats no paid call and
+        # cannot flip an earlier decision. A decision that a fallback provider made
+        # while the preferred one was failing is not reused once the preferred one
+        # is configured again: it is asked afresh and the new answer replaces it.
+        configured = [n for n, on in available_providers().items() if on]
         match_key = _cache_key(univ_label, "match", "|".join(m for _, _, m in providers),
-                               purpose="match", prompt_hash=_prompt_hash(prompt))
+                               purpose="match", prompt_hash=_prompt_hash(prompt), extra=",".join(configured))
         cached = _load_cache(match_key)
         if isinstance(cached, dict) and "answer" in cached:
-            return parse_match_answer(cached["answer"], children)
+            if not configured or cached.get("provider") == configured[0]:
+                return parse_match_answer(cached["answer"], children)
+            logger.info("choose_match: cached answer came from %s, not the preferred %s; asking again",
+                        cached.get("provider"), configured[0])
 
         deadline_hit = False
         for provider_name, get_client, model in providers:

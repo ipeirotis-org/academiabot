@@ -134,7 +134,9 @@ Minimum statement set for any new item: label, English description, P31, P749, P
 - `extract_divisions_ensemble()`: OpenAI + Anthropic generate, Gemini judges. Used by the eval harness only
 - `judge_union()`: one provider reviews the union of all candidates and keeps only real units
 - `choose_match()`: single-token classification (QID / ORPHAN:QID / NONE)
-- Responses are cached in `results/cache/`, keyed by (university, provider, model)
+- Responses are cached in `results/cache/`, keyed by (university, provider, model, prompt hash).
+  Match decisions are also keyed by which providers are configured, and a cached decision
+  made by a fallback provider is asked again once the preferred provider answers
 - Models configured in `config.py`: `LLM_MODEL` (OpenAI), `ANTHROPIC_MODEL`, `GEMINI_MODEL`; all overridable in `.env`
 - Eval on 12 universities: best config is Anthropic judge over OpenAI + Gemini, about 0.95 precision and recall
   (see `eval/results_summary.csv`)

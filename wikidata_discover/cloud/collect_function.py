@@ -153,6 +153,11 @@ def _collect(request, entered: float):
     # a cold instance a refusal to run blind) instead of escaping as an unlogged 500.
     qids, bucket = [], None
     try:
+        body = getattr(request, "data", b"") or b""
+        if raw is None and body.strip():
+            # A body that is not JSON must not pass for "no body" and start the
+            # default run on the default list: that spends LLM credit by accident.
+            raise ValueError("body is not valid JSON")
         p = parse_request(raw)
     except ValueError as e:
         p = parse_request({})

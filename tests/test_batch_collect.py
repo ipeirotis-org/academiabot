@@ -181,6 +181,36 @@ def test_collect_records_invocation_when_list_is_exhausted(monkeypatch):
     assert config.HARD_DEADLINE is None and config.DEADLINE is None
 
 
+def test_collect_treats_malformed_json_as_a_bad_request(monkeypatch):
+    """Truncated JSON must not pass for an empty body and start the default run."""
+    import flask
+    import wikidata_discover.cloud.collect_function as cf
+    calls = {}
+    monkeypatch.setattr(cf, "load_keys_from_secret_manager", lambda: None)
+    monkeypatch.setattr(cf, "ensure_user_agent", lambda: None)
+    monkeypatch.setattr(cf, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), **kw) or
+                        {"run_id": run_id, "failed": 1, "outcome": "failed"})
+    class FakeClient:
+        def __init__(self, project=None): pass
+        def bucket(self, name): raise AssertionError("the bucket must not be touched")
+    import google.cloud.storage as gcs
+    monkeypatch.setattr(gcs, "Client", FakeClient)
+    class Req:
+        data = b'{"run_id": "r13", "qids": ['
+        def get_json(self, silent=True): return None
+    with flask.Flask(__name__).app_context():
+        resp, status = cf.collect(Req())
+    assert status == 207 and calls["qids"] == [] and "not valid JSON" in calls["fail_reason"]
+    class Empty:
+        data = b"   "
+        def get_json(self, silent=True): return None
+    monkeypatch.setattr(gcs, "Client", type("C", (), {"__init__": lambda self, project=None: None,
+                                                        "bucket": lambda self, name: FakeBucket({"universities_us.json": "[]"})}))
+    with flask.Flask(__name__).app_context():
+        resp, status = cf.collect(Empty())
+    assert calls.get("fail_reason") is None                                 # a blank body is still "no body"
+
+
 def test_collect_refuses_preflight_reads_when_the_kill_is_imminent(monkeypatch):
     import flask
     import wikidata_discover.cloud.collect_function as cf
@@ -837,10 +867,12 @@ def test_run_batch_survives_an_unreachable_bucket(stub):
         def blob(self, name): return DeadBlob(self.store, name)
         def list_blobs(self, prefix="", **kw): raise OSError("bucket unreachable")
     # Cold start (no local log): refuse to run, record the failure, touch nothing else.
+    t0 = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     s = batch.run_batch("r15", ["Q1"], DeadBucket(), results_dir=stub, report=lambda m: None)
     assert s["outcome"] == "failed" and s["processed"] == 0 and s["sync_error"].startswith("OSError")
     lines = [json.loads(l) for l in (stub / "runs" / "r15" / "refused.jsonl").read_text().splitlines()]
     assert len(lines) == 1 and lines[0]["outcome"] == "failed" and lines[0]["operator"]
+    assert t0 <= lines[0]["started"] <= lines[0]["ended"] and "seconds" in lines[0]   # real start, not the end
     for name in ("run.json", "log.jsonl", "invocations.jsonl"):
         assert not (stub / "runs" / "r15" / name).exists()          # nothing that could replace history
 
