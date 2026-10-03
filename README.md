@@ -28,7 +28,7 @@ flowchart LR
 
 Blue: works today. Yellow: being built this term. Dashed: later. The parent link will
 be P749 (parent organization); the exporter still writes P361 (part of) today, and
-Anya's week 8 switches it.
+Anya's week 9 switches it.
 
 ```mermaid
 flowchart LR
@@ -47,7 +47,7 @@ flowchart LR
 ```
 
 Today the LLM gives one reference URL per answer, not one per unit. One URL per unit
-is Anya's week 3.
+is Anya's week 4.
 
 ## Who this is for
 
