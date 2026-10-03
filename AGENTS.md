@@ -29,7 +29,8 @@ academiabot/
 │       ├── wikidata_division_discover.py   # Entrypoint
 │       └── batch_collect.py                # CLI wrapper around batch.py
 ├── deploy/                      # deploy_collect_function.sh: Cloud Function + paused half-hourly Scheduler job
-├── docs/                        # BACKGROUND.md (origins, decisions); later REVIEW_GUIDE.md, MODELING_RULES.md
+├── docs/                        # BACKGROUND.md (origins, decisions), LITERATURE.md (research behind the plan);
+│                                #   later MODELING_RULES.md, REVIEW_GUIDE.md, REVIEW_PROTOCOL.md
 ├── tests/                       # pytest unit tests (fuzzy matching)
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
 ```
@@ -55,7 +56,7 @@ flowchart LR
 ## How to run
 
 ```bash
-pip install -r wikidata_discover/requirements.txt pytest
+pip install -r wikidata_discover/requirements.txt -r wikidata_discover/cloud/requirements.txt pytest
 # Copy env.example to .env and set at least one provider key (OPENAI_API_KEY preferred; all three for the eval harness)
 python -m wikidata_discover.scripts.wikidata_division_discover harvest
 python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210  # NYU
@@ -144,8 +145,10 @@ Minimum statement set for any new item: label, English description, P31, P749, P
 ## Working norms (read first)
 
 Students on this project direct agents; they do not write most of the code. There are two
-students with two tracks in `TASKS.md`: Anya builds the pipeline (section 4), Shuo builds the
-checks and the human review (section 5). So:
+students with two tracks in `TASKS.md`: Anya builds the hierarchy, aligned with Wikidata and with
+evidence for every unit (section 5); Shuo checks it with other LLMs, the evidence, and people
+(section 6). Each also owns two research questions (section 8), and the measurements they need
+are part of the weekly tasks. So:
 
 - Work on exactly the track and week in `TASKS.md` that the student names. Do not start the next one.
 - The "you check it by" cell for that week is the acceptance test. Make it pass and show it passing.
@@ -180,15 +183,24 @@ checks and the human review (section 5). So:
 7. ~~No tests exist~~ Fixed: `tests/test_fuzzy.py` covers `normalize_name` and `is_fuzzy_match`
 8. Discovery only goes one level deep (schools). Departments are the current work; see TASKS.md
 9. `discover` uses `extract_divisions_best_available()` (first provider that answers), not the ensemble that
-   scored best in eval. Wiring the ensemble into `discover` is a Milestone 2 task
-10. Web search is enabled only for OpenAI. Anthropic and Gemini extraction has no search or grounding tool
+   scored best in eval. Wiring the ensemble into `discover` is Anya's week 8 (TASKS.md)
+10. Web search is enabled only for OpenAI. Anthropic and Gemini extraction has no search or grounding tool.
+    Fix is Anya's week 4 (TASKS.md)
 11. `to_qs_wikidata.py` links new items to the university with P361, but the data model says P749 is primary.
-    Fix when the exporter is reworked in Milestone 3
+    Fix when the exporter is reworked in Anya's week 9 (TASKS.md)
 12. ~~`choose_match()` could never return an orphan: it compared the whole `ORPHAN:QID` token to bare QIDs~~
     Fixed: `parse_match_answer()` handles QID, ORPHAN:QID, and NONE, with tests
 13. ~~Every Gemini call failed with `Part.from_text() takes 1 positional argument`: the code used an
     old `google-genai` signature~~ Fixed: `Part.from_text(text=...)` and `config=GenerateContentConfig(...)`.
     Gemini had silently never worked as a fallback or judge
+14. Alignment searches with `wbsearchentities`, which matches label prefixes only. It misses items
+    whose label starts with the university's name ("Boston University Wheelock College ..." for
+    "Wheelock College ..."). A spot check of 40 "missing" schools in `us-tier1` found at least 5
+    that already exist. Fix is Anya's week 6 (full-text search, website, parent). Until then,
+    treat "missing" as "not found by prefix search"
+15. Extraction proposes non-academic units (career services, student affairs) and campuses as
+    schools. About 10 of the 40 spot-checked "missing" rows. `docs/MODELING_RULES.md` (week 4)
+    decides how each is handled
 
 ## Cloud Credentials
 
@@ -221,23 +233,110 @@ checks and the human review (section 5). So:
 
 Every run must be reproducible. Anya's week 2 creates the first four tables below in dataset
 `academiabot` of project `wikidata-academia`, with large text in Cloud Storage and the GCS path
-kept in the row. The fifth table, `reviews`, is Shuo's week 6; it is specified here so both
-tracks build to the same shape.
+kept in the row. The other three come later and are specified here so both tracks build to the
+same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, week 7).
 
 | Table | One row per | Must contain |
 |---|---|---|
-| `runs` | command invocation | run_id, who, git commit, the exact command and arguments (subcommand, QIDs, flags), config (providers, models, depth), start and end time, outcome |
-| `llm_calls` | API call | llm_call_id, run_id, provider, model, purpose (extract, judge, match, verify), prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
-| `evidence` | web page fetched | evidence_id, run_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
-| `candidates` | unit proposed | candidate_id, run_id, parent_qid, name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, llm_call_ids, evidence_ids |
-| `reviews` | one reviewer's verdict on one candidate | review_id, candidate_id, reviewer, source (expert, prolific), verdict (accept, reject, fix), corrected_value, url_checked, notes, reviewed_at |
+| `runs` | command invocation | run_id, invocation_id (a resumable cloud run keeps one run_id across many scheduled invocations, so each invocation has its own id and row), who, git commit, the exact command and arguments (subcommand, QIDs, flags), config (providers, models, depth), start and end time, outcome |
+| `llm_calls` | API call | llm_call_id, run_id, invocation_id, provider, model, purpose (extract, judge, match, verify), the request configuration (tools such as web search or grounding, extraction mode, sample number), the cache key, prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
+| `evidence` | web page fetched | evidence_id, run_id, invocation_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
+| `candidates` | unit proposed | candidate_id, run_id, invocation_id, parent_qid (or parent_candidate_id when the parent has no QID), name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, provider, llm_call_ids, evidence_ids |
+| `nodes` | unit in a hierarchy file | the fields of the hierarchy file below, plus run_id and invocation_id |
+| `checks` | one automated check of one unit, or of one of its parent links | check_id, run_id, invocation_id, node_id or candidate_id, parent_id (the parent link checked, as in `reviews`; empty for a check on the whole unit), node_version it evaluated (a check on an older version never counts toward the current confidence), kind (agreement, judge, page_status, name_on_page, verifier), result (pass, fail, unclear), score, detail (for example the quoted sentence or the providers that agreed), llm_call_ids and evidence_ids (every call and page the check used: an agreement check lists the call of each provider and sample it counted), checked_at |
+| `reviews` | one reviewer's verdict on one unit, or on one of its parent links | review_id, node_id or candidate_id, parent_id (the parent link judged, for a Prolific item or any verdict on one link; empty for a verdict on the whole unit), run_id and node_version of what was shown (or the candidate's evidence content hash), shown_hash (hash of the whole review row as displayed, checks and confidence included), reviewer, source (expert, prolific), pass or arm (blind: checks hidden; shown: checks visible), verdict (accept, reject, fix), corrections (field to corrected value, for any value the export writes, including each parent link's target, rank, qualifiers, and source), url_checked (one yes/no per evidence page shown), notes, reviewed_at |
 
-Every table has its own stable id so that a candidate's `llm_call_ids` and `evidence_ids`
-resolve to exact rows. Reviews are append-only: a second reviewer adds a row, never
-overwrites one, so agreement between reviewers can be computed. The export honors the
-reviews a protocol says it should (for example, two accepts and no reject).
+Every table has its own stable id so that the `llm_call_ids` and `evidence_ids` of a candidate
+or a check resolve to exact rows. `llm_calls`, `evidence`, `candidates`, `nodes`, and `checks`
+rows carry the invocation_id as well as the run_id, so each row leads to the exact invocation,
+arguments, and time that produced it. Reviews are append-only: a second reviewer adds a row, never
+overwrites one, so agreement between reviewers can be computed. Checks are append-only too. The
+export honors the reviews a protocol says it should (for example, two accepts and no reject),
+and only reviews whose node_version equals the node's current version: node ids are reused
+across runs, so a verdict on an earlier version (different name, parent, QID, alignment, or
+evidence) never authorizes the new one. A verdict judges the facts and their evidence, so
+node_version deliberately leaves out the machine checks: rerunning a verifier does not void a
+person's verdict, and shown_hash records what that person saw. Only blind verdicts (checks
+hidden) enter precision estimates and the evaluation of confidence scores.
 
-Rules: write the raw LLM response to storage before parsing it. Cache keys include the prompt
+The exporter writes a manifest next to each QuickStatements file: one line per statement with
+node_id, node_version, and the review ids that authorize it, plus every in-scope node of that
+level that was left out and why. The pre-upload check validates file, manifest, hierarchy,
+and reviews together, so a statement without a current verdict, or a node silently dropped,
+is caught.
+
+### Hierarchy file (planned, Anya week 5)
+
+One JSON file per university and run, at `results/hierarchy/<QID>.json` and in the bucket
+under the run folder. It is the contract between the two tracks: Anya's code writes it,
+Shuo's checks and review sheet read it, the exporter turns the reviewed part into
+QuickStatements. Each node:
+
+| Field | Meaning |
+|---|---|
+| node_id | Our own stable id, assigned once when a unit is first seen and never derived from fields that can change. A per-university id register in the bucket (`gs://academiabot/hierarchy/<QID>/ids.json`, kept outside the run folders with the cross-register file below; see "Running collection in the cloud") maps each id to the QID, names, parents, normalized website, and source URLs last seen (the matching rules below need them after the run that saw them is gone); a later run reuses an id when the unit matches (same QID, else same normalized name or alias under the same parent, else an alignment merge). A name match under the same parent counts only when it is unique on both sides: one register entry and one unit in this run with that name there. When a parent has two units with the same name (two "Graduate Program" units under one school), each is matched by its source URL or website, and a unit that still fits more than one entry, or none uniquely, gets a new id and is flagged for a person. A unit without a QID that moves to another parent is matched under the university only when the name or alias and the website or source URL both match, and exactly one register entry fits. A name-only match under another parent is not a move (two schools can each have a "Department of Economics", and an LLM can drop one and name the other): the unit gets a new id and the possible old id is flagged for a person, as when several entries fit. Ids are never guessed. A unit without a QID that was renamed and no longer carries its old name is matched by the same source URL or website under the same parent, again only when exactly one entry fits; otherwise the same flag. A unit that becomes aligned, is renamed, or moves to another parent keeps its id. When two nodes merge, the register records old id -> surviving id, so checks and reviews on the old id still resolve. A unit run jointly by two universities (the Coulter Department of Biomedical Engineering belongs to Georgia Tech and Emory) is kept in one register only. Before any export, a check across all registers looks for the same unit in two universities. The same QID is the same unit: the register that recorded it first owns it. Without a QID, a shared name is not enough (every university has a "Department of Economics"): a pair is proposed only when the names or aliases match and the website or source page is the same, and it is held as uncertain until a person either picks the register that owns it or marks the two as distinct. Both answers are kept in `gs://academiabot/hierarchy/cross_register.json`, so a pair is never asked twice. The non-owning hierarchy then refers to the unit as `<owner QID>/<node_id>` and never allocates its own id, and a parent link into the other tree is written only once that parent has a QID (held back like a department of a new school) |
+| name, aliases | Name as the unit uses it; other names and abbreviations found |
+| unit_type | school, department, program, center, campus, office, other (as `docs/MODELING_RULES.md` defines them) |
+| parent_ids | List of node_ids. Two for a joint unit. The university is the root node. A parent in another university's hierarchy is written `<owner QID>/<node_id>` |
+| parent_links | One entry per parent: parent_id and whether Wikidata already has P749 from this QID to that parent's QID (present, present but different, missing, or not applicable when either side has no QID). Each entry also carries the rank and qualifiers `docs/MODELING_RULES.md` sets for that link (joint units get normal rank and the qualifiers the rules name); "present but different" means the existing statement's rank or qualifiers differ from those, and the entry records both. For an existing item (orphan), the exporter writes one P749 per missing entry, with them, so a joint unit linked to one parent and not the other gets exactly the missing link. For a "present but different" entry it writes the missing qualifiers onto the existing statement only when that item has exactly one P749 statement with that parent as its value (QuickStatements adds qualifiers to the first statement with the same value and cannot pick one by statement id); with two or more, the whole correction goes into the manifest as a hand edit; a rank, or a qualifier value, that differs is listed in the manifest as a hand edit for a person, with the existing and expected values, because QuickStatements cannot change a rank and changing another editor's statement is a judgment call. For a new item, every entry is "not applicable" and the exporter writes a P749 to every parent |
+| qid | Wikidata QID, or null |
+| country | Country QID for P17, with the evidence it came from (the page, an address, or the Wikidata item). Never assumed from the university: NYU Abu Dhabi and NYU Shanghai are not in the U.S. |
+| node_version | Hash of everything the review sheet shows: name, aliases, description, unit_type, parent_ids, each parent's current name and QID, parent_links, qid, country, alignment, alignment_candidates, wikidata_duplicates, website, source_url, and the evidence ids with their content hashes. Changes whenever any of them changes, so new alignment evidence also sends a unit back for review. A fetch of the same page with the same content adds an evidence row but does not replace the node's evidence ids, so the version, and the snapshot the export cites, stay the ones the reviewer saw; changed content replaces them and makes a new version |
+| alignment | Summary of parent_links: linked (QID, and P749 present, as the rules set it, to every parent), orphan (QID, and P749 missing or present but different for at least one parent; a unit connected only through P361, P527, P355, or P199 counts as missing, so the export adds the P749), new (no item; searched), pending (QID, and no P749 is missing or different except to parents that have no QID yet; held back from export until `ingest-qids` records the parent's QID and alignment is rerun, which turns it into linked or orphan), uncertain (could not decide; never exported) |
+| alignment_candidates | QIDs considered, how each was found (prefix search, full-text search, website, parent), and the reason for the choice |
+| wikidata_duplicates | QIDs that look like a second item for the same unit on Wikidata; flagged for a person, never merged by us |
+| website | P856 value or the URL found |
+| description | English description a new item would get; shown to reviewers like every other exported value |
+| source_url, evidence_ids | Where the unit was found, and the saved page(s). Evidence is kept per fact: each parent link and the country carry their own evidence ids, and each exported statement is referenced with the evidence for that fact: the exact saved snapshot the reviewer saw, with that snapshot's URL and retrieval date. Fetching the same page again later adds a new evidence row but does not change what an already reviewed version exports |
+| candidate_ids, run_id | Which `candidates` rows and run proposed it |
+
+Every unit in the Wikidata snapshot (Anya's week 3) that the modeling rules put in scope
+enters the file, whether or not an LLM named it, and is expanded to the next level like any
+other node. It also goes through the same evidence step as an LLM-named unit before the file
+is written: a source page for the unit itself (its P856 website, else a search), fetched and
+saved, and its country and parent link checked against it; without one it carries the same
+flag as a unit with no URL. A Wikidata statement is not evidence for exporting a fix to it. Otherwise a school the LLM forgot would drop out with all its departments. The same holds for a unit that alignment links to an existing item outside the snapshot (a school with a QID that no snapshot property connects to the university): before the file is written, its own subtree is crawled with the same per-unit queries and merged in, so its existing departments are kept even if the LLM omits them.
+
+The export emits no statement for a linked unit and lists it in the manifest as already linked.
+Which verdicts authorize a unit is read from `review_protocol.json` (number of accepts,
+whether a reject blocks, which sources count, `url_checked` required); the export and the
+pre-upload check both refuse to run when it is missing or invalid. Accepts are counted per
+distinct reviewer, never per row: the reviewer's latest blind-pass verdict on that version (and,
+for a verdict on one parent link, on that link: verdicts on two links of a joint unit never
+replace each other) is the one that counts toward the accepts, and the reviewer's latest verdict in either pass blocks
+if it is a reject or a fix (a fix says this version is wrong; only the corrected version can be
+accepted). Only expert verdicts authorize an export. A Prolific worker judges only the claim
+("this page shows X is a unit of Y") and never sees the QID, country, type, website, rank, or
+qualifiers, so a worker's verdict can add a required accept or block on a reject or fix, but
+never replaces the expert accept, whatever the protocol file says. A "fix"
+verdict is applied to the hierarchy file and the affected steps are rerun: a corrected source
+URL is fetched and saved, a corrected country or parent link must come with its own URL,
+which is fetched and saved as that fact's evidence, a correction to anything alignment searches with (name, aliases, type, website, QID, or parent) goes back through alignment so that
+parent_links and alignment are recomputed. That makes a new node version, which needs its own
+accept before export. Right before each
+upload batch (schools, then departments), alignment for that level is rerun against current
+Wikidata, and changed nodes go back for review. The pre-upload check regenerates the export
+from the hierarchy file, reviews, and protocol, and refuses any difference from the file to
+be uploaded. Reviewers confirm each evidence page on the row separately (`url_checked` per
+page), and every value the export writes has a correction field.
+
+Export is staged by level. A department whose parent is new has no parent QID yet, so it is
+held back. After a person uploads the school batch, an `ingest-qids` step records the new
+QIDs in the register and the hierarchy file (from the batch result, or a SPARQL lookup by
+label and parent, each match confirmed by a person), reruns alignment for the children of those
+schools so their parent_links and versions are recomputed (an existing department under a new
+school now shows that link as missing), and only then is the department file
+written.
+
+Units that the LLM proposed but alignment found nowhere on the web (no URL, dead URL) stay in
+the file with their flags; Shuo's checks decide what to do with them.
+
+Rules: write the raw LLM response to storage before parsing it, and save every Wikidata search response alignment used (prefix, full-text, website, parent) with the run, so a replay gives the same answer. Repeated samples of the same
+request (Shuo's week 3) carry a sample number in the cache key, so they are distinct calls that
+replay deterministically. Cited URLs are untrusted input: fetch only `http`/`https`, refuse
+non-public addresses (loopback, private, link-local, metadata) on the first request and every
+redirect, and cap redirects (5), size (5 MB), and time (20 s). Connect to the address that was checked
+(resolve once, then connect to that IP), so DNS rebinding cannot reach a private address. Cache keys include the whole request configuration (provider, model, tools such as web search or grounding, extraction mode, sample number), so a search-on run never reads a search-off answer. Cache keys include the prompt
 hash. Local JSON under `results/runs/` is the fallback when GCP is unreachable. Keys come from
 Secret Manager when `.env` has none (see "Secret Manager" below).
 
@@ -248,7 +347,22 @@ holds the resumable batch logic; `scripts/batch_collect.py` runs it from a termi
 `cloud/collect_function.py` runs it as a Cloud Function (gen 2, HTTP, 30 minute timeout) that
 processes one time slice per invocation and resumes from the run log in the bucket. Cloud
 Scheduler calls it every 30 minutes (its HTTP deadline is 30 minutes at most, so a slice
-has a 25 minute budget). State and artifacts live only in `gs://academiabot/runs/<run_id>/`.
+has a 25 minute budget). State and artifacts live only in `gs://academiabot/runs/<run_id>/`, with one exception: the
+node id registers at `gs://academiabot/hierarchy/<QID>/ids.json` and the cross-register
+decisions at `gs://academiabot/hierarchy/cross_register.json`, which must survive across
+runs. Every run that builds a hierarchy loads the register at the start, writes it back at the
+end with a generation-match precondition (so two runs never silently overwrite each other; on
+a conflict, reload and redo the assignment), and keeps a local copy under
+`results/hierarchy/<QID>/`. `cross_register.json` is written the same way: generation-match
+precondition, and on a conflict reload, reapply this run's decisions, and retry, so two people
+resolving different pairs at once both keep their answers. Only decisions on pairs the reloaded
+file does not already have are reapplied; when it already has a different answer for the same
+pair, the write stops and both answers go to a person, so neither silently wins. The local copy is read-only: when the bucket register cannot be
+read or written, the run assigns no new ids and writes no hierarchy file (the rest of the run
+log still goes to `results/runs/`), so ids are only ever allocated against the canonical
+register. Each run records the generation of the register and of `cross_register.json` it
+loaded, and saves a copy of both in its run folder; a replay uses that copy, read-only, so a
+later merge or ownership decision cannot change a replayed run's ids or counts.
 
 ```mermaid
 flowchart LR
@@ -331,6 +445,14 @@ flowchart LR
   front of it, because the session proxy sets that variable to a placeholder.
 - Wikidata rate limits are per IP, so one instance at a time (`--max-instances=1`), about 40
   universities per hour over two slices. The full U.S. list is roughly three days.
+- Run `us-tier1` (finished 2026-10-03): school level for the 1,519 universities in
+  `gs://academiabot/universities_us_tier1.json`. 9,190 candidates: 2,327 linked, 450 orphan,
+  6,413 missing, 1 university failed. 1,503 answers came from OpenAI. 15% of rows have no
+  source URL. It predates the run log; Anya's week 3 imports it into `candidates`.
+- The Wikidata action API (`wbsearchentities`) can return 429 to a cloud session's shared IP
+  while the SPARQL endpoint still answers. For a read-only lookup from a session, the SPARQL
+  `wikibase:mwapi` service with `wikibase:api "Search"` (full-text) or `"EntitySearch"` (prefix)
+  works; see the last query in TASKS.md section 11.
 
 ## BigQuery access
 

@@ -15,7 +15,7 @@ TYPE_MAP = {
 
 # Property used to link a unit to its university. Known issue 11 in AGENTS.md:
 # the data model says P749 is primary; switch this constant when the exporter is
-# reworked in Milestone 3.
+# reworked (Anya's week 9 in TASKS.md).
 PARENT_PROPERTY = "P361"
 
 

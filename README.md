@@ -28,7 +28,7 @@ flowchart LR
 
 Blue: works today. Yellow: being built this term. Dashed: later. The parent link will
 be P749 (parent organization); the exporter still writes P361 (part of) today, and
-Anya's week 8 switches it.
+Anya's week 9 switches it.
 
 ```mermaid
 flowchart LR
@@ -47,7 +47,7 @@ flowchart LR
 ```
 
 Today the LLM gives one reference URL per answer, not one per unit. One URL per unit
-is Anya's week 3.
+is Anya's week 4.
 
 ## Who this is for
 
@@ -83,8 +83,8 @@ unit is missing or orphaned, it also writes two files to `wikidata_discover/resu
 CSV of those units and a QuickStatements file that could create them. For NYU today
 nothing is missing, so only the JSON report is written, and any CSV or QuickStatements
 file an earlier run left for the same university is removed first, so what is in
-`results/` is always the latest result. **Do not upload a QuickStatements file.** Uploading is a human step, after review, described in TASKS.md (Anya's weeks 8
-and 9, Shuo's week 9).
+`results/` is always the latest result. **Do not upload a QuickStatements file.** Uploading is a human step, after review, described in TASKS.md (Anya's weeks 9
+and 10, Shuo's week 10).
 
 Or ask your agent to do all of this for you and explain the output. That is the normal
 way to work here.
