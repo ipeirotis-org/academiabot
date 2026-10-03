@@ -272,13 +272,14 @@ QuickStatements. Each node:
 
 | Field | Meaning |
 |---|---|
-| node_id | Our own stable id, assigned once when a unit is first seen and never derived from fields that can change. A per-university id register in the bucket (`hierarchy/<QID>/ids.json`) maps each id to the QID, names, and parents last seen; a later run reuses an id when the unit matches (same QID, else same normalized name or alias under the same parent, else an alignment merge). A unit that becomes aligned, is renamed, or moves to another parent keeps its id. When two nodes merge, the register records old id -> surviving id, so checks and reviews on the old id still resolve |
+| node_id | Our own stable id, assigned once when a unit is first seen and never derived from fields that can change. A per-university id register in the bucket (`gs://academiabot/hierarchy/<QID>/ids.json`, the one piece of state kept outside the run folders; see "Running collection in the cloud") maps each id to the QID, names, and parents last seen; a later run reuses an id when the unit matches (same QID, else same normalized name or alias under the same parent, else an alignment merge). A unit that becomes aligned, is renamed, or moves to another parent keeps its id. When two nodes merge, the register records old id -> surviving id, so checks and reviews on the old id still resolve |
 | name, aliases | Name as the unit uses it; other names and abbreviations found |
 | unit_type | school, department, program, center, campus, office, other (as `docs/MODELING_RULES.md` defines them) |
 | parent_ids | List of node_ids. Two for a joint unit. The university is the root node |
-| parent_links | One entry per parent: parent_id and whether Wikidata already has P749 from this QID to that parent's QID (present, missing, or not applicable when either side has no QID). The exporter writes one P749 per missing entry, so a joint unit linked to one parent and not the other gets exactly the missing link |
+| parent_links | One entry per parent: parent_id and whether Wikidata already has P749 from this QID to that parent's QID (present, missing, or not applicable when either side has no QID). Each entry also carries the rank and qualifiers `docs/MODELING_RULES.md` sets for that link (joint units get normal rank and the qualifiers the rules name). The exporter writes one P749 per missing entry, with them, so a joint unit linked to one parent and not the other gets exactly the missing link |
 | qid | Wikidata QID, or null |
-| node_version | Hash of everything the review sheet shows: name, aliases, unit_type, parent_ids, parent_links, qid, alignment, alignment_candidates, wikidata_duplicates, website, source_url, and the content hashes of the evidence. Changes whenever any of them changes, so new alignment evidence also sends a unit back for review |
+| country | Country QID for P17, with the evidence it came from (the page, an address, or the Wikidata item). Never assumed from the university: NYU Abu Dhabi and NYU Shanghai are not in the U.S. |
+| node_version | Hash of everything the review sheet shows: name, aliases, unit_type, parent_ids, parent_links, qid, country, alignment, alignment_candidates, wikidata_duplicates, website, source_url, and the content hashes of the evidence. Changes whenever any of them changes, so new alignment evidence also sends a unit back for review |
 | alignment | Summary of parent_links: linked (QID, and P749 present to every parent), orphan (QID, and P749 missing to at least one parent; a unit connected only through P361, P527, P355, or P199 counts as missing, so the export adds the P749), new (no item; searched), uncertain (could not decide; never exported) |
 | alignment_candidates | QIDs considered, how each was found (prefix search, full-text search, website, parent), and the reason for the choice |
 | wikidata_duplicates | QIDs that look like a second item for the same unit on Wikidata; flagged for a person, never merged by us |
@@ -289,6 +290,13 @@ QuickStatements. Each node:
 Every unit in the Wikidata snapshot (Anya's week 3) that the modeling rules put in scope
 enters the file, whether or not an LLM named it, and is expanded to the next level like any
 other node. Otherwise a school the LLM forgot would drop out with all its departments.
+
+The export emits no statement for a linked unit and lists it in the manifest as already linked.
+Which verdicts authorize a unit is read from `review_protocol.json` (number of accepts,
+whether a reject blocks, which sources count, `url_checked` required). A "fix" verdict is
+applied to the hierarchy file, which makes a new node version (a corrected source URL is
+fetched and saved first), and that version needs its own accept before export. Right before a
+first upload, alignment is rerun against current Wikidata, and changed nodes go back for review.
 
 Export is staged by level. A department whose parent is new has no parent QID yet, so it is
 held back. After a person uploads the school batch, an `ingest-qids` step records the new
@@ -314,7 +322,12 @@ holds the resumable batch logic; `scripts/batch_collect.py` runs it from a termi
 `cloud/collect_function.py` runs it as a Cloud Function (gen 2, HTTP, 30 minute timeout) that
 processes one time slice per invocation and resumes from the run log in the bucket. Cloud
 Scheduler calls it every 30 minutes (its HTTP deadline is 30 minutes at most, so a slice
-has a 25 minute budget). State and artifacts live only in `gs://academiabot/runs/<run_id>/`.
+has a 25 minute budget). State and artifacts live only in `gs://academiabot/runs/<run_id>/`, with one exception: the
+node id registers at `gs://academiabot/hierarchy/<QID>/ids.json`, which must survive across
+runs. Every run that builds a hierarchy loads the register at the start, writes it back at the
+end with a generation-match precondition (so two runs never silently overwrite each other; on
+a conflict, reload and redo the assignment), and keeps a local copy under
+`results/hierarchy/<QID>/` as the offline fallback.
 
 ```mermaid
 flowchart LR
