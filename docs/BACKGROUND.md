@@ -63,7 +63,7 @@ still needs a person to confirm it against the school's current website.
 
 The crowdsourcing design broke the work into four small human tasks. The LLM pipeline now
 does most of this automatically, but the decomposition is still the right way to think about
-the human review step (TASKS.md, Milestone 6), because each task has a clear yes/no answer.
+the human review step (TASKS.md, Shuo's weeks 7 to 9), because each task has a clear yes/no answer.
 
 1. **Enrich an entity.** Given a unit, record its name, location, website, parent, and
    identifiers (Wikidata QID, Google Scholar organization ID).

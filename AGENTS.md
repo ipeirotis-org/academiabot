@@ -29,7 +29,8 @@ academiabot/
 │       ├── wikidata_division_discover.py   # Entrypoint
 │       └── batch_collect.py                # CLI wrapper around batch.py
 ├── deploy/                      # deploy_collect_function.sh: Cloud Function + paused half-hourly Scheduler job
-├── docs/                        # BACKGROUND.md (origins, decisions); later REVIEW_GUIDE.md, MODELING_RULES.md
+├── docs/                        # BACKGROUND.md (origins, decisions), LITERATURE.md (research behind the plan);
+│                                #   later MODELING_RULES.md, REVIEW_GUIDE.md, REVIEW_PROTOCOL.md
 ├── tests/                       # pytest unit tests (fuzzy matching)
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
 ```
@@ -55,7 +56,7 @@ flowchart LR
 ## How to run
 
 ```bash
-pip install -r wikidata_discover/requirements.txt pytest
+pip install -r wikidata_discover/requirements.txt -r wikidata_discover/cloud/requirements.txt pytest
 # Copy env.example to .env and set at least one provider key (OPENAI_API_KEY preferred; all three for the eval harness)
 python -m wikidata_discover.scripts.wikidata_division_discover harvest
 python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210  # NYU
@@ -144,8 +145,10 @@ Minimum statement set for any new item: label, English description, P31, P749, P
 ## Working norms (read first)
 
 Students on this project direct agents; they do not write most of the code. There are two
-students with two tracks in `TASKS.md`: Anya builds the pipeline (section 4), Shuo builds the
-checks and the human review (section 5). So:
+students with two tracks in `TASKS.md`: Anya builds the hierarchy, aligned with Wikidata and with
+evidence for every unit (section 5); Shuo checks it with other LLMs, the evidence, and people
+(section 6). Each also owns two research questions (section 8), and the measurements they need
+are part of the weekly tasks. So:
 
 - Work on exactly the track and week in `TASKS.md` that the student names. Do not start the next one.
 - The "you check it by" cell for that week is the acceptance test. Make it pass and show it passing.
@@ -180,15 +183,24 @@ checks and the human review (section 5). So:
 7. ~~No tests exist~~ Fixed: `tests/test_fuzzy.py` covers `normalize_name` and `is_fuzzy_match`
 8. Discovery only goes one level deep (schools). Departments are the current work; see TASKS.md
 9. `discover` uses `extract_divisions_best_available()` (first provider that answers), not the ensemble that
-   scored best in eval. Wiring the ensemble into `discover` is a Milestone 2 task
-10. Web search is enabled only for OpenAI. Anthropic and Gemini extraction has no search or grounding tool
+   scored best in eval. Wiring the ensemble into `discover` is Anya's week 8 (TASKS.md)
+10. Web search is enabled only for OpenAI. Anthropic and Gemini extraction has no search or grounding tool.
+    Fix is Anya's week 4 (TASKS.md)
 11. `to_qs_wikidata.py` links new items to the university with P361, but the data model says P749 is primary.
-    Fix when the exporter is reworked in Milestone 3
+    Fix when the exporter is reworked in Anya's week 9 (TASKS.md)
 12. ~~`choose_match()` could never return an orphan: it compared the whole `ORPHAN:QID` token to bare QIDs~~
     Fixed: `parse_match_answer()` handles QID, ORPHAN:QID, and NONE, with tests
 13. ~~Every Gemini call failed with `Part.from_text() takes 1 positional argument`: the code used an
     old `google-genai` signature~~ Fixed: `Part.from_text(text=...)` and `config=GenerateContentConfig(...)`.
     Gemini had silently never worked as a fallback or judge
+14. Alignment searches with `wbsearchentities`, which matches label prefixes only. It misses items
+    whose label starts with the university's name ("Boston University Wheelock College ..." for
+    "Wheelock College ..."). A spot check of 40 "missing" schools in `us-tier1` found at least 5
+    that already exist. Fix is Anya's week 6 (full-text search, website, parent). Until then,
+    treat "missing" as "not found by prefix search"
+15. Extraction proposes non-academic units (career services, student affairs) and campuses as
+    schools. About 10 of the 40 spot-checked "missing" rows. `docs/MODELING_RULES.md` (week 4)
+    decides how each is handled
 
 ## Cloud Credentials
 
@@ -221,21 +233,47 @@ checks and the human review (section 5). So:
 
 Every run must be reproducible. Anya's week 2 creates the first four tables below in dataset
 `academiabot` of project `wikidata-academia`, with large text in Cloud Storage and the GCS path
-kept in the row. The fifth table, `reviews`, is Shuo's week 6; it is specified here so both
-tracks build to the same shape.
+kept in the row. The other three come later and are specified here so both tracks build to the
+same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, week 7).
 
 | Table | One row per | Must contain |
 |---|---|---|
 | `runs` | command invocation | run_id, who, git commit, the exact command and arguments (subcommand, QIDs, flags), config (providers, models, depth), start and end time, outcome |
 | `llm_calls` | API call | llm_call_id, run_id, provider, model, purpose (extract, judge, match, verify), prompt hash, GCS paths to the full prompt and the raw response, tokens, latency, cache hit |
 | `evidence` | web page fetched | evidence_id, run_id, url, fetched_at, http_status, content hash, GCS path to the snapshot, unit names found on the page |
-| `candidates` | unit proposed | candidate_id, run_id, parent_qid, name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, llm_call_ids, evidence_ids |
-| `reviews` | one reviewer's verdict on one candidate | review_id, candidate_id, reviewer, source (expert, prolific), verdict (accept, reject, fix), corrected_value, url_checked, notes, reviewed_at |
+| `candidates` | unit proposed | candidate_id, run_id, parent_qid (or parent_candidate_id when the parent has no QID), name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, provider, llm_call_ids, evidence_ids |
+| `nodes` | unit in a hierarchy file | the fields of the hierarchy file below, plus run_id |
+| `checks` | one automated check of one unit | check_id, run_id, node_id or candidate_id, kind (agreement, judge, page_status, name_on_page, verifier), result (pass, fail, unclear), score, detail (for example the quoted sentence or the providers that agreed), llm_call_id, evidence_id, checked_at |
+| `reviews` | one reviewer's verdict on one unit | review_id, node_id or candidate_id, reviewer, source (expert, prolific), arm (verifier shown or hidden), verdict (accept, reject, fix), corrected_value, url_checked, notes, reviewed_at |
 
 Every table has its own stable id so that a candidate's `llm_call_ids` and `evidence_ids`
 resolve to exact rows. Reviews are append-only: a second reviewer adds a row, never
-overwrites one, so agreement between reviewers can be computed. The export honors the
-reviews a protocol says it should (for example, two accepts and no reject).
+overwrites one, so agreement between reviewers can be computed. Checks are append-only too. The
+export honors the reviews a protocol says it should (for example, two accepts and no reject).
+
+### Hierarchy file (planned, Anya week 5)
+
+One JSON file per university and run, at `results/hierarchy/<QID>.json` and in the bucket
+under the run folder. It is the contract between the two tracks: Anya's code writes it,
+Shuo's checks and review sheet read it, the exporter turns the reviewed part into
+QuickStatements. Each node:
+
+| Field | Meaning |
+|---|---|
+| node_id | Our own stable id. The same unit gets the same id on every run (derive it from the university QID and the aligned QID, or the normalized name path for new units, and carry it over when alignment merges two nodes) |
+| name, aliases | Name as the unit uses it; other names and abbreviations found |
+| unit_type | school, department, program, center, campus, office, other (as `docs/MODELING_RULES.md` defines them) |
+| parent_ids | List of node_ids. Two for a joint unit. The university is the root node |
+| qid | Wikidata QID, or null |
+| alignment | linked (QID, and Wikidata has the parent link), orphan (QID, parent link missing), new (no item; searched), uncertain (could not decide; never exported) |
+| alignment_candidates | QIDs considered, how each was found (prefix search, full-text search, website, parent), and the reason for the choice |
+| wikidata_duplicates | QIDs that look like a second item for the same unit on Wikidata; flagged for a person, never merged by us |
+| website | P856 value or the URL found |
+| source_url, evidence_ids | Where the unit was found, and the saved page(s) |
+| candidate_ids, run_id | Which `candidates` rows and run proposed it |
+
+Units that the LLM proposed but alignment found nowhere on the web (no URL, dead URL) stay in
+the file with their flags; Shuo's checks decide what to do with them.
 
 Rules: write the raw LLM response to storage before parsing it. Cache keys include the prompt
 hash. Local JSON under `results/runs/` is the fallback when GCP is unreachable. Keys come from
@@ -331,6 +369,14 @@ flowchart LR
   front of it, because the session proxy sets that variable to a placeholder.
 - Wikidata rate limits are per IP, so one instance at a time (`--max-instances=1`), about 40
   universities per hour over two slices. The full U.S. list is roughly three days.
+- Run `us-tier1` (finished 2026-10-03): school level for the 1,519 universities in
+  `gs://academiabot/universities_us_tier1.json`. 9,190 candidates: 2,327 linked, 450 orphan,
+  6,413 missing, 1 university failed. 1,503 answers came from OpenAI. 15% of rows have no
+  source URL. It predates the run log; Anya's week 3 imports it into `candidates`.
+- The Wikidata action API (`wbsearchentities`) can return 429 to a cloud session's shared IP
+  while the SPARQL endpoint still answers. For a read-only lookup from a session, the SPARQL
+  `wikibase:mwapi` service with `wikibase:api "Search"` (full-text) or `"EntitySearch"` (prefix)
+  works; see the last query in TASKS.md section 11.
 
 ## BigQuery access
 

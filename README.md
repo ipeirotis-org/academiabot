@@ -83,8 +83,8 @@ unit is missing or orphaned, it also writes two files to `wikidata_discover/resu
 CSV of those units and a QuickStatements file that could create them. For NYU today
 nothing is missing, so only the JSON report is written, and any CSV or QuickStatements
 file an earlier run left for the same university is removed first, so what is in
-`results/` is always the latest result. **Do not upload a QuickStatements file.** Uploading is a human step, after review, described in TASKS.md (Anya's weeks 8
-and 9, Shuo's week 9).
+`results/` is always the latest result. **Do not upload a QuickStatements file.** Uploading is a human step, after review, described in TASKS.md (Anya's weeks 9
+and 10, Shuo's week 10).
 
 Or ask your agent to do all of this for you and explain the output. That is the normal
 way to work here.
