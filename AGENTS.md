@@ -244,12 +244,16 @@ same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, we
 | `candidates` | unit proposed | candidate_id, run_id, parent_qid (or parent_candidate_id when the parent has no QID), name, unit_type, status (linked, orphan, missing, unresolved), matched_qid, source_url, provider, llm_call_ids, evidence_ids |
 | `nodes` | unit in a hierarchy file | the fields of the hierarchy file below, plus run_id |
 | `checks` | one automated check of one unit | check_id, run_id, node_id or candidate_id, kind (agreement, judge, page_status, name_on_page, verifier), result (pass, fail, unclear), score, detail (for example the quoted sentence or the providers that agreed), llm_call_id, evidence_id, checked_at |
-| `reviews` | one reviewer's verdict on one unit | review_id, node_id or candidate_id, reviewer, source (expert, prolific), arm (verifier shown or hidden), verdict (accept, reject, fix), corrected_value, url_checked, notes, reviewed_at |
+| `reviews` | one reviewer's verdict on one unit | review_id, node_id or candidate_id, run_id and node_version of what was shown (or the candidate's evidence content hash), reviewer, source (expert, prolific), arm (verifier shown or hidden), verdict (accept, reject, fix), corrected_value, url_checked, notes, reviewed_at |
 
 Every table has its own stable id so that a candidate's `llm_call_ids` and `evidence_ids`
 resolve to exact rows. Reviews are append-only: a second reviewer adds a row, never
 overwrites one, so agreement between reviewers can be computed. Checks are append-only too. The
-export honors the reviews a protocol says it should (for example, two accepts and no reject).
+export honors the reviews a protocol says it should (for example, two accepts and no reject),
+and only reviews whose node_version equals the node's current version: node ids are reused
+across runs, so a verdict on an earlier version (different name, parent, QID, alignment, or
+evidence) never authorizes the new one. Only reviews from the arm that hid the verifier's
+answer enter precision estimates.
 
 ### Hierarchy file (planned, Anya week 5)
 
@@ -265,7 +269,8 @@ QuickStatements. Each node:
 | unit_type | school, department, program, center, campus, office, other (as `docs/MODELING_RULES.md` defines them) |
 | parent_ids | List of node_ids. Two for a joint unit. The university is the root node |
 | qid | Wikidata QID, or null |
-| alignment | linked (QID, and Wikidata has the parent link), orphan (QID, parent link missing), new (no item; searched), uncertain (could not decide; never exported) |
+| node_version | Hash of everything a reviewer judges: name, unit_type, parent_ids, qid, alignment, source_url, and the content hashes of the evidence. Changes whenever any of them changes |
+| alignment | linked (QID, and Wikidata has P749 from it to the parent), orphan (QID, but no P749 to the parent; a unit connected only through P361, P527, P355, or P199 is an orphan, so the export adds the P749), new (no item; searched), uncertain (could not decide; never exported) |
 | alignment_candidates | QIDs considered, how each was found (prefix search, full-text search, website, parent), and the reason for the choice |
 | wikidata_duplicates | QIDs that look like a second item for the same unit on Wikidata; flagged for a person, never merged by us |
 | website | P856 value or the URL found |
@@ -275,7 +280,11 @@ QuickStatements. Each node:
 Units that the LLM proposed but alignment found nowhere on the web (no URL, dead URL) stay in
 the file with their flags; Shuo's checks decide what to do with them.
 
-Rules: write the raw LLM response to storage before parsing it. Cache keys include the prompt
+Rules: write the raw LLM response to storage before parsing it. Repeated samples of the same
+request (Shuo's week 3) carry a sample number in the cache key, so they are distinct calls that
+replay deterministically. Cited URLs are untrusted input: fetch only `http`/`https`, refuse
+non-public addresses (loopback, private, link-local, metadata) on the first request and every
+redirect, and cap redirects (5), size (5 MB), and time (20 s). Cache keys include the prompt
 hash. Local JSON under `results/runs/` is the fallback when GCP is unreachable. Keys come from
 Secret Manager when `.env` has none (see "Secret Manager" below).
 
