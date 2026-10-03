@@ -25,7 +25,10 @@ FUNCTION=academiabot-collect
 JOB=academiabot-collect-slice
 LEGACY_JOB=academiabot-collect-hourly
 SA=claude-agent@wikidata-academia.iam.gserviceaccount.com
-RUN_ID=${RUN_ID:-cloud-$(date -u +%Y-%m-%d)}
+# The run id is stable across redeploys on purpose: a date-based default would start
+# a new run (and a new log) every time the function is redeployed on a later day.
+RUN_ID=${RUN_ID:-us-tier1}
+LIST_OBJECT=${LIST_OBJECT:-universities_us_tier1.json}   # from scripts/filter_universities.py --upload
 MAX_PER_SLICE=${MAX_PER_SLICE:-60}
 SCHEDULE="7,37 * * * *"
 
@@ -138,7 +141,7 @@ if gcloud scheduler jobs describe "$LEGACY_JOB" --project="$PROJECT" --location=
   echo "Removed old job $LEGACY_JOB."
 fi
 
-BODY="{\"run_id\": \"$RUN_ID\", \"max_universities\": $MAX_PER_SLICE, \"time_budget_s\": 1500, \"reserve_s\": 420}"
+BODY="{\"run_id\": \"$RUN_ID\", \"list_object\": \"$LIST_OBJECT\", \"max_universities\": $MAX_PER_SLICE, \"time_budget_s\": 1500, \"reserve_s\": 420}"
 if gcloud scheduler jobs describe "$JOB" --project="$PROJECT" --location="$REGION" >/dev/null 2>&1; then
   # Paused above if it was running: an update changes the run id in the request body,
   # and the job must not start spending on the new run without an explicit --resume.

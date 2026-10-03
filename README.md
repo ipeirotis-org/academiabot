@@ -95,6 +95,7 @@ way to work here.
 |---|---|---|
 | `discover <QID>` | Finds the schools and colleges of one university | Always `results/reports/<QID>_report.json`. If anything is missing or orphaned, also `results/missing_divisions_<QID>.csv` and `results/quickstatements_<QID>.qs`; otherwise those two files are removed if an earlier run left them |
 | `harvest` | Lists every U.S. university in Wikidata | `results/universities_us.json` |
+| `filter_universities` | Keeps the institutions with an IPEDS ID for the cloud run and lists the rest for review | `results/universities_us_tier1.json`, `results/universities_us_review.csv` |
 | evaluation | Scores each LLM provider and judge setup against a hand-built answer key for 12 universities | `eval/results_summary.csv` |
 
 All paths are under `wikidata_discover/`. The first two run as

@@ -261,8 +261,15 @@ flowchart LR
     R[Student] -->|read log.jsonl| B
 ```
 
+- Which universities: the harvest (2,483 items) also returns schools inside universities, defunct
+  institutions, and some non-institutions. `python -m wikidata_discover.scripts.filter_universities
+  --upload` splits it: tier 1 (an IPEDS ID and no dissolution date, about 1,500) goes to
+  `gs://academiabot/universities_us_tier1.json` and is what the scheduler runs; every item with
+  its tier and reason goes to `results/universities_us_review.csv` for a person to check the
+  rest (ROR-only items, university-class items without IPEDS).
 - Deploy or update: `bash deploy/deploy_collect_function.sh` (creates or updates the scheduler
-  job and leaves it PAUSED, even if it was running before).
+  job and leaves it PAUSED, even if it was running before). The job's run id is `us-tier1` and
+  its list is the tier 1 file; both are stable across redeploys (`RUN_ID`, `LIST_OBJECT`).
 - Start collecting: `gcloud scheduler jobs resume academiabot-collect-slice --location=us-east1`.
   Only a person does this; it spends LLM credit.
 - Stop: `gcloud scheduler jobs pause academiabot-collect-slice --location=us-east1`.

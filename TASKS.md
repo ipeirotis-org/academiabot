@@ -228,9 +228,10 @@ Meet together with Panos once a week. Meet each other whenever a hand-off is due
 Pick one. Same shape as everything above: you define the rule and check the data, the
 agent builds the code.
 
-- **Batch mode.** Run discovery over all U.S. universities from
-  `wikidata_discover/results/universities_us.json`, able to stop and resume. One combined
-  review sheet.
+- **Batch mode.** Done in the cloud (section 1): the scheduler runs the tier 1 list of
+  about 1,500 institutions with an IPEDS ID, stopping and resuming on its own. Left to do:
+  one combined review sheet from the per-university CSVs in the bucket, and a look at
+  `results/universities_us_review.csv` to decide which of the other items get a run.
 - **Faculty linking.** For one department, find the faculty page, extract names and
   titles, match them to existing Wikidata people and ORCID records, link with P108
   (employer). One department first.
