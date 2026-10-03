@@ -304,7 +304,9 @@ flowchart LR
 - The deploy script ships only the package: `.env` files, `*.enc`, credential files, and
   caches are removed from the staging tree, and the deploy stops if a secrets file remains.
   A bad request or a missing key is still recorded in the bucket's run history, because
-  the storage client is built before and independently of those checks.
+  the storage client is built before and independently of those checks, in the Cloud
+  Function and in the terminal runner alike. A supplied `run_id` is always validated; the
+  daily default applies only when the field is absent.
 - A QID must look like `Q49210`. The Cloud Function rejects a request with anything else in
   `qids`, skips such rows in the university list, and the terminal runner refuses them.
 - A candidate that no LLM provider could judge (every one failed or answered nothing) is

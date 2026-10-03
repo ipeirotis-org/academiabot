@@ -8,21 +8,24 @@ from .config import USER_AGENT
 
 logger = logging.getLogger(__name__)
 
-# SPARQL template for crawling hierarchy
-SPARQL_TEMPLATE = """
-SELECT DISTINCT ?child ?childLabel ?propLabel ?childTypeLabel WHERE {{
-  VALUES ?parent {{ wd:{parent} }}
-  {{ ?parent wdt:{down} ?child . BIND(wdt:{down} AS ?prop) }}
-  UNION
-  {{ ?child wdt:{up} ?parent . BIND(wdt:{up} AS ?prop) }}
-  OPTIONAL {{ ?child wdt:P31 ?childType . }}
-  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
-}}
-"""
-
 # predicates for downward/upward traversal
 PREDICATES_DOWN = ["P527", "P355", "P199"]  # has part, subsidiary, division
 PREDICATES_UP = ["P361", "P749"]  # part of, parent org
+
+
+def node_query(parent: str) -> str:
+    """One query for every child of `parent`: the union of all downward relations
+    (parent -> child) and all upward relations (child -> parent), so that no
+    relation in the lists above is left out of the crawl."""
+    parts = [f"{{ ?parent wdt:{p} ?child . BIND(wdt:{p} AS ?prop) }}" for p in PREDICATES_DOWN]
+    parts += [f"{{ ?child wdt:{p} ?parent . BIND(wdt:{p} AS ?prop) }}" for p in PREDICATES_UP]
+    return (
+        "SELECT DISTINCT ?child ?childLabel ?propLabel ?childTypeLabel WHERE {\n"
+        f"  VALUES ?parent {{ wd:{parent} }}\n  " + "\n  UNION\n  ".join(parts) + "\n"
+        "  OPTIONAL { ?child wdt:P31 ?childType . }\n"
+        '  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }\n'
+        "}\n"
+    )
 
 # polite pause between SPARQL requests
 time_sleep = 0.3
@@ -78,18 +81,16 @@ def all_descendants(
 
     while queue:
         parent = queue.popleft()
-        for down, up in zip(PREDICATES_DOWN, PREDICATES_UP):
-            query = SPARQL_TEMPLATE.format(parent=parent, down=down, up=up)
-            rows = execute_sparql_bindings(query)
-            for b in rows:
-                child = b["child"]["value"].rsplit("/", 1)[-1]
-                prop = b["propLabel"]["value"]
-                ctype = b.get("childTypeLabel", {}).get("value", "—")
-                if child not in seen:
-                    seen.add(child)
-                    queue.append(child)
-                edges.append((parent, child, prop, ctype))
-                labels.setdefault(child, b["childLabel"]["value"])
-            sleep(time_sleep)
+        rows = execute_sparql_bindings(node_query(parent))   # all five relations at once
+        for b in rows:
+            child = b["child"]["value"].rsplit("/", 1)[-1]
+            prop = b["propLabel"]["value"]
+            ctype = b.get("childTypeLabel", {}).get("value", "-")
+            if child not in seen:
+                seen.add(child)
+                queue.append(child)
+            edges.append((parent, child, prop, ctype))
+            labels.setdefault(child, b["childLabel"]["value"])
+        sleep(time_sleep)
 
     return edges, labels

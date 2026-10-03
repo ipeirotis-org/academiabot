@@ -49,7 +49,7 @@ def row_qid(row) -> str:
     if isinstance(row, dict):
         value = (row.get("university") or row.get("univ") or {}).get("value", "")
     elif isinstance(row, (list, tuple)):
-        value = row[0]
+        value = row[0] if row else ""        # an empty row is skipped, not a crash
     else:
         value = row
     return str(value).rsplit("/", 1)[-1]
@@ -114,8 +114,11 @@ def parse_request(body) -> dict:
         body = {}
     if not isinstance(body, dict):
         raise ValueError(f"request body must be a JSON object, got {type(body).__name__}")
-    p = {"run_id": validate_run_id(body.get("run_id") or f"cloud-{time.strftime('%Y-%m-%d', time.gmtime())}"),
-         "list_object": str(body.get("list_object", "universities_us.json"))}
+    # The daily default applies only when run_id is absent. Any supplied value, even
+    # a falsy one such as 0 or [], is validated, so a bad id cannot pass for the
+    # default and put work under an unrelated run.
+    run_id = body["run_id"] if "run_id" in body else f"cloud-{time.strftime('%Y-%m-%d', time.gmtime())}"
+    p = {"run_id": validate_run_id(run_id), "list_object": str(body.get("list_object", "universities_us.json"))}
     if p["list_object"].startswith("/") or ".." in p["list_object"].split("/"):
         raise ValueError(f"invalid list_object {p['list_object']!r}")
     for key, default, cast in (("max_universities", 60, int), ("time_budget_s", 1500.0, float), ("reserve_s", 420.0, float)):

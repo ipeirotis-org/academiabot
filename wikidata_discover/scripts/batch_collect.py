@@ -31,18 +31,23 @@ def main(argv=None) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         handlers=[logging.FileHandler(run_dir / "pipeline.log"), logging.StreamHandler()])
-    # Keys, user agent, and the bucket client. A failure here is still recorded by
-    # run_batch (locally, with a stand-in bucket) instead of leaving no trace.
+    # The bucket client first and on its own, so that a missing key is still recorded
+    # in the bucket's run history; only a storage failure leaves the stand-in bucket,
+    # with which run_batch records the failed invocation locally.
     fail_reason = None
     try:
-        load_keys_from_secret_manager()
-        ensure_user_agent()
         from google.cloud import storage
         bucket = storage.Client(project=PROJECT).bucket(BUCKET)
     except Exception as e:  # noqa: BLE001
-        fail_reason = f"init: {type(e).__name__}: {str(e)[:200]}"
-        print(f"cannot start: {fail_reason}", flush=True)
+        fail_reason = f"storage: {type(e).__name__}: {str(e)[:200]}"
         bucket = UnreachableBucket(fail_reason)
+    try:
+        load_keys_from_secret_manager()
+        ensure_user_agent()
+    except Exception as e:  # noqa: BLE001
+        fail_reason = fail_reason or f"init: {type(e).__name__}: {str(e)[:200]}"
+    if fail_reason:
+        print(f"cannot start: {fail_reason}", flush=True)
     summary = run_batch(run_id, qids, bucket, report=lambda s: print(s, flush=True),
                         invocation_args={"argv": ["batch_collect", *argv]}, fail_reason=fail_reason)
     print("BATCH DONE" + (" WITH FAILURES" if summary["failed"] else ""), summary, flush=True)

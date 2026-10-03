@@ -500,6 +500,15 @@ def test_log_upload_is_reserved_time_and_goes_first(stub, monkeypatch):
     assert after_attempt[0] == "log.jsonl" and s["outcome"] == "failed"  # record first, retried later
 
 
+def test_parse_request_validates_every_supplied_run_id():
+    import wikidata_discover.cloud.collect_function as cf
+    for bad in (0, [], "", None, False, {"a": 1}):
+        with pytest.raises(ValueError):
+            cf.parse_request({"run_id": bad})                 # supplied, so never the default
+    assert cf.parse_request({})["run_id"].startswith("cloud-")  # absent: the daily default
+    assert cf.parse_request({"run_id": "r1"})["run_id"] == "r1"
+
+
 def test_parse_request_rejects_entries_that_are_not_qids():
     import wikidata_discover.cloud.collect_function as cf
     for bad in ([None], [{"a": 1}], ["Q1x"], ["foo"], ["Q0"], [" Q1"], [1]):
@@ -551,8 +560,17 @@ def test_batch_collect_records_an_initialisation_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(bc, "RESULTS_DIR", tmp_path)
     monkeypatch.setattr(bc, "run_batch", lambda run_id, qids, bucket, **kw: calls.update(qids=list(qids), bucket=bucket, **kw) or
                         {"failed": 1})
+    healthy = FakeBucket()
+    import google.cloud.storage as gcs
+    monkeypatch.setattr(gcs, "Client", type("C", (), {"__init__": lambda self, project=None: None,
+                                                        "bucket": lambda self, name: healthy}))
     assert bc.main(["r22", "Q1"]) == 1
-    assert calls["fail_reason"].startswith("init: RuntimeError") and isinstance(calls["bucket"], bc.UnreachableBucket)
+    assert calls["fail_reason"].startswith("init: RuntimeError") and calls["bucket"] is healthy   # recorded in the bucket
+    class NoStorage:
+        def __init__(self, project=None): raise OSError("no credentials")
+    monkeypatch.setattr(gcs, "Client", NoStorage)
+    assert bc.main(["r22", "Q1"]) == 1
+    assert calls["fail_reason"].startswith("storage: OSError") and isinstance(calls["bucket"], bc.UnreachableBucket)
 
 
 def test_collect_explicit_list_skips_done_before_the_cap(monkeypatch):
@@ -601,8 +619,9 @@ def test_pick_qids_accepts_every_list_shape():
     assert row_qid(binding) == "Q5"
     assert row_qid({"univ": {"value": "http://www.wikidata.org/entity/Q6"}}) == "Q6"
     assert pick_qids([binding, "Q7", ("Q8", "Eight"), {}], done=set(), limit=10) == ["Q5", "Q7", "Q8"]
-    # rows that are not QIDs (a bad list, a null, an object) are skipped, never queried
-    assert pick_qids(["Q9", "junk", None, {"university": {"value": "x"}}, ["Q10x"], "Q11"], done=set(), limit=10) == ["Q9", "Q11"]
+    # rows that are not QIDs (a bad list, a null, an object, an empty row) are skipped, never queried
+    assert pick_qids(["Q9", "junk", None, {"university": {"value": "x"}}, ["Q10x"], [], (), "Q11"], done=set(), limit=10) == ["Q9", "Q11"]
+    assert row_qid([]) == "" and row_qid(()) == ""
 
 
 def test_secret_manager_keys_reach_config(monkeypatch):
