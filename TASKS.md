@@ -463,16 +463,18 @@ ORDER BY DESC(?nDept)
 ```
 
 ```sparql
-# One unit's links up and down, over full statements: every rank except deprecated, with the
-# rank shown (the query above uses only best-rank statements and would miss a normal-rank
-# second parent). The week 3 snapshot runs this for each unit.
-SELECT ?prop ?other ?otherLabel ?rank WHERE {
-  VALUES ?unit { wd:Q770467 }
-  { ?unit ?p ?st . VALUES (?p ?ps ?prop) { (p:P749 ps:P749 "P749 up") (p:P361 ps:P361 "P361 up") }
-    ?st ?ps ?other . }
-  UNION
-  { ?other ?p ?st . VALUES (?p ?ps ?prop) { (p:P527 ps:P527 "P527 from parent") (p:P355 ps:P355 "P355 from parent") (p:P199 ps:P199 "P199 from parent") }
-    ?st ?ps ?unit . }
+# One unit's children, over full statements: every rank except deprecated, with the rank
+# shown (the query above uses only best-rank statements and would miss a normal-rank second
+# parent). The week 3 snapshot runs this on the university, then on each child it finds, and
+# so on down. Keep the optimizer hint and the order inside each block: without them the query
+# service times out on large universities. (Tested on NYU: 93 children in under a second.)
+SELECT ?prop ?child ?childLabel ?rank WHERE {
+  hint:Query hint:optimizer "None" .
+  { ?st ps:P749 wd:Q49210 . ?child p:P749 ?st . BIND("P749" AS ?prop) }
+  UNION { ?st ps:P361 wd:Q49210 . ?child p:P361 ?st . BIND("P361" AS ?prop) }
+  UNION { wd:Q49210 p:P527 ?st . ?st ps:P527 ?child . BIND("P527" AS ?prop) }
+  UNION { wd:Q49210 p:P355 ?st . ?st ps:P355 ?child . BIND("P355" AS ?prop) }
+  UNION { wd:Q49210 p:P199 ?st . ?st ps:P199 ?child . BIND("P199" AS ?prop) }
   ?st wikibase:rank ?rank . FILTER(?rank != wikibase:DeprecatedRank)
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
 }
