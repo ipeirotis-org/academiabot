@@ -288,7 +288,7 @@ flowchart LR
 - A run id is one safe path component (letters, digits, `.`, `-`, `_`, max 100). Anything
   else is refused, because it names a folder under `results/runs` and a bucket prefix.
 - Request body (all optional): `run_id`, `list_object`, `max_universities` (150 from the scheduler, 60 if absent), `time_budget_s`
-  (1500), `reserve_s` (420: no university starts unless that much budget, or the longest
+  (1500), `reserve_s` (180: no university starts unless that much budget, or the longest
   university so far, is left), `qids` (explicit list, still de-duplicated and capped).
 - LLM cache files that an unfinished university used, and cache files in the bucket that no
   log record mentions, are restored before a retry, so a fresh instance reuses the same

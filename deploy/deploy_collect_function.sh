@@ -10,7 +10,7 @@
 #
 # Timing: Cloud Scheduler cancels an HTTP call after 30 minutes at most, so each slice
 # gets a 25 minute budget (time_budget_s=1500) and the function timeout is 30 minutes.
-# A university starts only if 7 minutes (reserve_s=420), or the longest university so
+# A university starts only if 3 minutes (reserve_s=180), or the longest university so
 # far, are left in the budget. Two slices per hour is about 40 universities per hour.
 #
 # Prerequisites (one time, by a project owner):
@@ -141,7 +141,7 @@ if gcloud scheduler jobs describe "$LEGACY_JOB" --project="$PROJECT" --location=
   echo "Removed old job $LEGACY_JOB."
 fi
 
-BODY="{\"run_id\": \"$RUN_ID\", \"list_object\": \"$LIST_OBJECT\", \"max_universities\": $MAX_PER_SLICE, \"time_budget_s\": 1500, \"reserve_s\": 420}"
+BODY="{\"run_id\": \"$RUN_ID\", \"list_object\": \"$LIST_OBJECT\", \"max_universities\": $MAX_PER_SLICE, \"time_budget_s\": 1500, \"reserve_s\": 180}"
 if gcloud scheduler jobs describe "$JOB" --project="$PROJECT" --location="$REGION" >/dev/null 2>&1; then
   # Paused above if it was running: an update changes the run id in the request body,
   # and the job must not start spending on the new run without an explicit --resume.
