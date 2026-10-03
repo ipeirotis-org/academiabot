@@ -5,6 +5,7 @@ from wikidata_discover.sparql_helpers import run_sparql
 from wikidata_discover.sparql_helpers import execute_sparql_bindings
 from wikidata_discover.wikidata_api import quick_wd_search
 from wikidata_discover.hierarchy import descendant_qids
+from wikidata_discover import llm_helpers
 from wikidata_discover.llm_helpers import LLMHelper
 from wikidata_discover.config import console, RESULTS_DIR
 
@@ -280,6 +281,7 @@ class Discovery:
             "university_qid": self.university_qid,
             "university_label": self.university_label,
             "total_candidates": len(divisions),
+            "extraction_provider": llm_helpers.last_extraction_provider,
             "exists_linked": counts["exists_linked"],
             "exists_orphan": counts["exists_orphan"],
             "missing": counts["missing"],

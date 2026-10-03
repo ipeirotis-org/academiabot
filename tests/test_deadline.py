@@ -109,13 +109,13 @@ def test_run_batch_sets_and_clears_the_deadline(monkeypatch, tmp_path):
         def discover_missing(self):
             return []
     monkeypatch.setattr(disc, "Discovery", Stub)
-    monkeypatch.setattr(batch, "git_commit", lambda: "x")
+    monkeypatch.setattr(batch, "source_identity", lambda run_dir: "x")
     class Blob:
         def __init__(self, store, name): self.store, self.name = store, name
-        def exists(self): return self.name in self.store
+        def exists(self, **kw): return self.name in self.store
         def download_as_text(self): return self.store[self.name]
         def upload_from_filename(self, p, **kw): self.store[self.name] = open(p).read()
-        def delete(self): self.store.pop(self.name, None)
+        def delete(self, **kw): self.store.pop(self.name, None)
     class Bucket:
         store = {}
         def blob(self, name): return Blob(self.store, name)

@@ -490,7 +490,13 @@ def test_llm_clients_read_keys_at_call_time(monkeypatch):
 class FakeBlob:
     def __init__(self, store, name, fail_on=()):
         self.store, self.name, self.fail_on = store, name, fail_on
-    def exists(self):
+    def _note(self, op, timeout):
+        if isinstance(self.store.get("__timeouts__", []), list):
+            self.store.setdefault("__timeouts__", []).append(timeout)
+            self.store.setdefault("__calls__", []).append((op, self.name, timeout))
+    def exists(self, timeout=None, **kw):
+        if timeout is not None:
+            self._note("exists", timeout)
         return self.name in self.store
     def download_as_text(self):
         return self.store[self.name]
@@ -498,8 +504,9 @@ class FakeBlob:
         if any(self.name.endswith(s) for s in self.fail_on):
             raise OSError(f"simulated upload failure for {self.name}")
         self.store[self.name] = Path(path).read_text()
-        self.store.setdefault("__timeouts__", []).append(timeout) if isinstance(self.store.get("__timeouts__", []), list) else None
-    def delete(self):
+        self._note("upload", timeout)
+    def delete(self, timeout=None, **kw):
+        self._note("delete", timeout)
         del self.store[self.name]
 
 
@@ -522,7 +529,8 @@ class StubDiscovery:
         if self.university_qid == "QFAIL":
             raise ValueError("No LLM provider returned any units")
         d = self.results_dir / "reports"; d.mkdir(parents=True, exist_ok=True)
-        (d / f"{self.university_qid}_report.json").write_text(json.dumps({"missing": 1, "exists_orphan": 0, "unresolved": 0}))
+        (d / f"{self.university_qid}_report.json").write_text(json.dumps(
+            {"missing": 1, "exists_orphan": 0, "unresolved": 0, "extraction_provider": "openai"}))
         return []
 
 
@@ -531,8 +539,88 @@ def stub(monkeypatch, tmp_path):
     import wikidata_discover.discovery as disc
     StubDiscovery.results_dir = tmp_path
     monkeypatch.setattr(disc, "Discovery", StubDiscovery)
-    monkeypatch.setattr(batch, "git_commit", lambda: "abc123")
+    monkeypatch.setattr(batch, "source_identity", lambda run_dir: "abc123")
     return tmp_path
+
+
+def test_run_records_say_which_providers_were_available_and_used(stub, monkeypatch):
+    import wikidata_discover.config as config
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "k"); monkeypatch.setattr(config, "ANTHROPIC_API_KEY", None)
+    monkeypatch.setattr(config, "GOOGLE_API_KEY", None)
+    bucket = FakeBucket()
+    batch.run_batch("r30", ["Q1"], bucket, results_dir=stub, report=lambda m: None)
+    start = json.loads(bucket.store["runs/r30/invocations.jsonl"].splitlines()[0])
+    assert start["providers"] == {"openai": True, "anthropic": False, "gemini": False}
+    assert json.loads(bucket.store["runs/r30/run.json"])["providers"] == start["providers"]
+    rec = json.loads(bucket.store["runs/r30/log.jsonl"].splitlines()[0])
+    assert rec["provider"] == "openai"                      # the one whose answer was used
+
+
+def test_best_available_remembers_the_provider_it_used(monkeypatch):
+    import wikidata_discover.llm_helpers as lh
+    from wikidata_discover.llm_helpers import LLMHelper
+    monkeypatch.setattr(LLMHelper, "extract_divisions_openai", staticmethod(lambda u, w: []))
+    monkeypatch.setattr(LLMHelper, "extract_divisions_anthropic", staticmethod(lambda u, w: [{"name": "Law"}]))
+    assert LLMHelper.extract_divisions_best_available("U", "https://u.edu") == [{"name": "Law"}]
+    assert lh.last_extraction_provider == "anthropic"
+    monkeypatch.setattr(LLMHelper, "extract_divisions_anthropic", staticmethod(lambda u, w: []))
+    monkeypatch.setattr(LLMHelper, "extract_divisions_gemini", staticmethod(lambda u, w: []))
+    with pytest.raises(ValueError):
+        LLMHelper.extract_divisions_best_available("U", "https://u.edu")
+    assert lh.last_extraction_provider is None               # a failure never keeps the old name
+
+
+def test_stale_export_deletion_is_bounded_like_an_upload(stub, monkeypatch):
+    import wikidata_discover.config as config
+    bucket = FakeBucket({"runs/r31/missing_divisions_Q1.csv": "old", "runs/r31/quickstatements_Q1.qs": "old"})
+    batch.run_batch("r31", ["Q1"], bucket, results_dir=stub, report=lambda m: None, hard_deadline_s=1800)
+    ops = {(op, name.rsplit("/", 1)[-1]) for op, name, t in bucket.store["__calls__"]}
+    assert ("exists", "missing_divisions_Q1.csv") in ops and ("delete", "quickstatements_Q1.qs") in ops
+    assert all(5 <= t <= 60 for op, name, t in bucket.store["__calls__"])
+    assert "runs/r31/missing_divisions_Q1.csv" not in bucket.store
+    # Kill passed before the stale check: the call is refused, the attempt still gets recorded.
+    class Late(StubDiscovery):
+        def discover_missing(self):
+            r = super().discover_missing(); config.HARD_DEADLINE = time.time() - 1; return r
+    import wikidata_discover.discovery as disc
+    monkeypatch.setattr(disc, "Discovery", Late)
+    bucket = FakeBucket({"runs/r32/missing_divisions_Q1.csv": "old"})
+    s = batch.run_batch("r32", ["Q1"], bucket, results_dir=stub, report=lambda m: None, hard_deadline_s=1800)
+    rec = json.loads((stub / "runs" / "r32" / "log.jsonl").read_text().splitlines()[0])
+    assert rec["uploaded"] is False and s["outcome"] == "failed"
+
+
+def test_no_university_starts_once_the_work_deadline_is_closer_than_the_reserve(stub):
+    bucket = FakeBucket()
+    # 100 s to the kill means 10 s of work deadline; a 30 s reserve cannot fit.
+    s = batch.run_batch("r33", ["Q1", "Q2"], bucket, results_dir=stub, report=lambda m: None,
+                        hard_deadline_s=100, reserve_s=30, time_budget_s=10_000)
+    assert s["stopped_for_time"] is True and s["processed"] == 0 and s["failed"] == 0
+    assert not (stub / "runs" / "r33" / "log.jsonl").exists()       # no failed attempts were minted
+    assert s["outcome"] == "stopped_for_time"
+
+
+def test_source_identity_names_a_clean_commit_or_a_saved_patch(tmp_path):
+    import subprocess
+    repo = tmp_path / "repo"; (repo / "wikidata_discover").mkdir(parents=True)
+    run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True, text=True)
+    run("init", "-q"); run("config", "user.email", "t@t"); run("config", "user.name", "t")
+    (repo / "wikidata_discover" / "x.py").write_text("a = 1\n")
+    run("add", "."); run("commit", "-q", "-m", "one")
+    sha = run("rev-parse", "--short", "HEAD").stdout.strip()
+    run_dir = tmp_path / "run"; run_dir.mkdir()
+    assert batch.source_identity(run_dir, repo=repo) == sha and not list(run_dir.iterdir())
+    (repo / "wikidata_discover" / "x.py").write_text("a = 2\n")             # tracked edit
+    (repo / "wikidata_discover" / "y.py").write_text("new = True\n")        # untracked file
+    identity = batch.source_identity(run_dir, repo=repo)
+    assert identity.startswith(f"{sha}-dirty-") and len(identity) == len(sha) + len("-dirty-") + 12
+    patch = run_dir / f"source-{identity}.patch"
+    assert patch.exists()
+    run("checkout", "--", "."); (repo / "wikidata_discover" / "y.py").unlink()
+    run("apply", str(patch))                                                  # rebuilds the exact source
+    assert (repo / "wikidata_discover" / "x.py").read_text() == "a = 2\n"
+    assert (repo / "wikidata_discover" / "y.py").read_text() == "new = True\n"
+    assert batch.source_identity(run_dir, repo=repo) == identity              # same tree, same name
 
 
 def test_run_batch_uploads_log_under_run_prefix_and_dedupes(stub):

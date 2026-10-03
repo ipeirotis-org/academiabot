@@ -5,6 +5,7 @@ cloud/collect_function.py (run as a Cloud Function on a schedule). State lives i
 bucket under runs/<run_id>/: log.jsonl has one record per university attempt, and a
 university counts as done only when discovery succeeded and its files were uploaded.
 """
+import hashlib
 import json
 import logging
 import os
@@ -154,14 +155,15 @@ def export_paths(results_dir: Path, qid: str) -> list:
 def clear_stale_exports(bucket, run_id: str, results_dir: Path, run_dir: Path, qid: str) -> int:
     """After an attempt that produced no CSV or QuickStatements file for `qid`, delete the
     ones an earlier attempt may have uploaded, so the bucket never offers statements
-    that the latest report contradicts. Returns how many objects were deleted."""
+    that the latest report contradicts. Returns how many objects were deleted. Each
+    bucket call is bounded by the kill time, like an upload."""
     deleted = 0
     for p in export_paths(results_dir, qid):
         if p.exists():
             continue
         blob = bucket.blob(object_name(run_id, p, results_dir, run_dir))
-        if blob.exists():
-            blob.delete()
+        if blob.exists(**bucket_call_kwargs()):
+            blob.delete(**bucket_call_kwargs())
             deleted += 1
     return deleted
 
@@ -235,15 +237,29 @@ _UPLOAD_TIMEOUT_S = 60
 
 
 def upload_timeout() -> float:
-    """Timeout for one upload: 60 s, or less when the kill is closer. Raises
-    DeadlineExceeded when the upload could not finish before the kill."""
+    """Timeout for one bucket call (upload, exists, delete): 60 s, or less when the
+    kill is closer. Raises DeadlineExceeded when the call could not finish before it."""
     from wikidata_discover.sparql_helpers import DeadlineExceeded
     left = config.hard_seconds_left()
     if left is None:
         return _UPLOAD_TIMEOUT_S
     if left <= _UPLOAD_MARGIN_S:
-        raise DeadlineExceeded("process about to be killed; not starting an upload")
+        raise DeadlineExceeded("process about to be killed; not starting a bucket call")
     return max(5.0, min(_UPLOAD_TIMEOUT_S, left - _UPLOAD_MARGIN_S))
+
+
+def bucket_call_kwargs() -> dict:
+    """Keyword arguments that bound one google-cloud-storage call: the timeout above,
+    and a retry policy whose total deadline is the same, so the client's own retries
+    (120 s by default) cannot outlive it either."""
+    timeout = upload_timeout()
+    kwargs = {"timeout": timeout}
+    try:
+        from google.cloud.storage.retry import DEFAULT_RETRY
+        kwargs["retry"] = DEFAULT_RETRY.with_deadline(timeout)
+    except Exception:  # noqa: BLE001 - client library absent: the timeout alone
+        pass
+    return kwargs
 
 
 def object_name(run_id: str, path: Path, results_dir: Path, run_dir: Path) -> str:
@@ -297,13 +313,50 @@ def operator_identity() -> str:
         return "unknown"
 
 
-def git_commit() -> str:
+REPO_DIR = RESULTS_DIR.parents[1]
+SOURCE_PATHS = ("wikidata_discover", "deploy")   # the code a run executes
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
+                          timeout=10, check=True).stdout
+
+
+def git_commit(repo: Path = REPO_DIR) -> str:
     try:
-        out = subprocess.run(["git", "-C", str(RESULTS_DIR.parents[1]), "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True, timeout=10).stdout.strip()
-        return out or os.getenv("GIT_COMMIT", "unknown")
+        return _git(repo, "rev-parse", "--short", "HEAD").strip() or os.getenv("GIT_COMMIT", "unknown")
     except Exception:
         return os.getenv("GIT_COMMIT", "unknown")
+
+
+def source_patch(repo: Path = REPO_DIR) -> str:
+    """The uncommitted changes to the code paths, as one patch: tracked edits plus
+    every untracked file. Empty when the worktree is clean. Mirrors the deploy script."""
+    patch = _git(repo, "diff", "HEAD", "--", *SOURCE_PATHS)
+    untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "--", *SOURCE_PATHS).split()
+    for f in untracked:
+        r = subprocess.run(["git", "-C", str(repo), "diff", "--no-index", "--", "/dev/null", f],
+                           capture_output=True, text=True, timeout=10)   # exit 1 means "differs"
+        patch += r.stdout
+    return patch
+
+
+def source_identity(run_dir: Path, repo: Path = REPO_DIR) -> str:
+    """What code this run executes: the commit, or <sha>-dirty-<hash> when the worktree
+    has uncommitted changes, in which case the patch is saved in the run folder (so it
+    reaches the bucket with the run) and the hash names it. Without git (the Cloud
+    Function), the GIT_COMMIT the deploy script recorded."""
+    sha = git_commit(repo)
+    try:
+        patch = source_patch(repo)
+    except Exception:
+        return sha
+    if not patch:
+        return sha
+    digest = hashlib.sha256(patch.encode()).hexdigest()[:12]
+    identity = f"{sha}-dirty-{digest}"
+    (run_dir / f"source-{identity}.patch").write_text(patch)
+    return identity
 
 
 def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[float] = None,
@@ -348,7 +401,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         n = 0
         for p in paths:
             bucket.blob(object_name(run_id, p, results_dir, run_dir)).upload_from_filename(
-                str(p), timeout=upload_timeout()); n += 1
+                str(p), **bucket_call_kwargs()); n += 1
         return n
 
     summary = {"run_id": run_id, "requested": len(qids), "skipped_done": 0, "processed": 0, "ok": 0,
@@ -393,8 +446,9 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     summary["needs_review"] = len(parse_exhausted(log_path.read_text())) if log_path.exists() else 0
 
     invocation = {"invocation_id": invocation_id,
-                  "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "git_commit": git_commit(),
-                  "operator": operator_identity(),
+                  "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                  "git_commit": source_identity(run_dir), "operator": operator_identity(),
+                  "providers": llm_helpers.available_providers(),
                   "args": invocation_args if invocation_args is not None else {"argv": sys.argv},
                   "host": os.getenv("K_SERVICE", "local"),
                   "models": {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL},
@@ -421,6 +475,14 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
             summary["stopped_for_time"] = True
             report(f"time budget reached after {summary['processed']} universities; stopping")
             break
+        # The work deadline is the real limit, whatever the budget says: a university
+        # started with less than the reserve left would only fail on its first request,
+        # and three such slices would wrongly give it up for a person.
+        left = config.seconds_left()
+        if left is not None and left <= max(reserve_s, longest):
+            summary["stopped_for_time"] = True
+            report(f"work deadline too close after {summary['processed']} universities; stopping")
+            break
         t = time.time()
         rec = {"qid": qid, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": invocation["host"],
                "invocation_id": invocation_id}
@@ -434,6 +496,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
             rep = results_dir / "reports" / f"{qid}_report.json"
             rpt = json.loads(rep.read_text()) if rep.exists() else {}
             rec.update({"status": "ok", "label": getattr(d, "university_label", None), "report": rpt,
+                        "provider": rpt.get("extraction_provider"),
                         "missing_rows": rpt.get("missing", 0), "orphan_rows": rpt.get("exists_orphan", 0),
                         "unresolved_rows": rpt.get("unresolved", 0)})
             summary["ok"] += 1

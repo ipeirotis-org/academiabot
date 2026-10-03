@@ -184,6 +184,17 @@ def _cache_key(univ_label: str, provider: str, model: str, purpose: str = "extra
 # upload exactly the cache entries a run depended on, including old ones it reused.
 cache_paths_touched: set = set()
 
+# The provider whose answer the last extract_divisions_best_available() call used
+# (None before any call, or when every provider failed). Recorded per university.
+last_extraction_provider = None
+
+
+def available_providers() -> dict:
+    """Which providers have a key right now, in call order. Recorded with every run so
+    a replay with a different set of keys cannot pass for the same configuration."""
+    return {"openai": bool(config.OPENAI_API_KEY), "anthropic": bool(config.ANTHROPIC_API_KEY),
+            "gemini": bool(config.GOOGLE_API_KEY)}
+
 
 def _load_cache(key: str) -> Optional[List[Dict[str, Any]]]:
     path = _CACHE_DIR / f"{key}.json"
@@ -474,6 +485,8 @@ class LLMHelper:
         Falls back to next provider if current one fails or is not configured.
         Raises ValueError if no providers are available.
         """
+        global last_extraction_provider
+        last_extraction_provider = None
         providers = [
             ("openai", LLMHelper.extract_divisions_openai),
             ("anthropic", LLMHelper.extract_divisions_anthropic),
@@ -486,6 +499,7 @@ class LLMHelper:
                 result = extractor(univ_label, website)
                 if result:  # Successfully extracted non-empty list
                     logger.info("extract_divisions_best_available: %s returned %d units", provider_name, len(result))
+                    last_extraction_provider = provider_name
                     return result
                 else:
                     logger.debug("extract_divisions_best_available: %s returned empty list", provider_name)
