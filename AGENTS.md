@@ -280,7 +280,7 @@ QuickStatements. Each node:
 | qid | Wikidata QID, or null |
 | country | Country QID for P17, with the evidence it came from (the page, an address, or the Wikidata item). Never assumed from the university: NYU Abu Dhabi and NYU Shanghai are not in the U.S. |
 | node_version | Hash of everything the review sheet shows: name, aliases, description, unit_type, parent_ids, each parent's current name and QID, parent_links, qid, country, alignment, alignment_candidates, wikidata_duplicates, website, source_url, and the content hashes of the evidence. Changes whenever any of them changes, so new alignment evidence also sends a unit back for review |
-| alignment | Summary of parent_links: linked (QID, and P749 present, as the rules set it, to every parent), orphan (QID, and P749 missing or present but different for at least one parent; a unit connected only through P361, P527, P355, or P199 counts as missing, so the export adds the P749), new (no item; searched), uncertain (could not decide; never exported) |
+| alignment | Summary of parent_links: linked (QID, and P749 present, as the rules set it, to every parent), orphan (QID, and P749 missing or present but different for at least one parent; a unit connected only through P361, P527, P355, or P199 counts as missing, so the export adds the P749), new (no item; searched), pending (QID, and no P749 is missing or different except to parents that have no QID yet; held back from export until `ingest-qids` records the parent's QID and alignment is rerun, which turns it into linked or orphan), uncertain (could not decide; never exported) |
 | alignment_candidates | QIDs considered, how each was found (prefix search, full-text search, website, parent), and the reason for the choice |
 | wikidata_duplicates | QIDs that look like a second item for the same unit on Wikidata; flagged for a person, never merged by us |
 | website | P856 value or the URL found |
@@ -301,7 +301,11 @@ whether a reject blocks, which sources count, `url_checked` required); the expor
 pre-upload check both refuse to run when it is missing or invalid. Accepts are counted per
 distinct reviewer, never per row: the reviewer's latest blind-pass verdict on that version is
 the one that counts toward the accepts, and the reviewer's latest verdict in either pass blocks
-if it is a reject. A "fix"
+if it is a reject or a fix (a fix says this version is wrong; only the corrected version can be
+accepted). Only expert verdicts authorize an export. A Prolific worker judges only the claim
+("this page shows X is a unit of Y") and never sees the QID, country, type, website, rank, or
+qualifiers, so a worker's verdict can add a required accept or block on a reject or fix, but
+never replaces the expert accept, whatever the protocol file says. A "fix"
 verdict is applied to the hierarchy file and the affected steps are rerun: a corrected source
 URL is fetched and saved, a corrected country or parent link must come with its own URL,
 which is fetched and saved as that fact's evidence, a correction to anything alignment searches with (name, aliases, type, website, QID, or parent) goes back through alignment so that
