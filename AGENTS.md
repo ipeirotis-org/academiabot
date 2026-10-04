@@ -29,6 +29,7 @@ academiabot/
 │       ├── wikidata_division_discover.py   # Entrypoint
 │       └── batch_collect.py                # CLI wrapper around batch.py
 ├── deploy/                      # deploy_collect_function.sh: Cloud Function + paused half-hourly Scheduler job
+├── SPECS.md                     # Full build spec for each week of TASKS.md (students read the short version)
 ├── docs/                        # BACKGROUND.md (origins, decisions), LITERATURE.md (research behind the plan);
 │                                #   later MODELING_RULES.md, REVIEW_GUIDE.md, REVIEW_PROTOCOL.md
 ├── tests/                       # pytest unit tests (fuzzy matching)
@@ -151,7 +152,10 @@ evidence for every unit (section 5); Shuo checks it with other LLMs, the evidenc
 are part of the weekly tasks. So:
 
 - Work on exactly the track and week in `TASKS.md` that the student names. Do not start the next one.
-- The "you check it by" cell for that week is the acceptance test. Make it pass and show it passing.
+- Build to the full specification for that week in `SPECS.md`. `TASKS.md` has the short version for
+  the student. If you change a week, change it in both files in the same pull request.
+- The "You check it by" steps for that week in `TASKS.md` are the acceptance test. Make them pass and
+  show them passing.
 - Before writing code, give a short plan (five lines or fewer) and wait for a go-ahead.
 - Explain what you did in plain language. Assume the reader can run a command and open a CSV but will not read a diff.
 - Run `python -m pytest tests -q` before saying anything is done. Add a test for every behavior you add.

@@ -1,17 +1,19 @@
 # AcademiaBot
 
-**Putting the structure of every university into Wikidata.**
+**The structure of every university, in Wikidata.**
 
 Wikidata knows that New York University exists. It mostly does not know that NYU has a
 Stern School of Business, that Stern has a Department of Finance, or who teaches there.
 This project fills that gap: university, then school, then department, then faculty, all
 as linked Wikidata entities that anyone can query.
 
-We use large language models to propose the units, code to check them against what
-Wikidata already has, and people to approve every fact before it is published. Checking
-each proposal against the university's own website is being built now (see TASKS.md).
-The rule we are building toward: nothing goes into Wikidata without a written source that
-a person has checked.
+Large language models (LLMs) propose the units. Code checks them against what Wikidata
+already has. People approve every fact before it goes to Wikidata. A check of each unit
+against the university's own website is planned work (see TASKS.md). Our goal is one
+rule: nothing goes into Wikidata without a written source that a person has checked.
+
+Words such as QID, P749, orphan, and QuickStatements are in the glossary, TASKS.md
+section 12.
 
 ```mermaid
 flowchart LR
@@ -71,23 +73,31 @@ Read these three files, in this order. They are short.
 ```bash
 git clone https://github.com/ipeirotis-org/academiabot.git
 cd academiabot
-pip install -r wikidata_discover/requirements.txt pytest
+pip install -r wikidata_discover/requirements.txt -r wikidata_discover/cloud/requirements.txt pytest
 cp env.example .env          # then put at least one LLM API key in .env (ask Panos)
-python -m pytest tests -q    # all tests should pass
+python -m pytest tests -q    # all 142 tests must pass
 python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210   # NYU
 ```
 
-The last command asks an LLM for NYU's schools, checks each one against Wikidata, and
-prints a table: already linked, exists but not linked (an "orphan"), or missing. If any
-unit is missing or orphaned, it also writes two files to `wikidata_discover/results/`: a
-CSV of those units and a QuickStatements file that could create them. For NYU today
-nothing is missing, so only the JSON report is written, and any CSV or QuickStatements
-file an earlier run left for the same university is removed first, so what is in
-`results/` is always the latest result. **Do not upload a QuickStatements file.** Uploading is a human step, after review, described in TASKS.md (Anya's weeks 9
-and 10, Shuo's week 10).
+The last command does these steps:
 
-Or ask your agent to do all of this for you and explain the output. That is the normal
-way to work here.
+1. It asks an LLM for the schools of NYU.
+2. It checks each school against Wikidata.
+3. It prints a table. Each school is "linked", "orphan" (on Wikidata but not linked to
+   NYU), or "missing".
+4. It always writes a JSON report to `wikidata_discover/results/reports/`.
+5. If a school is missing or orphan, it also writes a CSV and a QuickStatements file to
+   `wikidata_discover/results/`. The QuickStatements file could create those schools.
+
+For NYU today nothing is missing, so you get only the JSON report. The command also
+removes old CSV and QuickStatements files for the same university. So `results/` always
+shows the latest run.
+
+**Do not upload a QuickStatements file.** A person uploads, after review. TASKS.md
+describes this step (Anya's weeks 9 and 10, Shuo's week 10).
+
+You can also ask your agent to do all of this and explain the output. That is the
+normal way to work here.
 
 ## What the code does today
 
@@ -103,7 +113,7 @@ is its own module: `python -m wikidata_discover.eval.run_eval`.
 
 **Accuracy so far:** at the school level, the best configuration reaches about 95%
 precision and 95% recall on the 12 evaluated universities. Departments are the current
-work. The honest list of what does not work yet is in TASKS.md, section 1.
+work. The list of what does not work yet is in TASKS.md, section 1.
 
 ## Configuration
 
@@ -123,6 +133,7 @@ Keys also live in GCP Secret Manager; see AGENTS.md. Never commit `.env`.
 ```
 TASKS.md                 The plan. Start here.
 AGENTS.md                Instructions for the coding agent.
+SPECS.md                 The full build specification for each week, for the agent.
 docs/                    Background, and later the review guide and modeling rules.
 wikidata_discover/       The code.
   cli.py                 The two commands.
