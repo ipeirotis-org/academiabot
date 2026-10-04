@@ -1,12 +1,30 @@
 # What the research literature says
 
-A short review of the work most relevant to each step of AcademiaBot, written to justify
-the design in `TASKS.md` and the research questions in its section 8. Every citation was
-checked against the publisher page, the proceedings, or arXiv in October 2026. Entries
-marked "partly checked" had one detail (venue or a number) we could not confirm.
+This file reviews the research behind each step of AcademiaBot. It explains the design
+in `TASKS.md` and the research questions in its section 8. We checked every citation
+against the publisher page, the proceedings, or arXiv in October 2026. For an entry marked
+"partly checked", we could not confirm one detail (the venue or a number).
 
-Each entry gives the finding and what it means for us. Read the part for your stream:
+Each entry gives the finding and what it means for us. Read the part for your track:
 section 1 for Anya, section 2 for Shuo. Section 3 is the summary for both.
+
+```mermaid
+flowchart LR
+    L[LLMs list<br/>the units<br/>1.1, 1.2] --> W[Align with<br/>Wikidata<br/>1.3]
+    W --> P[Check the<br/>cited page<br/>2.1, 2.2]
+    W --> G[Compare LLMs,<br/>LLM judge<br/>2.3, 2.4]
+    P & G --> H[People review<br/>2.5, 2.7]
+    H --> Q[Estimate precision<br/>and recall<br/>2.6, 2.8]
+    style L fill:#dff5f2,stroke:#333,color:#000
+    style W fill:#dff5f2,stroke:#333,color:#000
+    style P fill:#fde2f3,stroke:#333,color:#000
+    style G fill:#fde2f3,stroke:#333,color:#000
+    style H fill:#fde2f3,stroke:#333,color:#000
+    style Q fill:#fde2f3,stroke:#333,color:#000
+```
+
+Teal: Anya's track (section 1). Pink: Shuo's track (section 2). The numbers are the
+sections of this file.
 
 ---
 
@@ -16,8 +34,8 @@ section 1 for Anya, section 2 for Shuo. Section 3 is the summary for both.
 
 - **Petroni et al. (2019).** "Language Models as Knowledge Bases?" EMNLP-IJCNLP.
   https://aclanthology.org/D19-1250/
-  - Finding: pretrained models hold a lot of relational knowledge, but much more for some
-    kinds of fact than others. The paper tests one fact at a time.
+  - Finding: pretrained models hold a lot of relational knowledge. The amount differs a
+    lot from one kind of fact to another. The paper tests one fact at a time.
   - For us: it is the founding citation. It does not tell us how complete a list is.
 - **Hu, Nguyen, Ghosh, Razniewski (2025).** "Enabling LLM Knowledge Analysis via Extensive
   Materialization" (GPTKB). ACL 2025. https://arxiv.org/abs/2411.04920

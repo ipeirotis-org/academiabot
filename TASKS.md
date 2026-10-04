@@ -114,7 +114,7 @@ Read both once.
 
 ---
 
-## 2. The two streams
+## 2. The two tracks
 
 ```mermaid
 flowchart LR
@@ -215,7 +215,7 @@ Rules that keep things manageable:
 - [ ] Ask the agent to walk you through the pipeline using `discovery.py` as the guide.
       Then ask it the question that confused you most.
 - [ ] Run the evaluation and compare its numbers to `wikidata_discover/eval/results_summary.csv`.
-- [ ] Read `docs/BACKGROUND.md`, and in `docs/LITERATURE.md` the part for your stream.
+- [ ] Read `docs/BACKGROUND.md`, and in `docs/LITERATURE.md` the part for your track.
 - [ ] Write one paragraph for Panos: what the pipeline does, and one thing you would change.
 
 ---
@@ -375,7 +375,7 @@ Measure: for 50 to 150 human labels, the interval width with and without the ver
 labels, and how many labels are needed for plus or minus 3 points. Only verdicts given
 without seeing the verifier's answer may enter this estimate, or the verifier's errors
 would come back as human agreement. A second question, cheap to add to the same pilot:
-do reviewers who see the verifier's answer simply copy it? Studies of LLM-assisted
+do reviewers who see the verifier's answer copy it? Studies of LLM-assisted
 annotation find they largely do (Schroeder et al. 2025), which would make our precision
 look better than it is.
 
@@ -524,7 +524,13 @@ SELECT ?item ?itemLabel ?itemDescription WHERE {
 ## 12. Glossary
 
 - **Wikidata.** A free database of facts that Wikipedia and many others read from. Anyone
-  can edit it. We are adding to it.
+  can edit it. We add to it.
+- **LLM (large language model).** An AI model that answers text questions, such as GPT,
+  Claude, or Gemini.
+- **SPARQL.** The query language for Wikidata. Section 11 has examples to paste into
+  https://query.wikidata.org.
+- **BigQuery, Cloud Storage, bucket.** Google Cloud services. BigQuery holds our tables.
+  Cloud Storage holds files in a "bucket" (ours is `academiabot`).
 - **QID.** Wikidata's id for a thing. NYU is Q49210. Stern is Q770467.
 - **Property.** Wikidata's name for a kind of fact. P749 means "parent organization".
   P31 means "is a". The ones we use are listed in `AGENTS.md`.
@@ -534,6 +540,12 @@ SELECT ?item ?itemLabel ?itemDescription WHERE {
   in bulk. Our exporter writes those files. A person uploads them.
 - **Hierarchy file.** Our offline copy of one university's structure: one node per unit,
   with its parent, its QID if it has one, and its evidence.
+- **Node, node id.** One unit in the hierarchy file. The node id is our own id for it. It
+  stays the same when the unit is renamed, moved, or gets a QID.
+- **Node version.** A fingerprint of everything a reviewer sees for a node. If any fact
+  changes, the version changes, and the node needs a new review.
+- **Manifest.** A list written next to each QuickStatements file. It says which review
+  allowed each statement, and why each left-out unit was left out.
 - **Alignment.** Deciding, for each unit we found, which Wikidata item it is, or that it
   has none. Done right, we never create a second item for something that exists.
 - **Linked, orphan, new, pending, uncertain.** A unit's alignment status. Linked: on Wikidata and
@@ -547,16 +559,25 @@ SELECT ?item ?itemLabel ?itemDescription WHERE {
 - **Check.** One automated test of one unit (do providers agree, does the page support
   it). Each is a row in the `checks` table.
 - **Verdict.** One person's decision on one unit: accept, reject, or fix.
+- **Blind pass.** A review in which the reviewer does not see the machine checks. Only
+  blind verdicts count when we measure precision.
 - **Agreement.** How many independent providers or runs named the same unit.
 - **Judge.** An LLM that reviews a merged list from other LLMs and removes what is not real.
 - **Verifier.** An LLM that reads a saved page and says whether it supports a claim.
 - **Precision.** Of the units proposed, the share that are real.
 - **Recall.** Of the real units, the share that were found.
+- **Edge F1, ancestor F1.** Two scores for a hierarchy. Edge F1 gives credit only for the
+  exact parent. Ancestor F1 also gives credit for a correct higher level (the right
+  university, but the wrong school).
 - **Confidence interval.** The range a number probably lies in, given how few units we
   checked. "Precision 0.93, between 0.89 and 0.96" can be acted on; "0.93" alone cannot.
 - **Capture and recapture.** Estimating how many things exist from how much two
   independent lists overlap. Little overlap means many things neither list found.
 - **Ground truth.** The correct answer, built by hand, that we score against.
+- **Seed.** The start number for a random draw. If you record it, someone else can repeat
+  the same draw.
+- **Cache.** Stored LLM answers. A second run reads the stored answer and does not pay
+  for a new call.
 - **Gold item.** A review item whose right answer we know, mixed in to check reviewers.
 - **Run log.** Our record of everything a run did: every LLM call, every page fetched,
   every unit proposed. Lives in BigQuery and Cloud Storage.
