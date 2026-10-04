@@ -133,6 +133,7 @@ Keys also live in GCP Secret Manager; see AGENTS.md. Never commit `.env`.
 ```
 TASKS.md                 The plan. Start here.
 AGENTS.md                Instructions for the coding agent.
+SPECS.md                 The full build specification for each week, for the agent.
 docs/                    Background, and later the review guide and modeling rules.
 wikidata_discover/       The code.
   cli.py                 The two commands.
