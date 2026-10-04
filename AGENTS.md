@@ -171,6 +171,43 @@ are part of the weekly tasks. So:
 - Write functions that are independently testable (separate logic from I/O)
 - For new LLM prompts, follow the pattern in `llm_helpers.py` (structured JSON schema)
 
+## Writing style (about 80% ASD-STE100)
+
+Write prose for people in a style close to ASD-STE100 Simplified Technical English. This
+applies to `TASKS.md`, files in `docs/`, guides for the students, pull request descriptions,
+session summaries, reports, and user-facing output strings. It does not apply to code,
+identifiers, or quoted data. The readers are business undergraduates with little technical
+background.
+
+Follow these STE rules:
+
+- Keep sentences short: 20 words or fewer in an instruction, 25 or fewer in a description.
+- Write one instruction per sentence. Use the imperative: "Run the tests." Not "You should run the tests."
+- Use the active voice. Use the passive only when the actor is unknown or not important.
+- Keep one topic per paragraph, and 6 sentences or fewer per paragraph.
+- Use one word for one meaning. Use the same term for the same thing in all files (the
+  glossary in `TASKS.md` section 12 is the reference). Do not change words for variety.
+- Use simple tenses: present, past, future. Do not use "-ing" words as verbs.
+- Prefer a single verb to a phrasal verb: "start", not "kick off"; "find", not "figure out".
+- Keep "a", "an" and "the". Do not write in telegraphic style.
+- Use numbered lists for steps in sequence and bullets for parallel items.
+- Put a warning before the step it applies to, not after.
+- Be specific: give the number, the file, the command. Do not use vague words such as
+  "some", "various", "appropriate", or "as needed".
+
+The other 20% (where we relax STE):
+
+- You do not have to use the STE approved dictionary. Common words are fine when they have
+  one clear meaning in context.
+- Technical names are allowed: Wikidata, QID, P749, BigQuery, precision, recall. Define each
+  one on first use or point to the glossary.
+- A sentence that explains *why* (not an instruction) may use "because", "if", or "would",
+  within the 25-word limit.
+- A short analogy is allowed when it makes an idea clear to a non-technical reader.
+
+Also: no em-dashes, and no filler phrases such as "honest", "load-bearing", "it's not X,
+it's Y", "dive into", or "robust".
+
 ## Known issues
 
 1. ~~`config.py` hardcodes `LLM_MODEL = "gpt-5"` but README says "gpt-4o"~~ Fixed: reads from `.env` with default `gpt-4o`
