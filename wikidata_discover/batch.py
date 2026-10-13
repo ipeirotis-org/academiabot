@@ -24,8 +24,8 @@ from wikidata_discover.config import RESULTS_DIR
 logger = logging.getLogger(__name__)
 
 BUCKET = "academiabot"
-PROJECT = "wikidata-academia"
-SECRETS = [("OPENAI_API_KEY", "openai-api-key"), ("ANTHROPIC_API_KEY", "anthropic-api-key"), ("GOOGLE_API_KEY", "gemini-api-key")]
+PROJECT = config.GCP_PROJECT
+SECRETS = list(config.KEY_SECRETS.items())
 
 
 def artifact_paths(results_dir: Path, run_dir: Path, qid: str, since: float, extra=()):

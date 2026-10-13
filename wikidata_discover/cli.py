@@ -31,6 +31,7 @@ def run_cli():
             logging.basicConfig(level=logging.DEBUG, force=True)
         if args.llm_model:
             config.LLM_MODEL = args.llm_model
+        config.load_missing_keys()
         for qid in args.university_qids:
             Discovery(qid).discover_missing()
 
