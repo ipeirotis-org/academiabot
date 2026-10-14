@@ -58,7 +58,8 @@ flowchart LR
 
 ```bash
 pip install -r wikidata_discover/requirements.txt -r wikidata_discover/cloud/requirements.txt pytest
-# Copy env.example to .env and set at least one provider key (OPENAI_API_KEY preferred; all three for the eval harness)
+# Keys: discover and the eval harness read them from Secret Manager when the environment and .env have none.
+# Without GCP credentials, copy env.example to .env and set at least one provider key (OPENAI_API_KEY preferred)
 python -m wikidata_discover.scripts.wikidata_division_discover harvest
 python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210  # NYU
 python -m wikidata_discover.eval.run_eval      # precision/recall against ground truth
@@ -545,10 +546,13 @@ def get_secret(secret_id: str, project_id: str = "wikidata-academia") -> str:
 gcloud secrets versions access latest --secret=openai-api-key --project=wikidata-academia
 ```
 
-**Key resolution order** (planned for `config.py`):
-1. Environment variable (e.g., `OPENAI_API_KEY`) -- for local dev and CI
-2. Secret Manager -- for deployed services (Cloud Functions, Cloud Run)
-3. `.env` file -- fallback for local development
+**Key resolution order** (`config.load_missing_keys()`, called by `discover` and the eval harness;
+the batch runner uses its own loader in `batch.py`, which also picks up rotated keys):
+1. Environment variable (e.g., `OPENAI_API_KEY`)
+2. `.env` file (loaded into the environment when `config` is imported)
+3. Secret Manager, for each key still missing. This is how Claude Code on the web sessions get
+   keys: the SessionStart hook activates the service account, and the service account can read
+   the secrets. Without Google credentials the step prints one warning and the key stays missing.
 
 **Rotating a key**: Create a new version, then disable the old one:
 ```bash
