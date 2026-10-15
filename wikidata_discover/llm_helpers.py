@@ -4,6 +4,7 @@ import re
 from typing import List, Dict, Any, Optional, Tuple
 from rich.console import Console
 import hashlib
+import time
 from pathlib import Path
 
 from wikidata_discover import config
@@ -83,7 +84,7 @@ JUDGE_KEEP_SCHEMA = {
 }
 
 _EXTRACT_MAX_RETRIES = 2
-_CACHE_DIR = Path(__file__).parent / "results" / "cache"
+_CACHE_DIR = config.LLM_CACHE_DIR   # ACADEMIABOT_CACHE_DIR overrides it
 
 # ─────────────────────────  LAZY CLIENTS  ─────────────────────────
 
@@ -213,6 +214,113 @@ cache_paths_touched: set = set()
 # (None before any call, or when every provider failed). Recorded per university.
 last_extraction_provider = None
 
+# Run log ids (wikidata_discover/run_log.py) of the llm_calls rows behind the last
+# extraction that returned units, and behind the last choose_match() decision. The
+# discovery step copies them into each candidates row. None and [] when no run log
+# is active.
+last_extraction_call_id = None
+last_match_call_ids: list = []
+
+# Which extraction entry point is running, recorded in each call's request_config.
+_extraction_mode = "single"
+
+
+# ─────────────────────────  RUN LOG RECORDING  ─────────────────────────
+
+def _record(**fields) -> Optional[str]:
+    """Add one llm_calls row to the active run log. Returns its id, or None when no
+    run log is active. Never raises: a logging problem must not stop a run."""
+    from wikidata_discover import run_log
+    log = run_log.current()
+    if log is None:
+        return None
+    try:
+        return log.record_llm_call(**fields)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("run log: could not record an LLM call (%s: %s)", type(e).__name__, e)
+        return None
+
+
+def _raw_dump(resp: Any, text: Optional[str]) -> Optional[str]:
+    """The full raw response as JSON text when the SDK object can give it (it keeps
+    the web search calls and sources), else the plain response text."""
+    try:
+        dumped = resp.model_dump_json(indent=2)
+        if isinstance(dumped, str):
+            return dumped
+    except Exception:  # noqa: BLE001
+        pass
+    return text
+
+
+def _usage(resp: Any) -> Tuple[Optional[int], Optional[int]]:
+    """(input tokens, output tokens) from an OpenAI, Anthropic, or Gemini response."""
+    def as_int(v):
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+    usage = getattr(resp, "usage", None)
+    if usage is not None:
+        return as_int(getattr(usage, "input_tokens", None)), as_int(getattr(usage, "output_tokens", None))
+    meta = getattr(resp, "usage_metadata", None)
+    if meta is not None:
+        return as_int(getattr(meta, "prompt_token_count", None)), as_int(getattr(meta, "candidates_token_count", None))
+    return None, None
+
+
+def _record_response(call: dict, resp: Any, text: Optional[str], attempt: int, t0: float) -> Optional[str]:
+    """Record a call that returned. `call` holds provider, model, purpose, prompt,
+    request_config, cache_key, prompt_hash. Done before the answer is parsed."""
+    tokens_in, tokens_out = _usage(resp)
+    return _record(**call, raw_response=_raw_dump(resp, text), attempt=attempt,
+                   tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=int((time.time() - t0) * 1000))
+
+
+def _record_error(call: dict, exc: Exception, attempt: int, t0: float) -> Optional[str]:
+    return _record(**call, attempt=attempt, error=f"{type(exc).__name__}: {str(exc)[:500]}",
+                   latency_ms=int((time.time() - t0) * 1000))
+
+
+def _record_cache_hit(call: dict, key: str) -> Optional[str]:
+    """Record an answer read from the cache. It points to the original call's prompt
+    and raw response when the cache file has a .meta.json record of them."""
+    return _record(**call, cache_hit=True, cached_from=_load_cache_meta(key))
+
+
+def _meta_path(key: str) -> Path:
+    return _CACHE_DIR / f"{key}.meta.json"
+
+
+def _save_cache_meta(key: str, call_id: Optional[str]) -> None:
+    """Next to a cache file, keep which call produced it and where its prompt and raw
+    response are, so a later cache hit can point to them."""
+    from wikidata_discover import run_log
+    log = run_log.current()
+    if not call_id or log is None:
+        return
+    meta = {"llm_call_id": call_id, "run_id": log.run_id, **log.text_paths.get(call_id, {})}
+    path = _meta_path(key)
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(meta, indent=2))
+    cache_paths_touched.add(path)
+
+
+def _load_cache_meta(key: str) -> Optional[dict]:
+    path = _meta_path(key)
+    if not path.exists():
+        return None
+    try:
+        meta = json.loads(path.read_text())
+    except Exception:  # noqa: BLE001
+        return None
+    cache_paths_touched.add(path)
+    return meta if isinstance(meta, dict) else None
+
+
+def _extract_call(provider: str, model: str, key: str, prompt: dict, **request) -> dict:
+    """The fixed fields of one extraction call's llm_calls row."""
+    return {"provider": provider, "model": model, "purpose": "extract", "prompt": prompt,
+            "cache_key": key, "prompt_hash": EXTRACT_PROMPT_HASH,
+            "request_config": {"extraction_mode": _extraction_mode, "sample": None, **request}}
+
 
 def available_providers() -> dict:
     """Which providers have a key right now, in call order. Recorded with every run so
@@ -260,15 +368,18 @@ def _normalize_units(payload: Any) -> List[Dict[str, Any]]:
     if not isinstance(units, list):
         raise ValueError(f"Expected 'units' to be a list, got {type(units).__name__ if units else 'None'}")
 
-    # Normalize entries: wrap bare strings into dicts, validate all items are dicts
+    # Normalize entries: wrap bare strings into dicts, validate all items are dicts.
+    # The answer's one reference URL is kept on each unit as its source.
+    reference = payload.get("reference") if isinstance(payload.get("reference"), str) else None
     result = []
     for itm in units:
         if isinstance(itm, str):
-            result.append({"name": itm})
-        elif isinstance(itm, dict):
-            result.append(itm)
-        else:
+            itm = {"name": itm}
+        elif not isinstance(itm, dict):
             raise ValueError(f"Invalid unit entry: expected string or dict, got {type(itm).__name__}: {itm}")
+        if reference:
+            itm = {**itm, "reference": itm.get("reference") or reference}
+        result.append(itm)
     return result
 
 
@@ -291,11 +402,20 @@ class LLMHelper:
     @staticmethod
     def extract_divisions_openai(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using OpenAI API."""
+        global last_extraction_call_id
+        last_extraction_call_id = None
         model = config.LLM_MODEL
         key = _cache_key(univ_label, "openai", model, extra=website or "")
+        messages = [
+            {"role": "system", "content": SYSTEM_EXTRACT},
+            {"role": "user", "content": f"{univ_label} -- {website}"}
+        ]
+        call = _extract_call("openai", model, key, {"input": messages, "schema": UNIVERSITY_UNITS_SCHEMA},
+                             tools=["web_search_preview"], store=False)
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_openai: cache hit for %s", univ_label)
+            last_extraction_call_id = _record_cache_hit(call, key)
             return cached
 
         client = _get_openai_client()
@@ -304,19 +424,18 @@ class LLMHelper:
             if not enough_time_for_llm_call():
                 logger.warning("extract_divisions_openai: deadline too close, not calling for %s", univ_label)
                 break
+            call_id, t0 = None, time.time()
             try:
                 resp = client.with_options(**_client_options()).responses.create(
                     model=model,
-                    input=[
-                        {"role": "system", "content": SYSTEM_EXTRACT},
-                        {"role": "user", "content": f"{univ_label} -- {website}"}
-                    ],
+                    input=messages,
                     tools=[{"type": "web_search_preview"}],
                     text={"format": {"type": "json_schema", "name": "university_units", "schema": UNIVERSITY_UNITS_SCHEMA}},
                     store=False
                 )
 
                 raw_text = resp.output_text if resp.output else None
+                call_id = _record_response(call, resp, raw_text, attempt, t0)
                 if not raw_text:
                     logger.warning(
                         "extract_divisions_openai attempt %d/%d: empty response for %s",
@@ -343,9 +462,13 @@ class LLMHelper:
                     continue
 
                 _save_cache(key, result)
+                _save_cache_meta(key, call_id)
+                last_extraction_call_id = call_id
                 return result
 
             except Exception as e:
+                if call_id is None:
+                    _record_error(call, e, attempt, t0)
                 logger.error(
                     "extract_divisions_openai attempt %d/%d: API error for %s: %s",
                     attempt, _EXTRACT_MAX_RETRIES, univ_label, e
@@ -358,11 +481,17 @@ class LLMHelper:
     @staticmethod
     def extract_divisions_anthropic(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using Anthropic Claude API."""
+        global last_extraction_call_id
+        last_extraction_call_id = None
         model = config.ANTHROPIC_MODEL
         key = _cache_key(univ_label, "anthropic", model, extra=website or "")
+        messages = [{"role": "user", "content": f"{univ_label} -- {website}"}]
+        call = _extract_call("anthropic", model, key, {"system": SYSTEM_EXTRACT, "messages": messages},
+                             tools=[], max_tokens=2048)
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_anthropic: cache hit for %s", univ_label)
+            last_extraction_call_id = _record_cache_hit(call, key)
             return cached
 
         client = _get_anthropic_client()
@@ -371,17 +500,17 @@ class LLMHelper:
             if not enough_time_for_llm_call():
                 logger.warning("extract_divisions_anthropic: deadline too close, not calling for %s", univ_label)
                 break
+            call_id, t0 = None, time.time()
             try:
                 resp = client.with_options(**_client_options()).messages.create(
                     model=model,
                     max_tokens=2048,
                     system=SYSTEM_EXTRACT,
-                    messages=[
-                        {"role": "user", "content": f"{univ_label} -- {website}"}
-                    ]
+                    messages=messages
                 )
 
                 raw_text = resp.content[0].text if resp.content else None
+                call_id = _record_response(call, resp, raw_text, attempt, t0)
                 if not raw_text:
                     logger.warning(
                         "extract_divisions_anthropic attempt %d/%d: empty response for %s",
@@ -412,9 +541,13 @@ class LLMHelper:
                     continue
 
                 _save_cache(key, result)
+                _save_cache_meta(key, call_id)
+                last_extraction_call_id = call_id
                 return result
 
             except Exception as e:
+                if call_id is None:
+                    _record_error(call, e, attempt, t0)
                 logger.error(
                     "extract_divisions_anthropic attempt %d/%d: API error for %s: %s",
                     attempt, _EXTRACT_MAX_RETRIES, univ_label, e
@@ -427,11 +560,17 @@ class LLMHelper:
     @staticmethod
     def extract_divisions_gemini(univ_label: str, website: str) -> List[Dict[str, Any]]:
         """Extract divisions using Google Gemini API."""
+        global last_extraction_call_id
+        last_extraction_call_id = None
         model = config.GEMINI_MODEL
         key = _cache_key(univ_label, "gemini", model, extra=website or "")
+        prompt_text = f"System: {SYSTEM_EXTRACT}\n\nInput: {univ_label} -- {website}"
+        call = _extract_call("gemini", model, key, {"text": prompt_text},
+                             tools=[], temperature=0.7, max_output_tokens=2048)
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_gemini: cache hit for %s", univ_label)
+            last_extraction_call_id = _record_cache_hit(call, key)
             return cached
 
         client = _get_gemini_client()
@@ -440,6 +579,7 @@ class LLMHelper:
             if not enough_time_for_llm_call():
                 logger.warning("extract_divisions_gemini: deadline too close, not calling for %s", univ_label)
                 break
+            call_id, t0 = None, time.time()
             try:
                 from google.genai import types as genai_types
 
@@ -448,7 +588,7 @@ class LLMHelper:
                     contents=[
                         genai_types.Content(
                             parts=[
-                                genai_types.Part.from_text(text=f"System: {SYSTEM_EXTRACT}\n\nInput: {univ_label} -- {website}")
+                                genai_types.Part.from_text(text=prompt_text)
                             ]
                         )
                     ],
@@ -460,6 +600,7 @@ class LLMHelper:
                 )
 
                 raw_text = resp.text if resp.text else None
+                call_id = _record_response(call, resp, raw_text, attempt, t0)
                 if not raw_text:
                     logger.warning(
                         "extract_divisions_gemini attempt %d/%d: empty response for %s",
@@ -490,9 +631,13 @@ class LLMHelper:
                     continue
 
                 _save_cache(key, result)
+                _save_cache_meta(key, call_id)
+                last_extraction_call_id = call_id
                 return result
 
             except Exception as e:
+                if call_id is None:
+                    _record_error(call, e, attempt, t0)
                 logger.error(
                     "extract_divisions_gemini attempt %d/%d: API error for %s: %s",
                     attempt, _EXTRACT_MAX_RETRIES, univ_label, e
@@ -510,8 +655,17 @@ class LLMHelper:
         Falls back to next provider if current one fails or is not configured.
         Raises ValueError if no providers are available.
         """
+        global last_extraction_provider, last_extraction_call_id, _extraction_mode
+        last_extraction_provider = last_extraction_call_id = None
+        _extraction_mode = "best_available"
+        try:
+            return LLMHelper._best_available(univ_label, website)
+        finally:
+            _extraction_mode = "single"
+
+    @staticmethod
+    def _best_available(univ_label: str, website: str) -> List[Dict[str, Any]]:
         global last_extraction_provider
-        last_extraction_provider = None
         providers = [
             ("openai", LLMHelper.extract_divisions_openai),
             ("anthropic", LLMHelper.extract_divisions_anthropic),
@@ -550,6 +704,15 @@ class LLMHelper:
 
         Returns union of kept names from judge, or empty list if any step fails.
         """
+        global _extraction_mode
+        _extraction_mode = "ensemble"
+        try:
+            return LLMHelper._ensemble(univ_label, website)
+        finally:
+            _extraction_mode = "single"
+
+    @staticmethod
+    def _ensemble(univ_label: str, website: str) -> List[Dict[str, Any]]:
         try:
             openai_units = LLMHelper.extract_divisions_openai(univ_label, website)
             openai_names = [u.get("name") or u.get("unit") for u in openai_units if u.get("name") or u.get("unit")]
@@ -602,6 +765,13 @@ class LLMHelper:
 
         candidates_list = "\n".join(f"- {c}" for c in candidates)
         prompt = JUDGE_PROMPT_TEMPLATE.replace("UNIVERSITY", univ_label).replace("UNITS_LIST", candidates_list)
+        model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL,
+                 "gemini": config.GEMINI_MODEL}.get(judge_provider)
+        call = {"provider": judge_provider, "model": model, "purpose": "judge",
+                "prompt": {"text": prompt, "candidates": candidates},
+                "prompt_hash": _prompt_hash(prompt, JUDGE_KEEP_SCHEMA),
+                "request_config": {"max_output_tokens": 1024, "tools": []}}
+        t0 = time.time()
 
         if judge_provider == "openai":
             try:
@@ -614,11 +784,14 @@ class LLMHelper:
                     store=False
                 )
                 raw_text = resp.output_text if resp.output else None
+                _record_response(call, resp, raw_text, 1, t0)
             except Exception as e:
+                _record_error(call, e, 1, t0)
                 logger.error("judge_union (OpenAI) failed: %s", e)
                 raise
 
         elif judge_provider == "anthropic":
+            recorded = None
             try:
                 client = _get_anthropic_client()
                 resp = client.messages.create(
@@ -627,14 +800,18 @@ class LLMHelper:
                     messages=[{"role": "user", "content": prompt}]
                 )
                 raw_text = resp.content[0].text if resp.content else None
+                recorded = _record_response(call, resp, raw_text, 1, t0)
                 # Extract JSON if wrapped in markdown
                 match = re.search(r'\{[\s\S]*\}', raw_text) if raw_text else None
                 raw_text = match.group(0) if match else raw_text
             except Exception as e:
+                if recorded is None:
+                    _record_error(call, e, 1, t0)
                 logger.error("judge_union (Anthropic) failed: %s", e)
                 raise
 
         elif judge_provider == "gemini":
+            recorded = None
             try:
                 client = _get_gemini_client()
                 from google.genai import types as genai_types
@@ -644,10 +821,13 @@ class LLMHelper:
                     config=genai_types.GenerateContentConfig(max_output_tokens=1024, http_options=_gemini_http_options()),
                 )
                 raw_text = resp.text if resp.text else None
+                recorded = _record_response(call, resp, raw_text, 1, t0)
                 # Extract JSON if wrapped in markdown
                 match = re.search(r'\{[\s\S]*\}', raw_text) if raw_text else None
                 raw_text = match.group(0) if match else raw_text
             except Exception as e:
+                if recorded is None:
+                    _record_error(call, e, 1, t0)
                 logger.error("judge_union (Gemini) failed: %s", e)
                 raise
         else:
@@ -671,8 +851,12 @@ class LLMHelper:
     def choose_match(candidate: str, univ_label: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:
         """Return (qid,label) if LLM says the candidate matches one of the children, else None.
 
-        Uses best available provider for matching.
+        Uses best available provider for matching. Every call, and every decision read
+        from the cache, is recorded in the run log with the full list of choices shown;
+        their ids are left in last_match_call_ids.
         """
+        global last_match_call_ids
+        last_match_call_ids = []
         if not children:
             return None
 
@@ -704,12 +888,26 @@ class LLMHelper:
         # while the preferred one was failing is not reused once the preferred one
         # is configured again: it is asked afresh and the new answer replaces it.
         configured = [n for n, on in available_providers().items() if on]
+        match_hash = _prompt_hash(prompt)
         match_key = _cache_key(univ_label, "match", "|".join(m for _, _, m in providers),
-                               purpose="match", prompt_hash=_prompt_hash(prompt), extra=",".join(configured))
+                               purpose="match", prompt_hash=match_hash, extra=",".join(configured))
+        # What the run log keeps as this call's prompt: the exact text, and the same
+        # choices as a list, so a reviewer sees every Wikidata item the model chose from.
+        logged_prompt = {"text": prompt, "candidate": candidate, "university": univ_label,
+                         "choices": [{"n": i + 1, "qid": q, "label": l} for i, (q, l) in enumerate(children)]}
+
+        def call_fields(provider_name, model, **request):
+            return {"provider": provider_name, "model": model, "purpose": "match", "prompt": logged_prompt,
+                    "cache_key": match_key, "prompt_hash": match_hash,
+                    "request_config": {"configured_providers": configured, "tools": [], **request}}
+
         cached = _load_cache(match_key)
         fallback_cached = None
         if isinstance(cached, dict) and "answer" in cached:
+            cached_model = dict((n, m) for n, _, m in providers).get(cached.get("provider"))
+            cached_call = call_fields(cached.get("provider"), cached_model)
             if not configured or cached.get("provider") == configured[0]:
+                last_match_call_ids.append(_record_cache_hit(cached_call, match_key))
                 return parse_match_answer(cached["answer"], children)
             # A fallback provider decided while the preferred one was failing. Ask
             # the preferred one again; if it still fails, the cached decision stands
@@ -723,14 +921,17 @@ class LLMHelper:
             if fallback_cached is not None and provider_name != configured[0]:
                 logger.info("choose_match: %s still gives no answer; keeping the cached %s decision",
                             configured[0], fallback_cached.get("provider"))
+                last_match_call_ids.append(_record_cache_hit(cached_call, match_key))
                 return parse_match_answer(fallback_cached["answer"], children)
             if not enough_time_for_llm_call():
                 logger.warning("choose_match: deadline too close, not calling for candidate '%s'", candidate)
                 deadline_hit = True
                 break
+            call, call_id, t0 = None, None, time.time()
             try:
                 if provider_name == "openai":
                     client = get_client().with_options(**_client_options())
+                    call, t0 = call_fields(provider_name, model, max_output_tokens=16), time.time()
                     resp = client.responses.create(
                         model=model,
                         input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
@@ -740,6 +941,7 @@ class LLMHelper:
 
                 elif provider_name == "anthropic":
                     client = get_client().with_options(**_client_options())
+                    call, t0 = call_fields(provider_name, model, max_tokens=16), time.time()
                     resp = client.messages.create(
                         model=model,
                         max_tokens=16,
@@ -749,6 +951,7 @@ class LLMHelper:
 
                 elif provider_name == "gemini":
                     client = get_client()
+                    call, t0 = call_fields(provider_name, model, max_output_tokens=32, thinking_budget=0), time.time()
                     from google.genai import types as genai_types
                     # One token is wanted. Gemini counts its thinking against
                     # max_output_tokens and answers with nothing when thinking uses
@@ -762,6 +965,8 @@ class LLMHelper:
                     )
                     answer = (resp.text or "").strip()
 
+                call_id = _record_response(call, resp, answer, 1, t0)
+                last_match_call_ids.append(call_id)
                 if not answer:
                     logger.debug("choose_match (%s): empty response for candidate '%s'", provider_name, candidate)
                     continue
@@ -769,21 +974,27 @@ class LLMHelper:
                 if answer.upper() == "NONE":
                     logger.debug("choose_match (%s): returned NONE for candidate '%s'", provider_name, candidate)
                     _save_cache(match_key, {"answer": "NONE", "provider": provider_name})
+                    _save_cache_meta(match_key, call_id)
                     return None
 
                 parsed = parse_match_answer(answer, children)
                 if parsed is not None:
                     _save_cache(match_key, {"answer": answer, "provider": provider_name})
+                    _save_cache_meta(match_key, call_id)
                     return parsed
 
                 logger.debug("choose_match (%s): answer '%s' did not match any child QID", provider_name, answer)
                 continue
 
             except ValueError as e:
-                # Provider not configured
+                # Provider not configured (no call was made), or a call that failed
+                if call is not None and call_id is None:
+                    last_match_call_ids.append(_record_error(call, e, 1, t0))
                 logger.debug("choose_match: %s not available (%s)", provider_name, e)
                 continue
             except Exception as e:
+                if call is not None and call_id is None:
+                    last_match_call_ids.append(_record_error(call, e, 1, t0))
                 logger.warning("choose_match: %s failed (%s), trying next provider", provider_name, e)
                 continue
 

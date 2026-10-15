@@ -442,7 +442,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
     waits stop 90 seconds before it so the attempt's records still get written.
     Returns a summary dict with counts; 'failed' > 0 means something needs attention.
     """
-    from wikidata_discover import config, llm_helpers
+    from wikidata_discover import config, llm_helpers, run_log
     from wikidata_discover.discovery import Discovery
 
     validate_run_id(run_id)
@@ -529,6 +529,14 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
         (run_dir / "run.json").write_text(json.dumps({"run_id": run_id, **invocation}, indent=2))
     with (run_dir / "invocations.jsonl").open("a") as f:
         f.write(json.dumps(invocation) + "\n")
+    # The run log (BigQuery) keeps one runs row per invocation, under the same ids.
+    # Its local fallback lives in the run folder, so the uploads below carry it too.
+    rlog = run_log.start(run_id, invocation_id, command="batch", args=invocation["args"], qids=qids,
+                         who=invocation["operator"], git_commit=invocation["git_commit"],
+                         run_config={"providers": invocation["providers"], "models": invocation["models"],
+                                     "depth": 1, "user_agent": config.USER_AGENT,
+                                     "time_budget_s": time_budget_s, "reserve_s": reserve_s},
+                         bucket=bucket, results_dir=results_dir)
 
     # The invocation is part of the record even when no university gets processed.
     try:
@@ -576,6 +584,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
                         "trace": traceback.format_exc()[-1500:]})
             summary["failed"] += 1
         rec["seconds"] = round(time.time() - t, 1)
+        rlog.flush()   # before the uploads, so a local fallback goes up with this QID
         longest = max(longest, rec["seconds"])
         rec["cache_files"] = sorted(p.name for p in llm_helpers.cache_paths_touched)
         try:
@@ -620,6 +629,7 @@ def run_batch(run_id: str, qids: Iterable[str], bucket, time_budget_s: Optional[
                           "stopped_for_time" if summary["stopped_for_time"] else "ok")
     # This invocation's own attempts may have been a university's third: recount.
     summary["needs_review"] = len(parse_exhausted(log_path.read_text())) if log_path.exists() else 0
+    summary["run_log"] = rlog.finish(summary["outcome"], dict(summary))
     # Close the invocation record: end time and outcome, then push the run folder once more.
     with (run_dir / "invocations.jsonl").open("a") as f:
         f.write(json.dumps({"invocation_id": invocation_id, "started": invocation["started"], "host": invocation["host"],
