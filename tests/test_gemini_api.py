@@ -62,7 +62,9 @@ def test_extract_gemini_call_shape(monkeypatch):
     monkeypatch.setattr(lh, "_get_gemini_client", lambda: c)
     monkeypatch.setattr(lh, "_load_cache", lambda key: None)
     monkeypatch.setattr(lh, "_save_cache", lambda key, v: None)
-    assert LLMHelper.extract_divisions_gemini("X University", "https://x.edu") == [{"name": "School of Law"}]
+    # The answer's reference URL is kept on each unit as its source.
+    assert LLMHelper.extract_divisions_gemini("X University", "https://x.edu") == [
+        {"name": "School of Law", "reference": "https://x.edu"}]
     model, contents, config = models.calls[0]
     assert config.max_output_tokens == 2048 and "X University" in contents[0].parts[0].text
     assert config.http_options.timeout == lh.LLM_TIMEOUT_S * 1000      # no deadline: the full timeout

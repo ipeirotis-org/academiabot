@@ -5,7 +5,7 @@ from wikidata_discover.sparql_helpers import run_sparql
 from wikidata_discover.sparql_helpers import execute_sparql_bindings
 from wikidata_discover.wikidata_api import quick_wd_search
 from wikidata_discover.hierarchy import descendant_qids
-from wikidata_discover import llm_helpers
+from wikidata_discover import llm_helpers, run_log
 from wikidata_discover.llm_helpers import LLMHelper, LLMUnavailable
 from wikidata_discover.config import console, RESULTS_DIR
 
@@ -137,6 +137,9 @@ class Discovery:
             f"[bold blue]University:[/bold blue] {self.university_label} ({self.university_qid})"
         )
         clear_exports(self.university_qid)
+        log = run_log.current()
+        if log is not None:
+            log.set_university(self.university_qid)
 
         direct_children = self.get_existing_children()
         direct_qids = {qid for qid, _ in direct_children}
@@ -150,6 +153,7 @@ class Discovery:
         except ValueError as e:
             console.print(f"[red]Error: {e}[/red]")
             raise
+        extraction_call_id = llm_helpers.last_extraction_call_id
         logger.info(
             "%s: %d direct children, %d LLM candidates",
             self.university_qid, len(direct_children), len(divisions),
@@ -168,6 +172,7 @@ class Discovery:
 
             # step 1: fuzzy match against directly linked children (main label + altLabels)
             matched = None
+            match_method, choices, match_call_ids = "fuzzy", [], []
             for qid, label in direct_children:
                 alt_labels = alt_labels_map.get(qid, [])
                 all_names = [label] + alt_labels
@@ -188,6 +193,8 @@ class Discovery:
                 choices = direct_children + [
                     (qid, lbl) for qid, lbl in qsearch_hits if qid not in direct_qids
                 ]
+                match_method = "llm" if choices else "none"
+                llm_helpers.last_match_call_ids = []
                 try:
                     matched = LLMHelper.choose_match(name, self.university_label, choices)
                 except LLMUnavailable as e:
@@ -196,6 +203,8 @@ class Discovery:
                     logger.warning("No match decision for '%s' (%s); leaving it unresolved", name, e)
                     matched = None
                     search_failed = True
+                finally:
+                    match_call_ids = [c for c in llm_helpers.last_match_call_ids if c]
 
             # step 3: classify the outcome
             if matched is None and search_failed:
@@ -264,6 +273,11 @@ class Discovery:
                     counts["exists_linked"] += 1
 
             table.add_row(name, status)
+            if log is not None:
+                log.add_candidate(**candidate_row(
+                    self.university_qid, division, name, status, matched, match_method,
+                    choices, direct_qids, [c for c in (extraction_call_id, *match_call_ids) if c],
+                    llm_helpers.last_extraction_provider))
 
         console.print(table)
 
@@ -316,6 +330,29 @@ class Discovery:
 
         return missing
     
+def candidate_row(university_qid: str, division: Dict[str, Any], name: str, status: str,
+                  matched, match_method: str, choices: List[Tuple[str, str]], direct_qids: set,
+                  llm_call_ids: List[str], provider) -> Dict[str, Any]:
+    """The candidates row (run log) for one proposed unit. `status` is the console
+    status text ("exists_linked -> Q1 (...)", "missing", ...); it is mapped to linked,
+    orphan, missing, or unresolved. Pure function, unit tested."""
+    kind = status.split(" ", 1)[0]
+    row_status = {"exists_linked": "linked", "exists_orphan": "orphan"}.get(kind, kind)
+    matched_qid = matched_label = None
+    if matched is not None:
+        matched_qid = matched[0].split(":", 1)[1] if matched[0].startswith("ORPHAN:") else matched[0]
+        matched_label = matched[1]
+    return {
+        "parent_qid": university_qid, "parent_candidate_id": None, "name": name,
+        "unit_type": division.get("unit_type"), "status": row_status,
+        "matched_qid": matched_qid, "matched_label": matched_label, "match_method": match_method,
+        "match_choices": [{"qid": q, "label": l, "source": "linked_child" if q in direct_qids else "search"}
+                          for q, l in choices],
+        "source_url": division.get("reference"), "website": division.get("website"),
+        "provider": provider, "llm_call_ids": llm_call_ids, "evidence_ids": [],
+    }
+
+
 #helper functions for matching logic
 def clear_exports(qid: str, results_dir: Path = None) -> int:
     """Remove the CSV and QuickStatements files an earlier run wrote for this

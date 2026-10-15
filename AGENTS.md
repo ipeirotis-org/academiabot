@@ -21,6 +21,7 @@ academiabot/
 │   ├── wikidata_api.py          # wbsearchentities wrapper
 │   ├── to_qs_wikidata.py        # Export missing entities as QuickStatements
 │   ├── batch.py                 # Resumable batch over many QIDs; uploads every artifact to the bucket
+│   ├── run_log.py               # Run log: BigQuery rows, texts in the bucket, local JSON fallback
 │   ├── cloud/collect_function.py # Cloud Function (gen 2) entry point: one time slice of a run, on a schedule
 │   ├── requirements.txt
 │   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness
@@ -30,7 +31,8 @@ academiabot/
 │       └── batch_collect.py                # CLI wrapper around batch.py
 ├── deploy/                      # deploy_collect_function.sh: Cloud Function + paused half-hourly Scheduler job
 ├── SPECS.md                     # Full build spec for each week of TASKS.md (students read the short version)
-├── docs/                        # BACKGROUND.md (origins, decisions), LITERATURE.md (research behind the plan);
+├── docs/                        # BACKGROUND.md (origins, decisions), LITERATURE.md (research behind the plan),
+│                                #   RUN_LOG_SCHEMA.md (the 4 run-log tables, for readers);
 │                                #   later MODELING_RULES.md, REVIEW_GUIDE.md, REVIEW_PROTOCOL.md
 ├── tests/                       # pytest unit tests (fuzzy matching)
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
@@ -163,6 +165,12 @@ are part of the weekly tasks. So:
 - At the end of a session: tick the boxes you completed in `TASKS.md`, add anything a future agent needs to this file, and leave the student a three-line summary.
 - Never upload to Wikidata, never run QuickStatements batches, never write to the Wikidata API. Humans do that step.
 - Never commit `.env` or any API key.
+- Never move, overwrite, or delete files in `wikidata_discover/results/cache`. Answers cached
+  before 2026-10-14 have no raw response, so the cache file is the only copy. A fresh call
+  saves its answer under the same file name and replaces the old answer. To force a fresh LLM
+  call in a test, set `ACADEMIABOT_CACHE_DIR` to a separate, empty folder. (On 2026-10-14 an
+  agent moved the cache aside for a test, and the fresh NYU answer replaced the old one. The
+  old answer was restored from `gs://academiabot/runs/us-tier1/cache/`.)
 - One milestone per branch and pull request.
 
 ## Coding conventions
@@ -275,12 +283,44 @@ it's Y", "dive into", or "robust".
 - **New team members:** The agent handles onboarding via the cloud-bootstrap "Add Team Member" flow
 - **Permission escalation:** Ask the agent to escalate; it will propose roles and ask you to approve via `gcloud`
 
-## Run log (planned, Anya week 2)
+## Run log (first four tables built in Anya's week 2)
 
-Every run must be reproducible. Anya's week 2 creates the first four tables below in dataset
+Every run must be reproducible. The first four tables below are in dataset
 `academiabot` of project `wikidata-academia`, with large text in Cloud Storage and the GCS path
 kept in the row. The other three come later and are specified here so both tracks build to the
 same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, week 7).
+
+How it works today (`wikidata_discover/run_log.py`; every column is explained in
+`docs/RUN_LOG_SCHEMA.md`, and a test fails when a column is missing there):
+
+- `discover` makes a new run_id (`discover-<UTC time>-<6 hex>`) per command; the batch runner and
+  the Cloud Function use their own run_id and invocation_id. One `runs` row per invocation,
+  written at the end.
+- Every LLM call adds an `llm_calls` row: purpose `extract`, `match`, or `judge`, one row per
+  attempt, failed attempts included with `error`. The prompt goes to
+  `gs://academiabot/runs/<run_id>/llm_calls/<llm_call_id>/prompt.json` and the raw response to
+  `response.txt` next to it, before the answer is parsed. OpenAI, Anthropic, and Gemini responses
+  are saved as the SDK's full JSON (OpenAI's includes the web search calls). A match prompt
+  includes `choices`: every Wikidata item the model was shown.
+- A cache hit also adds a row, with `cache_hit` true. A fresh call leaves `<cache key>.meta.json`
+  next to the cache file, so a later hit points to the original call (`cached_from_llm_call_id`,
+  same `response_path`). Answers cached before 2026-10-14 have no meta file: their rows have
+  `raw_response_available` false and a note saying no raw response exists.
+- Every unit the LLM proposes adds a `candidates` row: linked, orphan, missing, or unresolved,
+  with `match_method` (fuzzy, llm, none), `match_choices` (each choice with source
+  `linked_child` or `search`), `source_url` (the answer's `reference` URL), and the extract and
+  match `llm_call_ids`.
+- `evidence` exists but stays empty until pages are fetched (Anya's week 4). `add_evidence()` is
+  ready for it.
+- Fallback: when the bucket or BigQuery fails, the failure is kept for the rest of the
+  invocation, and rows and texts go to `results/runs/<run_id>/runlog/<invocation_id>/`
+  (`runs.jsonl`, `llm_calls.jsonl`, `evidence.jsonl`, `candidates.jsonl`, `text/`). The runs row
+  names the failure in `storage_problems`. Nothing copies these files to BigQuery later yet;
+  ids are unique, so a later import can skip rows already there.
+- `ACADEMIABOT_BUCKET` and `ACADEMIABOT_DATASET` override the bucket and dataset (used to test the
+  fallback). Runs never create tables. `python -m wikidata_discover.run_log setup` creates the
+  dataset and tables once; it was run on 2026-10-14. A new column needs a schema change there too.
+- Tests never touch the real run log: `tests/conftest.py` sets `run_log.DISABLED`.
 
 | Table | One row per | Must contain |
 |---|---|---|
@@ -550,13 +590,19 @@ def get_secret(secret_id: str, project_id: str = "wikidata-academia") -> str:
 gcloud secrets versions access latest --secret=openai-api-key --project=wikidata-academia
 ```
 
-**Key resolution order** (`config.load_missing_keys()`, called by `discover` and the eval harness;
-the batch runner uses its own loader in `batch.py`, which also picks up rotated keys):
-1. Environment variable (e.g., `OPENAI_API_KEY`)
-2. `.env` file (loaded into the environment when `config` is imported)
-3. Secret Manager, for each key still missing. This is how Claude Code on the web sessions get
-   keys: the SessionStart hook activates the service account, and the service account can read
-   the secrets. Without Google credentials the step prints one warning and the key stays missing.
+**Key resolution order** (`config.load_missing_keys()`, called by the eval harness and, through
+`config.load_api_keys()`, by `discover`; the batch runner uses its own loader in `batch.py`, which
+also picks up rotated keys):
+1. Environment variable (e.g., `OPENAI_API_KEY`) -- for local dev and CI
+2. `.env` file (loaded into the environment when `config` is imported). `load_dotenv()` never
+   overrides a variable that is already set, so the environment wins.
+3. Secret Manager, for each key still missing. It is not contacted when all three keys are set
+   locally. This is how Claude Code on the web sessions get keys: the SessionStart hook
+   activates the service account, and the service account can read the secrets. Without
+   Google credentials the step prints one warning and the key stays missing.
+
+The runs row records where each key came from (`key_sources` in `config`: `env`, `dotenv`,
+`secret_manager`, or `missing`), never the key.
 
 **Rotating a key**: Create a new version, then disable the old one:
 ```bash
