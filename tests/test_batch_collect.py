@@ -27,6 +27,22 @@ def test_artifact_paths_exact_names_and_freshness(tmp_path):
     assert "missing_divisions_Q12.csv" not in paths     # different QID
 
 
+
+def test_artifact_paths_keeps_a_fresh_file_whose_time_is_a_little_late(tmp_path):
+    """A file system can store the modification time a few ms behind time.time().
+    A report written right after the start must still be uploaded; a report from an
+    earlier attempt (10 s before the start) must not."""
+    results, run_dir = tmp_path, tmp_path / "runs" / "r1"
+    run_dir.mkdir(parents=True); (results / "reports").mkdir()
+    since = time.time()
+    fresh = results / "reports" / "Q1_report.json"; fresh.write_text("{}")
+    os.utime(fresh, (since - 0.005, since - 0.005))
+    stale = results / "missing_divisions_Q1.csv"; stale.write_text("old")
+    os.utime(stale, (since - 10, since - 10))
+    paths = {p.name for p in artifact_paths(results, run_dir, "Q1", since=since)}
+    assert "Q1_report.json" in paths
+    assert "missing_divisions_Q1.csv" not in paths
+
 def test_load_done_requires_ok_and_uploaded(tmp_path):
     log = tmp_path / "log.jsonl"
     log.write_text("\n".join(json.dumps(r) for r in [

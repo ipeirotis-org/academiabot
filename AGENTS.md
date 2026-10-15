@@ -243,6 +243,10 @@ it's Y", "dive into", or "robust".
 15. Extraction proposes non-academic units (career services, student affairs) and campuses as
     schools. About 10 of the 40 spot-checked "missing" rows. `docs/MODELING_RULES.md` (week 4)
     decides how each is handled
+16. ~~`artifact_paths()` could skip a fresh report: it kept a file only if its modification time
+    was at or after the start time, but some file systems store that time a few milliseconds
+    late. `test_run_batch_uploads_log_under_run_prefix_and_dedupes` failed in the Codespace~~
+    Fixed (2026-10-15): a 2 s margin (`MTIME_SLACK_S` in `batch.py`), with a test
 
 ## Cloud Credentials
 

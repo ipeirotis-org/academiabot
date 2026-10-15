@@ -28,17 +28,24 @@ PROJECT = config.GCP_PROJECT
 SECRETS = list(config.KEY_SECRETS.items())
 
 
+# Some file systems store a file's modification time a few milliseconds behind the
+# clock that time.time() reads, so a file written just after `since` can look older.
+# A margin of 2 s keeps those files. An output from an earlier attempt is minutes old.
+MTIME_SLACK_S = 2.0
+
+
 def artifact_paths(results_dir: Path, run_dir: Path, qid: str, since: float, extra=()):
     """Files to upload for one QID: everything in the run folder, the QID's own CSV,
-    QuickStatements file and report if modified at or after `since`, plus `extra`
-    (the cache files this QID's discovery read or wrote). Exact names only, so stale
-    outputs from earlier runs for the same QID are never attributed to this run."""
+    QuickStatements file and report if modified at or after `since` (less
+    MTIME_SLACK_S), plus `extra` (the cache files this QID's discovery read or wrote).
+    Exact names only, so stale outputs from earlier runs for the same QID are never
+    attributed to this run."""
     exact = [
         results_dir / f"missing_divisions_{qid}.csv",
         results_dir / f"quickstatements_{qid}.qs",
         results_dir / "reports" / f"{qid}_report.json",
     ]
-    fresh = [p for p in exact if p.is_file() and p.stat().st_mtime >= since]
+    fresh = [p for p in exact if p.is_file() and p.stat().st_mtime >= since - MTIME_SLACK_S]
     run_files = [p for p in run_dir.rglob("*") if p.is_file()]
     extra_files = [Path(p) for p in extra if Path(p).is_file()]
     return run_files + fresh + extra_files
