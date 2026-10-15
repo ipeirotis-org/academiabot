@@ -74,8 +74,8 @@ Read these three files, in this order. They are short.
 git clone https://github.com/ipeirotis-org/academiabot.git
 cd academiabot
 pip install -r wikidata_discover/requirements.txt -r wikidata_discover/cloud/requirements.txt pytest
-cp env.example .env          # then put at least one LLM API key in .env (ask Panos)
-python -m pytest tests -q    # all 142 tests must pass
+cp env.example .env          # keys come from Secret Manager; see Configuration
+python -m pytest tests -q    # all 147 tests must pass
 python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210   # NYU
 ```
 
@@ -117,7 +117,10 @@ work. The list of what does not work yet is in TASKS.md, section 1.
 
 ## Configuration
 
-Copy `env.example` to `.env`. At least one LLM key is required.
+Copy `env.example` to `.env`. At least one LLM key is required. `discover` and the eval harness
+read each key from GCP Secret Manager when the environment and `.env` do not set it. In Claude
+Code on the web, this works after your cloud credentials are set up (ask the agent to run the
+cloud-bootstrap skill). Do not paste a key into a chat, an email, or a file in the repo.
 
 | Variable | Purpose |
 |---|---|

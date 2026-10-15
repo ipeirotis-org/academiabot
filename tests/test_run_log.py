@@ -304,20 +304,19 @@ def test_discovery_writes_a_candidate_row_for_every_unit(make_log, monkeypatch, 
 # ── API keys ────────────────────────────────────────────────────────────
 
 def test_keys_set_locally_never_contact_secret_manager(monkeypatch):
-    import wikidata_discover.batch as batch
     for name in config.API_KEY_NAMES:
         monkeypatch.setenv(name, "k")
-    monkeypatch.setattr(batch, "load_keys_from_secret_manager", lambda: pytest.fail("Secret Manager contacted"))
+    monkeypatch.setattr(config, "_new_secret_client", lambda: pytest.fail("Secret Manager contacted"))
     assert set(config.load_api_keys().values()) <= {"env", "dotenv"}
 
 
 def test_a_key_missing_locally_comes_from_secret_manager(monkeypatch):
-    import wikidata_discover.batch as batch
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setattr(config, "_ENV_BEFORE_DOTENV", {"OPENAI_API_KEY"})
-    monkeypatch.setattr(batch, "load_keys_from_secret_manager", lambda: {
+    # load_missing_keys() (from master) does the loading; load_api_keys() keeps "env".
+    monkeypatch.setattr(config, "load_missing_keys", lambda: {
         "OPENAI_API_KEY": "env", "ANTHROPIC_API_KEY": "secret_manager", "GOOGLE_API_KEY": "missing"})
     assert config.load_api_keys() == {"OPENAI_API_KEY": "env", "ANTHROPIC_API_KEY": "secret_manager",
                                       "GOOGLE_API_KEY": "missing"}
