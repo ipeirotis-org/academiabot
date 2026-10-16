@@ -289,7 +289,7 @@ def _hungarian(cost: List[List[float]]) -> Dict[int, int]:
     """Minimum-cost assignment for an n x m matrix with n <= m. Returns row -> column."""
     n, m = len(cost), len(cost[0])
     inf = float("inf")
-    u, v = [0.0] * (n + 1), [0.0] * (m + 1)
+    u, v = [0] * (n + 1), [0] * (m + 1)
     p, way = [0] * (m + 1), [0] * (m + 1)
     for i in range(1, n + 1):
         p[0], j0 = i, 0
@@ -323,22 +323,29 @@ def _hungarian(cost: List[List[float]]) -> Dict[int, int]:
 def _match_pairs(pairs):
     """The best one-to-one assignment.
 
-    pairs: (same_parent, similarity, p_index, t_index), one per allowed pair. The
-    assignment has, in this order of priority: the most pairs, then the most pairs
-    under the same parent, then the highest total name similarity.
+    pairs: (same_parent, similarity, p_index, t_index[, same_qid]), one per allowed pair.
+    The assignment has, in this order of priority: the most pairs, then the most pairs
+    under the same parent, then the highest total name similarity, then the most pairs
+    whose QIDs agree. The weights are whole numbers, so each step is exact.
     """
     if not pairs:
         return []
-    props = sorted({pi for _, _, pi, _ in pairs})
-    trues = sorted({ti for _, _, _, ti in pairs})
-    n = max(len(props), len(trues)) + 1
-    same_w = 102.0 * n            # beats any sum of similarities (each at most 101)
-    pair_w = (same_w + 102.0) * n  # beats any sum of same-parent and similarity weights
-    weight = {(pi, ti): pair_w + (same_w if same else 0.0) + sim for same, sim, pi, ti in pairs}
+    pairs = [tuple(x) + (False,) * (5 - len(x)) for x in pairs]
+    props = sorted({x[2] for x in pairs})
+    trues = sorted({x[3] for x in pairs})
+    n = max(len(props), len(trues)) + 1  # more than the pairs in any assignment
+    top = 101_000                        # similarity is at most 101, kept to 3 decimals
+    sim_w = n                            # beats any sum of QID agreements
+    same_w = n * (top * sim_w + 1)       # beats any sum of the two weights below it
+    pair_w = n * (same_w + top * sim_w + 1)
+    weight = {
+        (pi, ti): pair_w + (same_w if same else 0) + round(sim * 1000) * sim_w + (1 if q else 0)
+        for same, sim, pi, ti, q in pairs
+    }
 
     rows, cols = (props, trues) if len(props) <= len(trues) else (trues, props)
     flip = rows is trues
-    cost = [[-weight.get((c, r) if flip else (r, c), 0.0) for c in cols] for r in rows]
+    cost = [[-weight.get((c, r) if flip else (r, c), 0) for c in cols] for r in rows]
     out = []
     for ri, ci in _hungarian(cost).items():
         pi, ti = (cols[ci], rows[ri]) if flip else (rows[ri], cols[ci])
@@ -350,7 +357,12 @@ def _match_pairs(pairs):
 def _prf(tp: float, n_pred: float, n_true: float):
     p = tp / n_pred if n_pred else None
     r = tp / n_true if n_true else None
-    f = 2 * p * r / (p + r) if p and r else (0.0 if p is not None and r is not None else None)
+    if p and r:
+        f = 2 * p * r / (p + r)
+    elif p == 0 or r == 0:
+        f = 0.0  # nothing right: an empty list against a real answer key scores 0, not n/a
+    else:
+        f = None
     return p, r, f
 
 
@@ -397,14 +409,15 @@ def score(truth: GroundTruth, proposed: ProposedList, parent: Optional[str] = No
     matched_t: Dict[int, int] = {}  # proposed index -> truth index
 
     # One assignment over all name matches: the most pairs, then the most pairs under the
-    # same parent, then the most similar names (see _match_pairs).
+    # same parent, then the most similar names, then agreeing QIDs (see _match_pairs).
     pairs = []
     for i in open_p:
         for j, t in enumerate(true_rows):
             if not dept_names_match(props[i].name, t.name):
                 continue
             same = not use_parents or t.parent == resolved[i]
-            pairs.append((same, _similarity(props[i].name, t.name), i, j))
+            same_qid = proposed.has_qids and t.qid is not None and props[i].qid == t.qid
+            pairs.append((same, _similarity(props[i].name, t.name), i, j, same_qid))
     for i, j in _match_pairs(pairs):
         matched_t[i] = j
         same = not use_parents or true_rows[j].parent == resolved[i]

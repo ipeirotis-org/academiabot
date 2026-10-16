@@ -428,14 +428,14 @@ def test_matching_equals_brute_force_on_random_cases():
     rng = random.Random(7)
     for _ in range(300):
         n_p, n_t = rng.randint(1, 4), rng.randint(1, 4)
-        pairs = [(rng.random() < 0.5, float(rng.choice([80, 90, 101])), i, j)
+        pairs = [(rng.random() < 0.5, rng.choice([80.0, 85.714, 90.0, 101.0]), i, j, rng.random() < 0.5)
                  for i in range(n_p) for j in range(n_t) if rng.random() < 0.6]
-        allowed = {(i, j): (same, sim) for same, sim, i, j in pairs}
+        allowed = {(i, j): (same, round(sim * 1000), q) for same, sim, i, j, q in pairs}
 
         def key(match):
-            return (len(match), sum(allowed[m][0] for m in match), sum(allowed[m][1] for m in match))
+            return (len(match),) + tuple(sum(allowed[m][k] for m in match) for k in range(3))
 
-        best = (0, 0, 0.0)
+        best = (0, 0, 0, 0)
         for k in range(min(n_p, n_t) + 1):
             for ps in itertools.permutations(range(n_p), k):
                 for ts in itertools.permutations(range(n_t), k):
@@ -443,6 +443,29 @@ def test_matching_equals_brute_force_on_random_cases():
                     if all(m in allowed for m in match):
                         best = max(best, key(match))
         assert key(ds._match_pairs(pairs)) == best
+
+
+def test_qid_breaks_a_tie_between_two_schools():
+    # Economics under Stern and under Steinhardt; the list puts it under Courant with
+    # Steinhardt's QID. Both rows are equally good by name, so the QID decides.
+    gt = ds.parse_ground_truth([
+        {"parent": "Stern", "name": "Economics", "type": "d", "source_url": "https://a", "qid": "Q1"},
+        {"parent": "Steinhardt", "name": "Economics", "type": "d", "source_url": "https://b", "qid": "Q2"},
+        {"parent": "Courant", "name": "Mathematics", "type": "d", "source_url": "https://c", "qid": "Q3"},
+    ])
+    m = run(gt, [{"name": "Economics", "parent": "Courant", "qid": "Q2"}])
+    assert m["n_wrong_parent"] == 1
+    assert m["alignment_accuracy"] == 1.0
+
+
+def test_empty_list_scores_zero_not_na(truth, tmp_path):
+    empty = tmp_path / "empty_list.csv"
+    empty.write_text("name,parent,qid\n")
+    m = ds.score(truth, ds.load_proposed(empty)).metrics
+    assert m["name_precision"] is None
+    for k in ("name", "edge", "ancestor"):
+        assert m[f"{k}_recall"] == 0.0
+        assert m[f"{k}_f1"] == 0.0
 
 
 def test_malformed_csv_is_an_input_error(tmp_path):
