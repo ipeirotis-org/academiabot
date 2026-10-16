@@ -388,3 +388,49 @@ def test_a_free_row_is_taken_before_any_match_moves(truth):
     m = run(gt, recs)
     assert m["n_wrong_parent"] == 1
     assert m["edge_precision"] == pytest.approx(N / (N + 1))
+
+
+def test_ties_in_count_keep_the_most_right_schools():
+    # Codex's example: 0->1 and 1->0 keep both parents right; 0->0 and 1->2 keep one.
+    pairs = [(True, 100.0, 0, 0), (True, 100.0, 0, 1), (True, 100.0, 1, 0), (False, 100.0, 1, 2)]
+    assert ds._match_pairs(pairs) == [(0, 1), (1, 0)]
+
+
+def test_most_pairs_beats_right_school_and_similarity():
+    # 2 pairs (one under another school) beat 1 exact same-school pair.
+    pairs = [(True, 101.0, 0, 0), (True, 90.0, 0, 1), (False, 90.0, 1, 0)]
+    assert ds._match_pairs(pairs) == [(0, 1), (1, 0)]
+
+
+def test_similarity_breaks_the_last_tie():
+    pairs = [(True, 101.0, 0, 0), (True, 90.0, 0, 1), (True, 90.0, 1, 0), (True, 101.0, 1, 1)]
+    assert ds._match_pairs(pairs) == [(0, 0), (1, 1)]
+
+
+def test_matching_with_more_true_rows_than_proposals():
+    pairs = [(True, 101.0, 0, 3), (True, 95.0, 0, 1)]
+    assert ds._match_pairs(pairs) == [(0, 3)]
+
+
+def test_matching_equals_brute_force_on_random_cases():
+    import itertools
+    import random
+
+    rng = random.Random(7)
+    for _ in range(300):
+        n_p, n_t = rng.randint(1, 4), rng.randint(1, 4)
+        pairs = [(rng.random() < 0.5, float(rng.choice([80, 90, 101])), i, j)
+                 for i in range(n_p) for j in range(n_t) if rng.random() < 0.6]
+        allowed = {(i, j): (same, sim) for same, sim, i, j in pairs}
+
+        def key(match):
+            return (len(match), sum(allowed[m][0] for m in match), sum(allowed[m][1] for m in match))
+
+        best = (0, 0, 0.0)
+        for k in range(min(n_p, n_t) + 1):
+            for ps in itertools.permutations(range(n_p), k):
+                for ts in itertools.permutations(range(n_t), k):
+                    match = list(zip(ps, ts))
+                    if all(m in allowed for m in match):
+                        best = max(best, key(match))
+        assert key(ds._match_pairs(pairs)) == best

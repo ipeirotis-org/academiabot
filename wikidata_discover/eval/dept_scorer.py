@@ -21,7 +21,8 @@ Matching rules (SPECS.md, Shuo week 2):
   true department of the same name under another school. That counts as found for
   name recall, but its parent link is wrong (edge F1), and it gets 1 of its 2
   ancestors right (ancestor F1).
-- The assignment finds as many one-to-one pairs as possible.
+- The assignment finds the most one-to-one pairs. Among those, it keeps the most pairs
+  under the same parent, and then the most similar names.
 """
 
 import argparse
@@ -271,39 +272,66 @@ def _resolve_parent(name: str, truth_parents: List[str]) -> Optional[str]:
     return None
 
 
+def _hungarian(cost: List[List[float]]) -> Dict[int, int]:
+    """Minimum-cost assignment for an n x m matrix with n <= m. Returns row -> column."""
+    n, m = len(cost), len(cost[0])
+    inf = float("inf")
+    u, v = [0.0] * (n + 1), [0.0] * (m + 1)
+    p, way = [0] * (m + 1), [0] * (m + 1)
+    for i in range(1, n + 1):
+        p[0], j0 = i, 0
+        minv, used = [inf] * (m + 1), [False] * (m + 1)
+        while True:
+            used[j0] = True
+            i0, delta, j1 = p[j0], inf, 0
+            for j in range(1, m + 1):
+                if not used[j]:
+                    cur = cost[i0 - 1][j - 1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j], way[j] = cur, j0
+                    if minv[j] < delta:
+                        delta, j1 = minv[j], j
+            for j in range(m + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while j0:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+    return {p[j] - 1: j - 1 for j in range(1, m + 1) if p[j]}
+
+
 def _match_pairs(pairs):
-    """One-to-one matching with as many pairs as possible.
+    """The best one-to-one assignment.
 
-    pairs: (score, p_index, t_index). Proposals are tried best score first, and each
-    takes its best free true row. When none is free, another proposal moves to a
-    different row if that frees one (augmenting paths), so overlapping names never
-    lower the number of matches.
+    pairs: (same_parent, similarity, p_index, t_index), one per allowed pair. The
+    assignment has, in this order of priority: the most pairs, then the most pairs
+    under the same parent, then the highest total name similarity.
     """
-    options: Dict[int, List[int]] = {}
-    for _, pi, ti in sorted(pairs, key=lambda x: (-x[0], x[1], x[2])):
-        options.setdefault(pi, []).append(ti)
-    owner: Dict[int, int] = {}  # true index -> proposed index
+    if not pairs:
+        return []
+    props = sorted({pi for _, _, pi, _ in pairs})
+    trues = sorted({ti for _, _, _, ti in pairs})
+    n = max(len(props), len(trues)) + 1
+    same_w = 102.0 * n            # beats any sum of similarities (each at most 101)
+    pair_w = (same_w + 102.0) * n  # beats any sum of same-parent and similarity weights
+    weight = {(pi, ti): pair_w + (same_w if same else 0.0) + sim for same, sim, pi, ti in pairs}
 
-    def assign(pi, seen):
-        # A free row first, best score first. Only then move another proposal, so a
-        # match changes only when that finds one more pair.
-        for ti in options[pi]:
-            if ti not in owner and ti not in seen:
-                seen.add(ti)
-                owner[ti] = pi
-                return True
-        for ti in options[pi]:
-            if ti in seen:
-                continue
-            seen.add(ti)
-            if assign(owner[ti], seen):
-                owner[ti] = pi
-                return True
-        return False
-
-    for pi in options:
-        assign(pi, set())
-    return sorted((pi, ti) for ti, pi in owner.items())
+    rows, cols = (props, trues) if len(props) <= len(trues) else (trues, props)
+    flip = rows is trues
+    cost = [[-weight.get((c, r) if flip else (r, c), 0.0) for c in cols] for r in rows]
+    out = []
+    for ri, ci in _hungarian(cost).items():
+        pi, ti = (cols[ci], rows[ri]) if flip else (rows[ri], cols[ci])
+        if (pi, ti) in weight:
+            out.append((pi, ti))
+    return sorted(out)
 
 
 def _prf(tp: float, n_pred: float, n_true: float):
@@ -355,17 +383,15 @@ def score(truth: GroundTruth, proposed: ProposedList, parent: Optional[str] = No
     open_p = [i for i in range(len(props)) if status[i] is None]
     matched_t: Dict[int, int] = {}  # proposed index -> truth index
 
-    # One assignment over all name matches. A pair under the same parent is always tried
-    # before a pair under another school, but a match may move to another school when that
-    # lets one more department be found.
-    SAME_PARENT_BONUS = 1000.0
+    # One assignment over all name matches: the most pairs, then the most pairs under the
+    # same parent, then the most similar names (see _match_pairs).
     pairs = []
     for i in open_p:
         for j, t in enumerate(true_rows):
             if not dept_names_match(props[i].name, t.name):
                 continue
             same = not use_parents or t.parent == resolved[i]
-            pairs.append((_similarity(props[i].name, t.name) + (SAME_PARENT_BONUS if same else 0.0), i, j))
+            pairs.append((same, _similarity(props[i].name, t.name), i, j))
     for i, j in _match_pairs(pairs):
         matched_t[i] = j
         same = not use_parents or true_rows[j].parent == resolved[i]
