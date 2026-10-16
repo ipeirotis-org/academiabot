@@ -1,0 +1,11 @@
+parent,name,type,source_url,qid
+Stern School of Business,Department of Finance,department,https://www.stern.nyu.edu/faculty/departments/finance,Q1000001
+Stern School of Business,Department of Marketing,department,https://www.stern.nyu.edu/faculty/departments/marketing,Q1000002
+Stern School of Business,Department of Economics,department,https://www.stern.nyu.edu/faculty/departments/economics,Q1000003
+Stern School of Business,Department of Accounting,department,https://www.stern.nyu.edu/faculty/departments/accounting,none
+Courant Institute of Mathematical Sciences,Department of Mathematics,department,https://math.nyu.edu,Q1000005
+Courant Institute of Mathematical Sciences,Department of Computer Science,department,https://cs.nyu.edu,Q1000006
+"Steinhardt School of Culture, Education, and Human Development",Department of Economics,department,https://steinhardt.nyu.edu/example/economics,none
+"Steinhardt School of Culture, Education, and Human Development",Department of Teaching and Learning,department,https://steinhardt.nyu.edu/teachlearn,Q1000008
+"Steinhardt School of Culture, Education, and Human Development",Department of Music and Performing Arts Professions,department,https://steinhardt.nyu.edu/mpap,Q1000009
+"Steinhardt School of Culture, Education, and Human Development",Department of Applied Psychology,department,https://steinhardt.nyu.edu/appsych,none
