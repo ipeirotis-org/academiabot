@@ -210,7 +210,9 @@ def parse_proposed(records: List[Dict[str, str]], columns: Optional[Sequence[str
     for i, rec in enumerate(records, start=2):
         name = (rec.get(name_col) or "").strip()
         if not name:
-            continue  # an empty line is not a proposal
+            if any((v or "").strip() for v in rec.values()):
+                problems.append(f"row {i}: name is empty")
+            continue  # a fully empty line is not a proposal
         parent = (rec.get("parent") or "").strip() if has_parents else None
         if has_parents and not parent:
             problems.append(f"row {i}: parent is empty")
@@ -265,16 +267,32 @@ def _resolve_parent(name: str, truth_parents: List[str]) -> Optional[str]:
     return None
 
 
-def _greedy_pairs(pairs):
-    """pairs: (score, p_index, t_index). Highest score first, then input order."""
-    used_p, used_t, out = set(), set(), []
+def _match_pairs(pairs):
+    """One-to-one matching with as many pairs as possible.
+
+    pairs: (score, p_index, t_index). Proposals are tried best score first, and each
+    tries its true rows best score first. A taken true row is moved to another row of
+    its proposal when that frees it (augmenting paths), so overlapping names never
+    lower the number of matches.
+    """
+    options: Dict[int, List[int]] = {}
     for _, pi, ti in sorted(pairs, key=lambda x: (-x[0], x[1], x[2])):
-        if pi in used_p or ti in used_t:
-            continue
-        used_p.add(pi)
-        used_t.add(ti)
-        out.append((pi, ti))
-    return out
+        options.setdefault(pi, []).append(ti)
+    owner: Dict[int, int] = {}  # true index -> proposed index
+
+    def assign(pi, seen):
+        for ti in options[pi]:
+            if ti in seen:
+                continue
+            seen.add(ti)
+            if ti not in owner or assign(owner[ti], seen):
+                owner[ti] = pi
+                return True
+        return False
+
+    for pi in options:
+        assign(pi, set())
+    return sorted((pi, ti) for ti, pi in owner.items())
 
 
 def _prf(tp: float, n_pred: float, n_true: float):
@@ -333,7 +351,7 @@ def score(truth: GroundTruth, proposed: ProposedList, parent: Optional[str] = No
         for j, t in enumerate(true_rows)
         if (not use_parents or t.parent == resolved[i]) and dept_names_match(props[i].name, t.name)
     ]
-    for i, j in _greedy_pairs(pairs):
+    for i, j in _match_pairs(pairs):
         matched_t[i] = j
         status[i] = FOUND
 
@@ -347,7 +365,7 @@ def score(truth: GroundTruth, proposed: ProposedList, parent: Optional[str] = No
             for j, t in enumerate(true_rows)
             if j not in used_t and dept_names_match(props[i].name, t.name)
         ]
-        for i, j in _greedy_pairs(pairs):
+        for i, j in _match_pairs(pairs):
             matched_t[i] = j
             status[i] = WRONG_PARENT
 

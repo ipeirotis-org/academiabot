@@ -337,3 +337,23 @@ def test_parent_that_fuzzy_matches_two_schools_is_not_guessed():
     parents = ["College of Arts and Sciences", "School of Arts and Sciences"]
     assert ds._resolve_parent("Arts and Sciences", parents) is None
     assert ds._resolve_parent("School of Arts and Sciences", parents) == "School of Arts and Sciences"
+
+
+def test_overlapping_names_still_give_the_most_matches():
+    gt = ds.parse_ground_truth([
+        {"parent": "S", "name": n, "type": "d", "source_url": "https://a", "qid": "none"}
+        for n in ("Chemical Engineering", "Chemical Engineering Studies")])
+    recs = [{"name": "Chemical Engineering", "parent": "S"},
+            {"name": "Chemical Engineering Analytics", "parent": "S"}]
+    assert run(gt, recs)["n_found"] == 2
+
+
+def test_exact_names_keep_their_pair_when_nothing_conflicts(truth):
+    res = ds.score(truth, ds.parse_proposed(as_records(truth)))
+    assert all(d["proposed_name"] == d["true_name"] for d in res.details)
+
+
+def test_row_with_data_but_no_name_is_rejected():
+    with pytest.raises(ds.InputError, match="row 3: name is empty"):
+        ds.parse_proposed([{"name": "Finance", "parent": "Stern"}, {"name": "", "parent": "Stern"}])
+    assert len(ds.parse_proposed([{"name": "Finance", "parent": "Stern"}, {"name": "", "parent": ""}]).rows) == 1
