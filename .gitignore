@@ -75,3 +75,4 @@ wikidata_discover/results/cache/
 wikidata_discover/results/reports/
 wikidata_discover/results/missing_divisions_*.csv
 wikidata_discover/results/quickstatements_*.qs
+wikidata_discover/results/dept_scores/
