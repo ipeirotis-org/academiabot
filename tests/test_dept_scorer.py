@@ -379,6 +379,15 @@ def test_empty_file_is_an_input_error(tmp_path):
     assert ds.main(["--truth", str(empty), "--proposed", str(empty)]) == 1
 
 
+def test_missing_file_is_an_input_error(tmp_path):
+    missing = tmp_path / "no_such_file.csv"
+    with pytest.raises(ds.InputError, match="the file does not exist"):
+        ds.load_ground_truth(missing)
+    with pytest.raises(ds.InputError, match="the file cannot be read"):
+        ds.load_proposed(tmp_path)
+    assert ds.main(["--truth", str(missing), "--proposed", str(missing)]) == 1
+
+
 def test_a_free_row_is_taken_before_any_match_moves(truth):
     # Check 5 on the real file: the Stern Economics keeps its own row.
     gt = with_two_economics(truth)

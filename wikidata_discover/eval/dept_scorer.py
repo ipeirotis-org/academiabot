@@ -141,6 +141,10 @@ def _read_csv(path: Path):
     """Return (column names, rows). A file with only a header has columns but no rows."""
     try:
         df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    except FileNotFoundError:
+        raise InputError(str(path), ["the file does not exist"])
+    except (IsADirectoryError, PermissionError) as e:
+        raise InputError(str(path), [f"the file cannot be read ({type(e).__name__})"])
     except pd.errors.EmptyDataError:
         raise InputError(str(path), ["the file is empty"])
     except (pd.errors.ParserError, UnicodeDecodeError) as e:
