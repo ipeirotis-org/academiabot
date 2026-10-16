@@ -17,10 +17,11 @@ Matching rules (SPECS.md, Shuo week 2):
 - One to one: one proposed row matches at most one true department.
 - A name repeated under one parent counts once; the extra copy is a wrong row.
 - Two departments with the same name under different schools are different rows.
-- First pass: match within the same parent. Second pass: a leftover proposed row
-  can match a leftover true department of the same name under another school.
-  It counts as found for name recall, but its parent link is wrong (edge F1),
-  and it gets 1 of its 2 ancestors right (ancestor F1).
+- A match under the same parent always comes first. A proposed row can also match a
+  true department of the same name under another school. That counts as found for
+  name recall, but its parent link is wrong (edge F1), and it gets 1 of its 2
+  ancestors right (ancestor F1).
+- The assignment finds as many one-to-one pairs as possible.
 """
 
 import argparse
@@ -137,7 +138,10 @@ def _parse_qid(value: str, allow_new_words: Sequence[str]) -> Optional[str]:
 
 def _read_csv(path: Path):
     """Return (column names, rows). A file with only a header has columns but no rows."""
-    df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    try:
+        df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    except pd.errors.EmptyDataError:
+        raise InputError(str(path), ["the file is empty"])
     df.columns = [str(c).strip().lower() for c in df.columns]
     return list(df.columns), df.to_dict("records")
 
@@ -271,8 +275,8 @@ def _match_pairs(pairs):
     """One-to-one matching with as many pairs as possible.
 
     pairs: (score, p_index, t_index). Proposals are tried best score first, and each
-    tries its true rows best score first. A taken true row is moved to another row of
-    its proposal when that frees it (augmenting paths), so overlapping names never
+    takes its best free true row. When none is free, another proposal moves to a
+    different row if that frees one (augmenting paths), so overlapping names never
     lower the number of matches.
     """
     options: Dict[int, List[int]] = {}
@@ -281,11 +285,18 @@ def _match_pairs(pairs):
     owner: Dict[int, int] = {}  # true index -> proposed index
 
     def assign(pi, seen):
+        # A free row first, best score first. Only then move another proposal, so a
+        # match changes only when that finds one more pair.
+        for ti in options[pi]:
+            if ti not in owner and ti not in seen:
+                seen.add(ti)
+                owner[ti] = pi
+                return True
         for ti in options[pi]:
             if ti in seen:
                 continue
             seen.add(ti)
-            if ti not in owner or assign(owner[ti], seen):
+            if assign(owner[ti], seen):
                 owner[ti] = pi
                 return True
         return False
@@ -344,30 +355,21 @@ def score(truth: GroundTruth, proposed: ProposedList, parent: Optional[str] = No
     open_p = [i for i in range(len(props)) if status[i] is None]
     matched_t: Dict[int, int] = {}  # proposed index -> truth index
 
-    # Pass 1: same parent (or any row, when the list has no parents).
-    pairs = [
-        (_similarity(props[i].name, t.name), i, j)
-        for i in open_p
-        for j, t in enumerate(true_rows)
-        if (not use_parents or t.parent == resolved[i]) and dept_names_match(props[i].name, t.name)
-    ]
+    # One assignment over all name matches. A pair under the same parent is always tried
+    # before a pair under another school, but a match may move to another school when that
+    # lets one more department be found.
+    SAME_PARENT_BONUS = 1000.0
+    pairs = []
+    for i in open_p:
+        for j, t in enumerate(true_rows):
+            if not dept_names_match(props[i].name, t.name):
+                continue
+            same = not use_parents or t.parent == resolved[i]
+            pairs.append((_similarity(props[i].name, t.name) + (SAME_PARENT_BONUS if same else 0.0), i, j))
     for i, j in _match_pairs(pairs):
         matched_t[i] = j
-        status[i] = FOUND
-
-    # Pass 2: same name, other school of the same university.
-    if use_parents:
-        left_p = [i for i in open_p if status[i] is None]
-        used_t = set(matched_t.values())
-        pairs = [
-            (_similarity(props[i].name, t.name), i, j)
-            for i in left_p
-            for j, t in enumerate(true_rows)
-            if j not in used_t and dept_names_match(props[i].name, t.name)
-        ]
-        for i, j in _match_pairs(pairs):
-            matched_t[i] = j
-            status[i] = WRONG_PARENT
+        same = not use_parents or true_rows[j].parent == resolved[i]
+        status[i] = FOUND if same else WRONG_PARENT
 
     for i in open_p:
         if status[i] is None:

@@ -357,3 +357,34 @@ def test_row_with_data_but_no_name_is_rejected():
     with pytest.raises(ds.InputError, match="row 3: name is empty"):
         ds.parse_proposed([{"name": "Finance", "parent": "Stern"}, {"name": "", "parent": "Stern"}])
     assert len(ds.parse_proposed([{"name": "Finance", "parent": "Stern"}, {"name": "", "parent": ""}]).rows) == 1
+
+
+def test_one_assignment_over_both_schools():
+    gt = ds.parse_ground_truth([
+        {"parent": "A", "name": n, "type": "d", "source_url": "https://a", "qid": "none"}
+        for n in ("Chemical Engineering", "Chemical Engineering Studies")]
+        + [{"parent": "B", "name": "Physics", "type": "d", "source_url": "https://b", "qid": "none"}])
+    recs = [{"name": "Chemical Engineering", "parent": "A"},
+            {"name": "Chemical Engineering Analytics", "parent": "B"}]
+    m = run(gt, recs)
+    assert m["n_found"] == 2
+    assert m["n_wrong_parent"] == 1
+
+
+def test_empty_file_is_an_input_error(tmp_path):
+    empty = tmp_path / "empty.csv"
+    empty.write_text("")
+    with pytest.raises(ds.InputError, match="the file is empty"):
+        ds.load_proposed(empty)
+    assert ds.main(["--truth", str(empty), "--proposed", str(empty)]) == 1
+
+
+def test_a_free_row_is_taken_before_any_match_moves(truth):
+    # Check 5 on the real file: the Stern Economics keeps its own row.
+    gt = with_two_economics(truth)
+    recs = as_records(gt)
+    recs[-1]["parent"] = "Courant"
+    recs.insert(0, recs.pop())  # the wrong-school row comes first in the list
+    m = run(gt, recs)
+    assert m["n_wrong_parent"] == 1
+    assert m["edge_precision"] == pytest.approx(N / (N + 1))
