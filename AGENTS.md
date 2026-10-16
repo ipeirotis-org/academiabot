@@ -140,7 +140,11 @@ proposed list (name, optional parent and qid) from the same university. Matching
 first within the same parent, then a leftover row may match a same-name department under another
 school. Shuo chose this on 2026-10-16: it counts as found for name recall, wrong for edge F1, and
 1 of 2 ancestors right for ancestor F1. "Department of", "Dept. of", "Division of" and "Program in"
-are removed before the fuzzy match; `discover` is unchanged. Tests: `tests/test_dept_scorer.py`.
+are removed before the fuzzy match; `discover` is unchanged. A parent may be a short form ("Stern"
+for "Stern School of Business", either way) when it fits exactly one school. Shuo's ground truth for
+Stern, Courant and Steinhardt is `wikidata_discover/eval/dept_ground_truth.csv` (24 rows, 2026-10-16);
+`tests/fixtures/dept_truth_sample.csv` is a copy, and a test fails if the two differ.
+Tests: `tests/test_dept_scorer.py`.
 
 ## LLM integration details
 

@@ -248,12 +248,17 @@ def _resolve_parent(name: str, truth_parents: List[str]) -> Optional[str]:
         return best[0]
     if best:
         return max(best, key=lambda p: _similarity(name, p))
-    # A short form such as "Stern": its words appear in exactly one parent name.
+    # A short form on one side: "Stern" in the list and "Stern School of Business" in
+    # the answer key, or the other way round. Exactly one parent must fit.
     words = set(key.split())
     if words:
-        within = [p for p in truth_parents if words <= set(dept_key(p).split())]
-        if len(within) == 1:
-            return within[0]
+        fits = [
+            p for p in truth_parents
+            if words <= set(dept_key(p).split()) or set(dept_key(p).split()) <= words
+        ]
+        fits = [p for p in fits if dept_key(p)]
+        if len(fits) == 1:
+            return fits[0]
     return None
 
 

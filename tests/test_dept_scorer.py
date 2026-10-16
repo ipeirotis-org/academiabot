@@ -1,7 +1,8 @@
 """Tests for the department loader and scorer (Shuo, week 2).
 
-The fixture is made up. Its QIDs are not real items, and Steinhardt has an
-"Economics" department only so that one name exists under two schools.
+The fixture is a copy of Shuo's ground truth for Stern, Courant and Steinhardt
+(wikidata_discover/eval/dept_ground_truth.csv). No department name appears under
+two schools there, so check 5 adds a made-up "Economics" row under Steinhardt.
 The five TestCheck classes are the "You check it by" steps in TASKS.md.
 """
 
@@ -12,9 +13,7 @@ import pytest
 from wikidata_discover.eval import dept_scorer as ds
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dept_truth_sample.csv"
-STERN = "Stern School of Business"
-COURANT = "Courant Institute of Mathematical Sciences"
-STEINHARDT = "Steinhardt School of Culture, Education, and Human Development"
+N = 24
 
 
 @pytest.fixture
@@ -35,14 +34,30 @@ def as_records(truth, with_parent=True, with_qid=True):
     return out
 
 
+def index_of(recs, name):
+    return next(k for k, r in enumerate(recs) if r["name"] == name)
+
+
 def run(truth, records, **kw):
     return ds.score(truth, ds.parse_proposed(records), **kw).metrics
 
 
+def with_two_economics(truth):
+    """The ground truth plus a made-up Economics under Steinhardt (Stern has the real one)."""
+    extra = ds.TrueDept("Steinhardt", "Economics", "academic department", "https://example.org/made-up", ds.NEW)
+    return ds.GroundTruth(truth.rows + [extra])
+
+
 def test_fixture_loads(truth):
-    assert len(truth.rows) == 10
+    assert len(truth.rows) == N
     assert truth.warnings == []
-    assert sum(1 for t in truth.rows if t.qid == ds.NEW) == 3
+    assert {t.parent for t in truth.rows} == {"Stern", "Courant", "Steinhardt"}
+    assert sum(1 for t in truth.rows if t.qid == ds.NEW) == 13
+
+
+def test_fixture_matches_the_ground_truth_file():
+    real = Path(ds.__file__).parent / "dept_ground_truth.csv"
+    assert ds.load_ground_truth(real).rows == ds.load_ground_truth(FIXTURE).rows
 
 
 def test_ground_truth_scores_perfectly(truth):
@@ -52,25 +67,34 @@ def test_ground_truth_scores_perfectly(truth):
     assert m["alignment_accuracy"] == 1.0
 
 
+def test_no_two_true_names_match_each_other(truth):
+    names = [t.name for t in truth.rows]
+    pairs = [(a, b) for i, a in enumerate(names) for b in names[i + 1:] if ds.dept_names_match(a, b)]
+    assert pairs == []
+
+
+def test_removing_any_one_row_loses_exactly_that_row(truth):
+    for k in range(N):
+        recs = [r for j, r in enumerate(as_records(truth)) if j != k]
+        assert run(truth, recs)["n_found"] == N - 1
+
+
 class TestCheck1TwoMadeUpNames:
     def test_recall_full_and_exactly_two_wrong(self, truth):
         recs = as_records(truth) + [
-            {"name": "Department of Underwater Basket Weaving", "parent": STERN, "qid": ""},
-            {"name": "Institute of Time Travel Studies", "parent": COURANT, "qid": ""},
+            {"name": "Department of Underwater Basket Weaving", "parent": "Stern", "qid": ""},
+            {"name": "Institute of Time Travel Studies", "parent": "Courant", "qid": ""},
         ]
         m = run(truth, recs)
-        n = len(truth.rows)
         assert m["name_recall"] == 1.0
         assert m["n_not_in_answer_key"] == 2
-        assert m["name_precision"] == pytest.approx(n / (n + 2))
+        assert m["name_precision"] == pytest.approx(N / (N + 2))
 
 
 class TestCheck2RemoveOneName:
     def test_recall_drops_by_one(self, truth):
-        recs = as_records(truth)[1:]
-        m = run(truth, recs)
-        n = len(truth.rows)
-        assert m["name_recall"] == pytest.approx((n - 1) / n)
+        m = run(truth, as_records(truth)[1:])
+        assert m["name_recall"] == pytest.approx((N - 1) / N)
         assert m["name_precision"] == 1.0
         assert m["n_missed"] == 1
 
@@ -78,128 +102,147 @@ class TestCheck2RemoveOneName:
 class TestCheck3ChangeOneQid:
     def test_alignment_drops_by_one_over_n(self, truth):
         recs = as_records(truth)
-        recs[0]["qid"] = "Q9999999"
+        recs[index_of(recs, "Accounting")]["qid"] = "Q9999999"
         m = run(truth, recs)
-        n = len(truth.rows)
-        assert m["alignment_accuracy"] == pytest.approx(1 - 1 / n)
+        assert m["alignment_accuracy"] == pytest.approx(1 - 1 / N)
         assert m["name_recall"] == 1.0
 
     def test_wrongly_new_and_wrongly_linked(self, truth):
         recs = as_records(truth)
-        recs[0]["qid"] = "none"       # truth has Q1000001
-        recs[3]["qid"] = "Q1000004"   # truth says "none"
-        m = run(truth, recs)
-        assert m["alignment_accuracy"] == pytest.approx(8 / 10)
+        recs[index_of(recs, "Accounting")]["qid"] = "none"   # truth has Q101027479
+        recs[index_of(recs, "Economics")]["qid"] = "Q1"      # truth says "none"
+        assert run(truth, recs)["alignment_accuracy"] == pytest.approx((N - 2) / N)
 
     def test_blank_proposed_qid_means_new(self, truth):
         recs = as_records(truth)
-        recs[3]["qid"] = ""  # truth says "none": rightly new
+        recs[index_of(recs, "Economics")]["qid"] = ""  # truth says "none": rightly new
         assert run(truth, recs)["alignment_accuracy"] == 1.0
 
 
 class TestCheck4RepeatCountsOnce:
     def test_repeat_counts_once_and_lowers_precision(self, truth):
         recs = as_records(truth)
-        recs.append(dict(recs[0]))
+        recs.append(dict(recs[index_of(recs, "Finance")]))
         m = run(truth, recs)
-        n = len(truth.rows)
         assert m["name_recall"] == 1.0
         assert m["n_duplicate"] == 1
-        assert m["name_precision"] == pytest.approx(n / (n + 1))
+        assert m["name_precision"] == pytest.approx(N / (N + 1))
 
     def test_repeat_in_other_words_also_counts_once(self, truth):
         recs = as_records(truth)
-        recs.append({"name": "Finance", "parent": STERN, "qid": "Q1000001"})
+        recs.append({"name": "Department of Finance", "parent": "Stern", "qid": "Q128602068"})
         m = run(truth, recs)
         assert m["n_duplicate"] == 1
-        assert m["n_found"] == 10
+        assert m["n_found"] == N
 
 
 class TestCheck5SameNameTwoSchools:
-    def test_both_economics_are_separate_rows(self, truth):
-        econ = [t for t in truth.rows if t.name == "Department of Economics"]
-        assert {t.parent for t in econ} == {STERN, STEINHARDT}
+    def test_same_name_under_two_schools_is_two_rows(self, truth):
+        gt = with_two_economics(truth)
+        assert [t.parent for t in gt.rows if t.name == "Economics"] == ["Stern", "Steinhardt"]
+        assert run(gt, as_records(gt))["n_found"] == N + 1
 
     def test_one_under_wrong_school(self, truth):
-        recs = as_records(truth)
-        i = next(k for k, r in enumerate(recs) if r["name"] == "Department of Economics" and r["parent"] == STEINHARDT)
-        recs[i]["parent"] = COURANT
-        res = ds.score(truth, ds.parse_proposed(recs))
-        econ = [d for d in res.details if d["proposed_name"] == "Department of Economics"]
-        assert sorted(d["status"] for d in econ) == [ds.FOUND, ds.WRONG_PARENT]
+        gt = with_two_economics(truth)
+        recs = as_records(gt)
+        recs[-1]["parent"] = "Courant"  # the Steinhardt Economics
+        res = ds.score(gt, ds.parse_proposed(recs))
+        econ = [d for d in res.details if d["proposed_name"] == "Economics"]
+        assert [(d["proposed_parent"], d["status"]) for d in econ] == [
+            ("Stern", ds.FOUND), ("Courant", ds.WRONG_PARENT)]
         m = res.metrics
-        assert m["name_recall"] == 1.0          # both departments were found
-        assert m["edge_precision"] == pytest.approx(9 / 10)  # one parent link is wrong
-        assert m["ancestor_f1"] == pytest.approx(19 / 20)    # it keeps the right university
+        assert m["name_recall"] == 1.0                          # both were found
+        assert m["edge_precision"] == pytest.approx(N / (N + 1))  # one parent link is wrong
+        assert m["ancestor_f1"] == pytest.approx((2 * N + 1) / (2 * (N + 1)))
 
     def test_moved_onto_the_other_economics(self, truth):
         # Both proposed under Stern: one is right, the copy is a repeat, Steinhardt's is missed.
-        recs = as_records(truth)
-        i = next(k for k, r in enumerate(recs) if r["name"] == "Department of Economics" and r["parent"] == STEINHARDT)
-        recs[i]["parent"] = STERN
-        m = run(truth, recs)
+        gt = with_two_economics(truth)
+        recs = as_records(gt)
+        recs[-1]["parent"] = "Stern"
+        m = run(gt, recs)
         assert m["n_duplicate"] == 1
         assert m["n_missed"] == 1
 
 
 def test_ancestor_example_finance_under_courant(truth):
     recs = as_records(truth)
-    recs[0]["parent"] = COURANT  # Finance really is under Stern
+    recs[index_of(recs, "Finance")]["parent"] = "Courant"
     m = run(truth, recs)
     assert m["name_precision"] == m["name_recall"] == 1.0
-    assert m["edge_f1"] == pytest.approx(0.9)
-    assert m["ancestor_f1"] == pytest.approx(0.95)
+    assert m["edge_f1"] == pytest.approx((N - 1) / N)
+    assert m["ancestor_f1"] == pytest.approx((2 * N - 1) / (2 * N))
 
 
 def test_department_of_prefix_is_ignored(truth):
-    recs = [{"name": "Economics", "parent": STERN}, {"name": "Mathematics Department", "parent": COURANT},
-            {"name": "Dept. of Computer Science", "parent": COURANT}]
+    recs = [{"name": "Department of Accounting", "parent": "Stern"},
+            {"name": "Mathematics", "parent": "Courant"},
+            {"name": "Dept. of Computer Science", "parent": "Courant"},
+            {"name": "Teaching and Learning Department", "parent": "Steinhardt"}]
     m = run(truth, recs)
-    assert m["n_found"] == 3
+    assert m["n_found"] == 4
     assert m["edge_precision"] == 1.0
 
 
 def test_different_departments_do_not_match():
     for a, b in [("Finance", "Marketing"), ("Physics", "Psychology"),
-                 ("Computer Science", "Computer Engineering")]:
+                 ("Computer Science", "Computer Engineering"),
+                 ("Occupational Therapy", "Physical Therapy"),
+                 ("Applied Psychology", "Applied Statistics, Social Science, and Humanities")]:
         assert not ds.dept_names_match(f"Department of {a}", b)
 
 
-def test_parent_names_match_fuzzily(truth):
-    recs = [{"name": "Finance", "parent": "Leonard N. Stern School of Business"}]
+def test_long_parent_names_find_short_ones(truth):
+    recs = [{"name": "Finance", "parent": "Leonard N. Stern School of Business"},
+            {"name": "Mathematics", "parent": "Courant Institute of Mathematical Sciences"},
+            {"name": "Physical Therapy", "parent": "NYU Steinhardt"}]
     m = run(truth, recs)
+    assert m["n_found"] == 3
     assert m["edge_precision"] == 1.0
+
+
+def test_parent_must_fit_exactly_one_school():
+    parents = ["Stern", "Courant", "Steinhardt"]
+    assert ds._resolve_parent("Stern School of Business", parents) == "Stern"
+    assert ds._resolve_parent("School of Business", parents) is None
+    assert ds._resolve_parent("Stern and Courant joint program", parents) is None
 
 
 def test_parent_not_in_answer_key_is_not_scored(truth):
     recs = as_records(truth) + [{"name": "Department of History", "parent": "College of Arts and Science", "qid": ""}]
     m = run(truth, recs)
     assert m["n_parent_not_in_answer_key"] == 1
-    assert m["n_proposed"] == 10
+    assert m["n_proposed"] == N
     assert m["name_precision"] == 1.0
 
 
 def test_list_without_parents_gets_name_scores_only(truth):
     m = run(truth, as_records(truth, with_parent=False, with_qid=False))
-    # Without parents the two "Department of Economics" rows are one repeated name.
-    assert m["n_duplicate"] == 1
-    assert m["name_recall"] == pytest.approx(9 / 10)
+    assert m["name_recall"] == 1.0
     assert m["edge_f1"] is None and m["ancestor_f1"] is None
     assert m["alignment_accuracy"] is None
 
 
+def test_without_parents_a_repeated_name_counts_once(truth):
+    gt = with_two_economics(truth)
+    m = run(gt, as_records(gt, with_parent=False, with_qid=False))
+    assert m["n_duplicate"] == 1  # the two Economics rows cannot be told apart
+    assert m["name_recall"] == pytest.approx(N / (N + 1))
+
+
 def test_flat_list_against_one_school(truth):
-    recs = [{"name": "Finance"}, {"name": "Marketing"}, {"name": "Economics"}, {"name": "Real Estate"}]
-    m = run(truth, recs, parent="Stern")
-    assert m["n_true"] == 4
+    recs = [{"name": "Mathematics"}, {"name": "Computer Science"},
+            {"name": "Center for Data Science"}, {"name": "Robotics"}]
+    m = run(truth, recs, parent="Courant")
+    assert m["n_true"] == 3
     assert m["n_found"] == 3
     assert m["name_precision"] == pytest.approx(3 / 4)
-    assert m["name_recall"] == pytest.approx(3 / 4)
+    assert m["name_recall"] == 1.0
 
 
 def test_parent_flag_needs_a_list_without_parents(truth):
     with pytest.raises(ds.InputError):
-        run(truth, as_records(truth), parent=STERN)
+        run(truth, as_records(truth), parent="Stern")
 
 
 def test_blank_truth_qid_is_left_out_of_alignment():
@@ -251,19 +294,20 @@ class TestLoader:
         gt = ds.parse_ground_truth([dict(self.ROW, source_url="")])
         assert any("source_url is empty" in w for w in gt.warnings)
 
-    def test_column_names_ignore_case_and_spaces(self, tmp_path):
+    def test_spaces_in_header_and_cells_are_ignored(self, tmp_path):
         p = tmp_path / "gt.csv"
-        p.write_text(" Parent ,Name,TYPE,source_url,QID\nS,Finance,department,https://a,Q1\n")
-        assert ds.load_ground_truth(p).rows[0].name == "Finance"
+        p.write_text(" Parent ,name ,TYPE,source_url,QID\nStern ,Finance,department,https://a,Q1\n")
+        row = ds.load_ground_truth(p).rows[0]
+        assert (row.parent, row.name) == ("Stern", "Finance")
 
     def test_proposed_bad_qid(self):
         with pytest.raises(ds.InputError, match="not a QID"):
             ds.parse_proposed([{"name": "Finance", "qid": "abc"}])
 
 
-def test_cli_writes_details(tmp_path, truth):
+def test_cli_writes_details(tmp_path):
     proposed = tmp_path / "list.csv"
-    proposed.write_text("name,parent,qid\nFinance,Stern School of Business,Q1000001\nMade Up,Stern School of Business,\n")
+    proposed.write_text("name,parent,qid\nFinance,Stern,Q128602068\nMade Up,Stern,\n")
     out = tmp_path / "details.csv"
     assert ds.main(["--truth", str(FIXTURE), "--proposed", str(proposed), "--details", str(out)]) == 0
     text = out.read_text()
@@ -276,8 +320,3 @@ def test_cli_refuses_bad_truth(tmp_path):
     proposed = tmp_path / "list.csv"
     proposed.write_text("name\nFinance\n")
     assert ds.main(["--truth", str(bad), "--proposed", str(proposed)]) == 1
-
-
-def test_short_parent_name_must_be_unique(truth):
-    assert ds._resolve_parent("Stern", sorted({t.parent for t in truth.rows})) == STERN
-    assert ds._resolve_parent("School", sorted({t.parent for t in truth.rows})) is None

@@ -1,11 +1,25 @@
 parent,name,type,source_url,qid
-Stern School of Business,Department of Finance,department,https://www.stern.nyu.edu/faculty/departments/finance,Q1000001
-Stern School of Business,Department of Marketing,department,https://www.stern.nyu.edu/faculty/departments/marketing,Q1000002
-Stern School of Business,Department of Economics,department,https://www.stern.nyu.edu/faculty/departments/economics,Q1000003
-Stern School of Business,Department of Accounting,department,https://www.stern.nyu.edu/faculty/departments/accounting,none
-Courant Institute of Mathematical Sciences,Department of Mathematics,department,https://math.nyu.edu,Q1000005
-Courant Institute of Mathematical Sciences,Department of Computer Science,department,https://cs.nyu.edu,Q1000006
-"Steinhardt School of Culture, Education, and Human Development",Department of Economics,department,https://steinhardt.nyu.edu/example/economics,none
-"Steinhardt School of Culture, Education, and Human Development",Department of Teaching and Learning,department,https://steinhardt.nyu.edu/teachlearn,Q1000008
-"Steinhardt School of Culture, Education, and Human Development",Department of Music and Performing Arts Professions,department,https://steinhardt.nyu.edu/mpap,Q1000009
-"Steinhardt School of Culture, Education, and Human Development",Department of Applied Psychology,department,https://steinhardt.nyu.edu/appsych,none
+Stern,Accounting,academic department,https://www.stern.nyu.edu/experience-stern/about/departments-centers-initiatives/academic-departments/accounting,Q101027479
+Stern,Business and Society Program,academic department,https://www.stern.nyu.edu/experience-stern/about/departments-centers-initiatives/academic-departments/business-society-program,none
+Stern,Economics,academic department,https://www.stern.nyu.edu/experience-stern/about/departments-centers-initiatives/academic-departments/economics,none
+Stern,"Entertainment, Media and Technology",academic department,https://www.stern.nyu.edu/experience-stern/about/departments-centers-initiatives/interdisciplinary-initiatives/entertainment-media-and-technology-program,none
+Stern,Finance,academic department,https://www.stern.nyu.edu/experience-stern/about/departments-centers-initiatives/academic-departments/finance,Q128602068
+Stern,Fintech,academic department,https://www.stern.nyu.edu/experience-stern/about/departments-centers-initiatives/interdisciplinary-initiatives/financial-technology-fintech,none
+Stern,Management and Organizations,academic department,https://www.stern.nyu.edu/experience-stern/about/departments-centers-initiatives/academic-departments/management-and-organizations,none
+Stern,Management Communication Program,academic department,https://www.stern.nyu.edu/experience-stern/about/departments-centers-initiatives/academic-departments/management-communication,none
+Stern,Marketing,academic department,https://www.stern.nyu.edu/experience-stern/about/departments-centers-initiatives/academic-departments/marketing,Q101027500
+Stern,"Technology, Operations, and Statistics",academic department,https://www.stern.nyu.edu/experience-stern/about/departments-centers-initiatives/academic-departments/tops,none
+Courant,Department of Mathematics,academic department,https://math.nyu.edu/dynamic/,Q101027501
+Courant,Department of Computer Science,academic department,https://cs.nyu.edu/home/index.html,Q101027490
+Courant,Center for Data Science,academic department,https://cds.nyu.edu/,Q43080144
+Steinhardt,"Administration, Leadership, and Technology",academic department,https://steinhardt.nyu.edu/departments/administration-leadership-and-technology,Q101027480
+Steinhardt,Applied Psychology,academic department,https://steinhardt.nyu.edu/departments/applied-psychology,Q101027484
+Steinhardt,"Applied Statistics, Social Science, and Humanities",academic department,https://steinhardt.nyu.edu/departments/applied-statistics-social-science-and-humanities,none
+Steinhardt,Art and Art Professions,academic department,https://steinhardt.nyu.edu/departments/art-and-art-professions,none
+Steinhardt,Communicative Sciences and Disorders,academic department,https://steinhardt.nyu.edu/departments/communicative-sciences-and-disorders,none
+Steinhardt,"Media, Culture, and Communication",academic department,https://steinhardt.nyu.edu/departments/media-culture-and-communication,Q101027502
+Steinhardt,Music and Performing Arts Professions,academic department,https://steinhardt.nyu.edu/departments/music-and-performing-arts-professions,Q101027505
+Steinhardt,Nutrition and Food Studies,academic department,https://steinhardt.nyu.edu/departments/nutrition-and-food-studies,none
+Steinhardt,Occupational Therapy,academic department,https://steinhardt.nyu.edu/departments/occupational-therapy,none
+Steinhardt,Physical Therapy,academic department,https://steinhardt.nyu.edu/departments/physical-therapy,none
+Steinhardt,Teaching and Learning,academic department,https://steinhardt.nyu.edu/departments/teaching-and-learning,Q101027519
