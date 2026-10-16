@@ -135,10 +135,11 @@ def _parse_qid(value: str, allow_new_words: Sequence[str]) -> Optional[str]:
 # ── loading ────────────────────────────────────────────────────────────────
 
 
-def _read_csv(path: Path) -> List[Dict[str, str]]:
+def _read_csv(path: Path):
+    """Return (column names, rows). A file with only a header has columns but no rows."""
     df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
     df.columns = [str(c).strip().lower() for c in df.columns]
-    return df.to_dict("records")
+    return list(df.columns), df.to_dict("records")
 
 
 def parse_ground_truth(records: List[Dict[str, str]]) -> GroundTruth:
@@ -190,14 +191,15 @@ def parse_ground_truth(records: List[Dict[str, str]]) -> GroundTruth:
 
 
 def load_ground_truth(path) -> GroundTruth:
-    return parse_ground_truth(_read_csv(Path(path)))
+    return parse_ground_truth(_read_csv(Path(path))[1])
 
 
-def parse_proposed(records: List[Dict[str, str]]) -> ProposedList:
-    """Read a proposed list: a name column, and optional parent and qid columns."""
-    if not records:
-        return ProposedList([], has_parents=False, has_qids=False)
-    columns = set(records[0].keys())
+def parse_proposed(records: List[Dict[str, str]], columns: Optional[Sequence[str]] = None) -> ProposedList:
+    """Read a proposed list: a name column, and optional parent and qid columns.
+
+    `columns` is the file header; give it so that a file with no rows is still checked.
+    """
+    columns = set(columns) if columns is not None else set(records[0].keys()) if records else set()
     name_col = "name" if "name" in columns else "unit" if "unit" in columns else None
     if name_col is None:
         raise InputError("proposed list", ["missing column: name"])
@@ -225,7 +227,8 @@ def parse_proposed(records: List[Dict[str, str]]) -> ProposedList:
 
 
 def load_proposed(path) -> ProposedList:
-    return parse_proposed(_read_csv(Path(path)))
+    columns, records = _read_csv(Path(path))
+    return parse_proposed(records, columns)
 
 
 # ── scoring ────────────────────────────────────────────────────────────────
@@ -247,7 +250,7 @@ def _resolve_parent(name: str, truth_parents: List[str]) -> Optional[str]:
     if len(best) == 1:
         return best[0]
     if best:
-        return max(best, key=lambda p: _similarity(name, p))
+        return None  # it fits two schools: never guess
     # A short form on one side: "Stern" in the list and "Stern School of Business" in
     # the answer key, or the other way round. Exactly one parent must fit.
     words = set(key.split())

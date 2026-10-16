@@ -320,3 +320,20 @@ def test_cli_refuses_bad_truth(tmp_path):
     proposed = tmp_path / "list.csv"
     proposed.write_text("name\nFinance\n")
     assert ds.main(["--truth", str(bad), "--proposed", str(proposed)]) == 1
+
+
+def test_header_only_file_is_still_checked(tmp_path):
+    bad = tmp_path / "bad.csv"
+    bad.write_text("parent,qid\n")
+    with pytest.raises(ds.InputError, match="missing column: name"):
+        ds.load_proposed(bad)
+    empty = tmp_path / "empty.csv"
+    empty.write_text("name,parent,qid\n")
+    p = ds.load_proposed(empty)
+    assert p.rows == [] and p.has_parents and p.has_qids
+
+
+def test_parent_that_fuzzy_matches_two_schools_is_not_guessed():
+    parents = ["College of Arts and Sciences", "School of Arts and Sciences"]
+    assert ds._resolve_parent("Arts and Sciences", parents) is None
+    assert ds._resolve_parent("School of Arts and Sciences", parents) == "School of Arts and Sciences"
