@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from rich.console import Console
 from wikidata_discover.sparql_helpers import run_sparql
-from wikidata_discover.config import USER_AGENT
+from wikidata_discover.config import USER_AGENT, RESULTS_DIR
 
 console = Console()
 
@@ -22,7 +22,8 @@ def fetch_us_universities() -> None:
     console.print("[bold]Querying Wikidata for U.S. universities...[/bold]")
     rows = run_sparql(_US_UNIV_SPARQL)
     rows_tuples = run_sparql(_US_UNIV_SPARQL, as_tuples=True)
-    out_path = Path("universities_us.json")
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = RESULTS_DIR / "universities_us.json"
     out_path.write_text(json.dumps(rows_tuples, indent=2))
     console.print(f"[green]Wrote {len(rows)} entries to {out_path}[/green]")
 

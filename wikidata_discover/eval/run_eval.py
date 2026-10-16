@@ -231,6 +231,8 @@ def main():
 
     from dotenv import load_dotenv
     load_dotenv()
+    from wikidata_discover import config
+    config.load_missing_keys()
 
     providers = args.providers or get_available_providers()
     if not providers:

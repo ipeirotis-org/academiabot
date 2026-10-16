@@ -23,7 +23,7 @@ Do not guess or assume these values.
 
 ## Step 3: Propose Roles
 
-Assess the repo (look at code, config files, README, CLAUDE.md, etc.) and determine which roles/permissions the service account will need.
+Assess the repo (look at code, config files, README, AGENTS.md, etc.) and determine which roles/permissions the service account will need.
 
 Present a clear list to the user:
 
@@ -96,9 +96,9 @@ Create a SessionStart hook that automatically installs the provider CLI **and** 
 
 This ensures that future sessions start with the CLI installed and credentials already activated — no manual authentication needed.
 
-## Step 7: Update CLAUDE.md
+## Step 7: Update AGENTS.md
 
-Append a `## Cloud Credentials` section to CLAUDE.md (create the file if it doesn't exist) documenting:
+Append a `## Cloud Credentials` section to AGENTS.md (create the file if it doesn't exist) documenting:
 
 - The provider and project/account identifier
 - The service account identity

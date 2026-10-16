@@ -24,6 +24,25 @@ class TestNormalizeName:
     def test_removes_punctuation(self):
         assert "'" not in normalize_name("Stern's School")
 
+    def test_keeps_non_latin_scripts(self):
+        # distinct Chinese names must stay distinct, not both collapse to ""
+        assert normalize_name("数学系") == "数学系"
+        assert normalize_name("数学系") != normalize_name("物理系")
+        assert normalize_name("Facultad de Ingeniería") == "facultad ingeniería"
+
+    def test_digits_and_symbols_dropped(self):
+        assert normalize_name("School #2 (2019)") == "school"
+
+
+class TestEmptyNamesNeverMatch:
+    def test_non_latin_names_compare_properly(self):
+        assert is_fuzzy_match("数学系", "数学系")
+        assert not is_fuzzy_match("数学系", "物理系")
+
+    def test_nothing_left_means_no_match(self):
+        assert not is_fuzzy_match("123", "456")
+        assert not is_fuzzy_match("", "")
+
 
 # ── is_fuzzy_match: should match ────────────────────────────────────────────
 
