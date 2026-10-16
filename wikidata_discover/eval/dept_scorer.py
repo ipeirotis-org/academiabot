@@ -143,6 +143,8 @@ def _read_csv(path: Path):
         df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
     except pd.errors.EmptyDataError:
         raise InputError(str(path), ["the file is empty"])
+    except (pd.errors.ParserError, UnicodeDecodeError) as e:
+        raise InputError(str(path), [f"the file is not a readable CSV ({type(e).__name__}: {e})"])
     df.columns = [str(c).strip().lower() for c in df.columns]
     return list(df.columns), df.to_dict("records")
 
@@ -160,9 +162,16 @@ def parse_ground_truth(records: List[Dict[str, str]]) -> GroundTruth:
 
     rows: List[TrueDept] = []
     seen: Dict[tuple, int] = {}
+    spelling: Dict[str, tuple] = {}  # parent key -> (first spelling, its row)
     for i, rec in enumerate(records, start=2):  # row 1 is the header
         name = (rec.get("name") or "").strip()
         parent = (rec.get("parent") or "").strip()
+        if parent:
+            first = spelling.setdefault(dept_key(parent), (parent, i))
+            if first[0] != parent:
+                warnings.append(f"row {i}: parent {parent!r} is written {first[0]!r} in row {first[1]}; "
+                                f"using {first[0]!r}")
+                parent = first[0]
         url = (rec.get("source_url") or "").strip()
         if not name:
             problems.append(f"row {i}: name is empty")

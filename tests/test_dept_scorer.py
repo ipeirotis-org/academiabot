@@ -434,3 +434,23 @@ def test_matching_equals_brute_force_on_random_cases():
                     if all(m in allowed for m in match):
                         best = max(best, key(match))
         assert key(ds._match_pairs(pairs)) == best
+
+
+def test_malformed_csv_is_an_input_error(tmp_path):
+    bad = tmp_path / "bad.csv"
+    bad.write_text('name,parent\n"Finance,Stern\nMarketing,Stern\n')
+    with pytest.raises(ds.InputError, match="not a readable CSV"):
+        ds.load_proposed(bad)
+    bad.write_bytes(b"name,parent\n\xff\xfe,Stern\n")
+    with pytest.raises(ds.InputError, match="not a readable CSV"):
+        ds.load_proposed(bad)
+
+
+def test_two_spellings_of_one_parent_become_one():
+    row = {"type": "d", "source_url": "https://a", "qid": "none"}
+    gt = ds.parse_ground_truth([dict(row, parent="Stern", name="Finance"),
+                                dict(row, parent="stern", name="Marketing")])
+    assert [t.parent for t in gt.rows] == ["Stern", "Stern"]
+    assert any("using 'Stern'" in w for w in gt.warnings)
+    m = run(gt, [{"name": "Finance", "parent": "Stern"}, {"name": "Marketing", "parent": "stern"}])
+    assert m["edge_f1"] == 1.0
