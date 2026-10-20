@@ -243,7 +243,9 @@ def take_snapshot(root: str, sparql: Callable[[str], List[dict]] = execute_sparq
         units[qid] = {"qid": qid, "label": best_label(d["labels"], qid), "in_tree": qid in in_tree,
                       "depth": depth.get(qid), **d,
                       "parents": sorted(({"parent": l["parent"], "prop": l["prop"], "rank": l["rank"],
-                                          "statement_id": l["statement_id"]}
+                                          "statement_id": l["statement_id"],
+                                          "statement_on": l["statement_on"],
+                                          "qualifiers": qualifiers.get(l["statement_id"], {})}
                                          for l in links.values() if l["child"] == qid),
                                         key=lambda p: (p["prop"], p["parent"], p["statement_id"]))}
     link_list = sorted(({**l, "qualifiers": qualifiers.get(l["statement_id"], {}),
@@ -303,6 +305,15 @@ def run_snapshots(qids: List[str], run_id: Optional[str] = None, argv=None, *, b
 
     summary = {"requested": len(qids), "skipped_done": 0, "ok": 0, "failed": 0, "failed_qids": [],
                "units": 0}
+    # Build both clients now. Each reads the service account key file once and keeps the
+    # credentials in memory, so a long run survives the session-end hook that deletes
+    # the file. A client that cannot be built here makes the run log fall back to local
+    # JSON, as for any other bucket or BigQuery failure.
+    for build in (log._get_bucket, log._get_bq):
+        try:
+            build()
+        except Exception as e:  # noqa: BLE001
+            report(f"run log: could not build a cloud client at start ({type(e).__name__})")
     try:
         done = done_in_bucket(log._get_bucket(), run_id)
     except Exception as e:  # noqa: BLE001 - no bucket listing: nothing is skipped

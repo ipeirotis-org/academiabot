@@ -105,6 +105,10 @@ def test_qualifiers_are_kept_on_each_link(wd):
     assert by_id["Q4-c"]["qualifiers"] == {"P580": ["2001-01-01T00:00:00Z"]}
     assert by_id["Q2-d"]["qualifiers"] == {"P642": ["Q77"]}      # item values become QIDs
     assert by_id["Q1-b"]["statement_on"] == "Q1" and by_id["Q4-c"]["statement_on"] == "Q4"
+    q4 = s["units"]["Q4"]["parents"][0]
+    assert q4["qualifiers"] == {"P580": ["2001-01-01T00:00:00Z"]} and q4["statement_on"] == "Q4"
+    q3 = [p for p in s["units"]["Q3"]["parents"] if p["prop"] == "P527"][0]
+    assert q3["statement_on"] == "Q1" and q3["qualifiers"] == {}
 
 
 def test_unit_details_keep_names_types_website_and_ror(wd):
@@ -199,3 +203,17 @@ def test_a_bad_run_id_is_refused(tmp_path):
     with pytest.raises(ValueError):
         snap.run_snapshots(["Q1"], "../x", [], bucket=FakeBucket(), sparql=fake_sparql,
                            results_dir=tmp_path, report=lambda m: None)
+
+
+def test_cloud_clients_are_built_before_the_first_university(wd, tmp_path, monkeypatch):
+    """The key file can be deleted during a long run (session end), so both clients
+    must exist before any university is crawled."""
+    from wikidata_discover import run_log
+    order = []
+    monkeypatch.setattr(run_log.RunLog, "_get_bq", lambda self: order.append("bq"))
+    def sparql(q):
+        order.append("sparql")
+        return wd(q)
+    snap.run_snapshots(["Q1"], "snap-4", [], bucket=FakeBucket(), sparql=sparql,
+                       results_dir=tmp_path, report=lambda m: None)
+    assert order.index("bq") < order.index("sparql")
