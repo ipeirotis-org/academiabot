@@ -4,6 +4,8 @@ The run log records every `discover` and batch run in BigQuery, dataset
 `wikidata-academia.academiabot`. It has 4 tables. Large texts (prompts, raw LLM responses,
 page snapshots) are in the bucket `gs://academiabot/runs/<run_id>/`, and each row keeps the
 path. The code is `wikidata_discover/run_log.py`. Anya built it in week 2 (2026-10-14).
+Week 3 added the columns `legacy` and `source_file` to `llm_calls` and `candidates`. Rows
+written before that have `legacy` false.
 
 Types are BigQuery types. "List" means a REPEATED column. A column marked "JSON" holds JSON
 text in a STRING column. Read it with `JSON_VALUE(config, '$.depth')`.
@@ -57,6 +59,8 @@ row, and a failed attempt keeps its row with `error`.
 | error | STRING | Error text when the attempt failed |
 | note | STRING | Explanation when no raw response exists |
 | called_at | TIMESTAMP | Time of the call (UTC) |
+| legacy | BOOLEAN | True for a row imported from a run before the run log (run `us-tier1`). Such a row has no prompt and no raw response |
+| source_file | STRING | For a legacy row: the original file in the bucket that the row came from. Empty otherwise |
 
 ## evidence
 
@@ -98,6 +102,8 @@ with the result of the check against Wikidata.
 | llm_call_ids | STRING, list | The extract call and any match calls behind this row |
 | evidence_ids | STRING, list | Saved pages behind this row. Empty until week 4 |
 | created_at | TIMESTAMP | Time the row was made (UTC) |
+| legacy | BOOLEAN | True for a row imported from a run before the run log (run `us-tier1`). Such a row has no saved prompt, response, or page |
+| source_file | STRING | For a legacy row: the original CSV or cache file in the bucket that the row came from. Empty otherwise |
 
 ## How the tables link
 
