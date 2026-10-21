@@ -20,7 +20,7 @@ and matched_label stay empty. A university whose counts do not equal its report 
 imported and is listed for a person.
 
     python -m wikidata_discover.legacy_import            # dry run: rows to local JSON only
-    python -m wikidata_discover.legacy_import --write    # load into BigQuery (once)
+    python -m wikidata_discover.legacy_import --write    # load into BigQuery; each table skips ids it has, so a retry is safe
 """
 import argparse
 import csv
@@ -201,10 +201,49 @@ def build_all(recs, models, cache, csv_texts, bucket_name="academiabot"):
     return calls, cands, problems
 
 
-def already_imported(bq) -> int:
-    q = (f"SELECT COUNT(*) AS n FROM `{run_log.table_ref('candidates')}` "
+ID_FIELD = {"llm_calls": "llm_call_id", "candidates": "candidate_id"}
+LOAD_ORDER = ("llm_calls", "candidates")
+
+
+def missing_rows(rows: List[dict], id_field: str, have: set) -> List[dict]:
+    """The rows whose id is not in `have`, each id once."""
+    seen = set(have)
+    out = []
+    for r in rows:
+        if r[id_field] not in seen:
+            seen.add(r[id_field])
+            out.append(r)
+    return out
+
+
+def import_rows(rows: Dict[str, List[dict]], existing_ids: Callable[[str], set],
+                load: Callable[[str, List[dict]], None]) -> Dict[str, int]:
+    """Load each table's rows that are not there yet. Returns rows added per table.
+
+    The ids are read from each table right before its load, so a retry after a partial
+    failure (llm_calls loaded, candidates failed) adds only what is missing. A failed
+    load raises, so the caller can record the run as failed."""
+    added = {}
+    for t in LOAD_ORDER:
+        new = missing_rows(rows.get(t, []), ID_FIELD[t], existing_ids(t))
+        if new:
+            load(t, new)
+        added[t] = len(new)
+    return added
+
+
+def legacy_ids(bq, table: str) -> set:
+    q = (f"SELECT {ID_FIELD[table]} AS id FROM `{run_log.table_ref(table)}` "
          f"WHERE run_id = '{SOURCE_RUN}' AND legacy")
-    return list(bq.query(q).result())[0].n
+    return {r.id for r in bq.query(q).result()}
+
+
+def load_table(bq, table: str, rows: List[dict]) -> None:
+    from google.cloud import bigquery
+    job = bq.load_table_from_json(
+        rows, run_log.table_ref(table),
+        job_config=bigquery.LoadJobConfig(schema=run_log.bigquery_schema(table), write_disposition="WRITE_APPEND"))
+    job.result()
 
 
 def main(argv=None) -> int:
@@ -216,10 +255,6 @@ def main(argv=None) -> int:
     from wikidata_discover.batch import operator_identity, source_identity
     bucket = storage.Client(project=config.GCP_PROJECT).bucket(config.RUNLOG_BUCKET)
     bq = bigquery.Client(project=config.GCP_PROJECT)
-    if args.write and already_imported(bq):
-        print("us-tier1 is already imported (legacy candidates rows exist). Nothing was written.")
-        return 1
-
     run_id = run_log.new_run_id("import-legacy")
     run_dir = config.RESULTS_DIR / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -232,8 +267,12 @@ def main(argv=None) -> int:
         recs, models, cache, csv_texts = read_bucket(bucket)
         calls, cands, problems = build_all(recs, models, cache, csv_texts, config.RUNLOG_BUCKET)
         # Labels are read from Wikidata only for a real import, so a dry run sends no
-        # request to Wikidata (a snapshot run may be using the same address).
-        labelled = add_matched_labels(cands, wikidata_api.labels) if args.write else 0
+        # request to Wikidata (a snapshot run may be using the same address). A retry
+        # reads them only for candidates that are not loaded yet.
+        labelled = 0
+        if args.write:
+            have = legacy_ids(bq, "candidates")
+            labelled = add_matched_labels([c for c in cands if c["candidate_id"] not in have], wikidata_api.labels)
         st = Counter(c["status"] for c in cands)
         summary = {"universities": len(recs), "imported_universities": len({c["university_qid"] for c in cands}),
                    "llm_calls": len(calls), "candidates": len(cands), "by_status": dict(st),
@@ -246,11 +285,20 @@ def main(argv=None) -> int:
         log.save_text("import_summary.json", json.dumps(summary, indent=1))
         if args.write:
             # Straight to BigQuery: these rows keep run_id us-tier1 and the original
-            # invocation ids, so they do not go through this invocation's run log.
-            log.pending["llm_calls"] += [run_log.clean_row("llm_calls", c) for c in calls]
-            log.pending["candidates"] += [run_log.clean_row("candidates", c) for c in cands]
-            log.counts["llm_calls"], log.counts["candidates"] = len(calls), len(cands)
+            # invocation ids, so they do not go through this invocation's run log. Each
+            # table skips ids it already has, so a retry after a partial failure is safe.
+            rows = {"llm_calls": [run_log.clean_row("llm_calls", c) for c in calls],
+                    "candidates": [run_log.clean_row("candidates", c) for c in cands]}
+            added = import_rows(rows, lambda t: legacy_ids(bq, t), lambda t, r: load_table(bq, t, r))
+            summary["added"] = added
+            summary["already_there"] = {t: len(rows[t]) - added[t] for t in LOAD_ORDER}
+            log.counts["llm_calls"], log.counts["candidates"] = added["llm_calls"], added["candidates"]
         outcome = "ok"
+    except Exception as e:  # noqa: BLE001 - recorded in the runs row, then raised
+        summary["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+        print(f"The import stopped: {summary['error']}")
+        print("Run --write again. It adds only the rows that are not in BigQuery yet.")
+        raise
     finally:
         status = log.finish(outcome, summary)
     print(json.dumps({k: v for k, v in summary.items() if k != "problems"}, indent=1))

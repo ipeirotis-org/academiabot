@@ -335,8 +335,9 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   idle timeout, and has no runs row (that row is written at the end); `progress.jsonl` keeps its
   invocation id. Keep the Codespace active during a long run. Pilot `snapshot-pilot-20261020` (6 universities,
   older format without qualifiers in `parents`).
-- `python -m wikidata_discover.legacy_import` (dry run) and `--write` (once; refuses when legacy
-  rows exist) import run `us-tier1`. Rules and limits are in `docs/RUN_LOG_SCHEMA.md`. It reads only
+- `python -m wikidata_discover.legacy_import` (dry run) and `--write` import run `us-tier1`. `--write`
+  loads llm_calls, then candidates, and each table skips legacy ids it already has, so a retry
+  after a partial failure adds only the missing rows. Rules and limits are in `docs/RUN_LOG_SCHEMA.md`. It reads only
   the bucket, never `results/cache`. Dry run 2026-10-21: 9,190 candidates (2,327 linked, 450
   orphan, 6,413 missing), 8,169 llm_calls, 1 university not imported (Q16998232, failed run).
   `--write` ran 2026-10-21 (run `import-legacy-20261021T122118Z-a5c0a3`): the same counts are in

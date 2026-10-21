@@ -118,3 +118,46 @@ def test_rows_fit_the_bigquery_schema():
 def test_the_last_log_record_of_each_qid_wins():
     lines = ['{"qid": "Q1", "status": "failed"}', '{"qid": "Q1", "status": "ok"}', "", '{"qid": "Q2", "status": "ok"}']
     assert {q: r["status"] for q, r in li.last_records(lines).items()} == {"Q1": "ok", "Q2": "ok"}
+
+
+class FakeTables:
+    """Two BigQuery tables in memory. `fail` names a table whose next load raises."""
+
+    def __init__(self, fail=None):
+        self.rows = {t: [] for t in li.LOAD_ORDER}
+        self.fail = fail
+
+    def existing_ids(self, table):
+        return {r[li.ID_FIELD[table]] for r in self.rows[table]}
+
+    def load(self, table, rows):
+        if table == self.fail:
+            self.fail = None
+            raise RuntimeError(f"load job for {table} failed")
+        self.rows[table] += rows
+
+
+def test_a_retry_after_candidates_failed_adds_only_the_missing_rows():
+    calls, cands, _ = li.build_university(rec(), FILES, CSV, MODELS)
+    rows = {"llm_calls": calls, "candidates": cands}
+    db = FakeTables(fail="candidates")
+    try:
+        li.import_rows(rows, db.existing_ids, db.load)
+        raise AssertionError("the candidates load should have failed")
+    except RuntimeError:
+        pass
+    assert len(db.rows["llm_calls"]) == len(calls) and db.rows["candidates"] == []
+
+    added = li.import_rows(rows, db.existing_ids, db.load)
+    assert added == {"llm_calls": 0, "candidates": len(cands)}
+    for t in li.LOAD_ORDER:
+        ids = [r[li.ID_FIELD[t]] for r in db.rows[t]]
+        assert len(ids) == len(set(ids)) == len(rows[t])
+
+    # A third run finds everything there and adds nothing.
+    assert li.import_rows(rows, db.existing_ids, db.load) == {"llm_calls": 0, "candidates": 0}
+
+
+def test_missing_rows_drops_ids_already_there_and_repeated_ids():
+    rows = [{"candidate_id": "a"}, {"candidate_id": "b"}, {"candidate_id": "b"}, {"candidate_id": "c"}]
+    assert [r["candidate_id"] for r in li.missing_rows(rows, "candidate_id", {"a"})] == ["b", "c"]
