@@ -22,6 +22,8 @@ academiabot/
 │   ├── to_qs_wikidata.py        # Export missing entities as QuickStatements
 │   ├── batch.py                 # Resumable batch over many QIDs; uploads every artifact to the bucket
 │   ├── run_log.py               # Run log: BigQuery rows, texts in the bucket, local JSON fallback
+│   ├── snapshot.py              # snapshot <QID>: a university's whole subtree as Wikidata has it today
+│   ├── legacy_import.py         # One-time import of run us-tier1 into llm_calls and candidates (legacy)
 │   ├── cloud/collect_function.py # Cloud Function (gen 2) entry point: one time slice of a run, on a schedule
 │   ├── requirements.txt
 │   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness
@@ -321,6 +323,39 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   fallback). Runs never create tables. `python -m wikidata_discover.run_log setup` creates the
   dataset and tables once; it was run on 2026-10-14. A new column needs a schema change there too.
 - Tests never touch the real run log: `tests/conftest.py` sets `run_log.DISABLED`.
+- `snapshot <QID>...` (or `--all` for `gs://academiabot/universities_us_tier1.json`) writes one
+  runs row per invocation and saves each snapshot to `gs://academiabot/runs/<run_id>/snapshots/`,
+  `results/runs/<run_id>/snapshots/`, and `results/snapshots/<QID>.json` (latest copy). With a
+  fixed `--run-id`, a restart skips universities already in the bucket. It builds its bucket and
+  BigQuery clients at the start, so a long run survives the session-end hook that deletes the
+  key file. Start a long run with `setsid nohup ... &` so it does not belong to the Claude shell.
+  Full run `snapshot-us-tier1` finished 2026-10-21 05:45 UTC: 1,519 of 1,519 ok, none truncated,
+  20,997 units, 592 universities with no units. It took two invocations. The first
+  (`c44afd9efc21`, 1,062 universities) stopped at 01:57 UTC, probably at the Codespace's 30 minute
+  idle timeout, and has no runs row (that row is written at the end); `progress.jsonl` keeps its
+  invocation id. Keep the Codespace active during a long run. Pilot `snapshot-pilot-20261020` (6 universities,
+  older format without qualifiers in `parents`).
+- `python -m wikidata_discover.legacy_import` (dry run) and `--write` import run `us-tier1`. `--write`
+  loads llm_calls, then candidates, and each table skips legacy ids it already has, so a retry
+  after a partial failure adds only the missing rows. Rules and limits are in `docs/RUN_LOG_SCHEMA.md`. It reads only
+  the bucket, never `results/cache`. Dry run 2026-10-21: 9,190 candidates (2,327 linked, 450
+  orphan, 6,413 missing), 8,169 llm_calls, 1 university not imported (Q16998232, failed run).
+  `--write` ran 2026-10-21 (run `import-legacy-20261021T122118Z-a5c0a3`): the same counts are in
+  BigQuery; 446 of 450 orphans got a label (4 QIDs have no English label). The us-tier1 answers
+  had no reference field, so `source_url` is empty in every legacy row; `website` has the URL.
+- Until 2026-10-21, `legacy_import` and `gap_report` saved the dirty-worktree patch only locally
+  and left `source_patch_path` empty; both now upload it with `RunLog.attach_source_patch()`, as
+  snapshot and discover do. The two real runs from before the fix (`import-legacy-20261021T122118Z-a5c0a3`
+  and `gap-report-20261021T122252Z-f29e6e`, both `7164e67-dirty-1b794ffecf29`) had their patch
+  uploaded afterwards to `runs/<run_id>/source-7164e67-dirty-1b794ffecf29.patch`. Their runs rows
+  still have `source_patch_path` empty, on purpose: rows are not rewritten.
+- `python -m wikidata_discover.gap_report --candidates bigquery` writes `results/gap_report.csv`
+  (one row per university; `gap` = LLM proposed minus Wikidata direct units). Wikidata counts
+  include every unit the snapshot follows (P749, P361, P527, P355, P199), not only schools, so a
+  large negative gap (Stanford, -1,219) is not a list of missing schools. Final run 2026-10-21:
+  `gap-report-20261021T122252Z-f29e6e`.
+- `python -m wikidata_discover.scripts.check4_sample` redoes the week 3 check 4 draw (seed
+  20261021) into `results/check4_missing_sample.csv`; inputs are named in its docstring.
 
 | Table | One row per | Must contain |
 |---|---|---|

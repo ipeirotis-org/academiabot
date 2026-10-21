@@ -57,6 +57,7 @@ SCHEMAS: Dict[str, List[tuple]] = {
         ("tokens_in", "INTEGER", "NULLABLE"), ("tokens_out", "INTEGER", "NULLABLE"),
         ("latency_ms", "INTEGER", "NULLABLE"), ("error", "STRING", "NULLABLE"),
         ("note", "STRING", "NULLABLE"), ("called_at", "TIMESTAMP", "NULLABLE"),
+        ("legacy", "BOOLEAN", "NULLABLE"), ("source_file", "STRING", "NULLABLE"),
     ],
     "evidence": [
         ("evidence_id", "STRING", "REQUIRED"), ("run_id", "STRING", "REQUIRED"),
@@ -76,10 +77,15 @@ SCHEMAS: Dict[str, List[tuple]] = {
         ("website", "STRING", "NULLABLE"), ("provider", "STRING", "NULLABLE"),
         ("llm_call_ids", "STRING", "REPEATED"), ("evidence_ids", "STRING", "REPEATED"),
         ("created_at", "TIMESTAMP", "NULLABLE"),
+        ("legacy", "BOOLEAN", "NULLABLE"), ("source_file", "STRING", "NULLABLE"),
     ],
 }
 
 CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved")
+
+# Columns added after the tables were first created (week 3). setup_tables() adds them
+# to existing tables, and fills `legacy` with false on rows written before.
+ADDED_COLUMNS = {"llm_calls": ("legacy", "source_file"), "candidates": ("legacy", "source_file")}
 
 # Written on a cache-hit row whose answer has no saved raw response.
 NO_RAW_RESPONSE_NOTE = ("No raw response exists: this answer was cached before the run log "
@@ -135,9 +141,29 @@ def setup_tables(client=None) -> List[str]:
     client.create_dataset(ds, exists_ok=True)
     made = []
     for t in TABLES:
-        client.create_table(bigquery.Table(table_ref(t), schema=bigquery_schema(t)), exists_ok=True)
+        table = client.create_table(bigquery.Table(table_ref(t), schema=bigquery_schema(t)), exists_ok=True)
+        add_missing_columns(client, table, t)
         made.append(table_ref(t))
     return made
+
+
+def missing_columns(table: str, existing_names) -> list:
+    """Schema columns of `table` that the BigQuery table does not have yet. Pure."""
+    have = set(existing_names)
+    return [c for c in SCHEMAS[table] if c[0] not in have]
+
+
+def add_missing_columns(client, table, name: str) -> list:
+    """Add new NULLABLE columns to an existing table, then set legacy = false on the
+    rows that were written before the column existed. Returns the added names."""
+    from google.cloud import bigquery
+    new = missing_columns(name, [f.name for f in table.schema])
+    if new:
+        table.schema = list(table.schema) + [bigquery.SchemaField(n, ty, mode=m) for n, ty, m in new]
+        client.update_table(table, ["schema"])
+    if "legacy" in ADDED_COLUMNS.get(name, ()):
+        client.query(f"UPDATE `{table_ref(name)}` SET legacy = FALSE WHERE legacy IS NULL").result()
+    return [n for n, _, _ in new]
 
 
 def _bucket_timeout() -> float:
@@ -223,6 +249,15 @@ class RunLog:
         self.local_written = True
         return str(path)
 
+    def attach_source_patch(self, run_dir: Path, identity: str) -> Optional[str]:
+        """Upload the patch that batch.source_identity() saved for a dirty worktree and
+        record where it went in source_patch_path. Does nothing for a clean commit."""
+        patch = Path(run_dir) / f"source-{identity}.patch"
+        if not patch.exists():
+            return None
+        self.run_row["source_patch_path"] = self.save_text(patch.name, patch.read_text())
+        return self.run_row["source_patch_path"]
+
     # ── rows ─────────────────────────────────────────────────────────────
 
     def set_university(self, qid: Optional[str]) -> None:
@@ -252,7 +287,7 @@ class RunLog:
                "model": model, "purpose": purpose, "attempt": attempt,
                "request_config": request_config or {}, "cache_key": cache_key, "prompt_hash": prompt_hash,
                "tokens_in": tokens_in, "tokens_out": tokens_out, "latency_ms": latency_ms,
-               "cache_hit": cache_hit, "error": error, "called_at": now_iso()}
+               "cache_hit": cache_hit, "error": error, "called_at": now_iso(), "legacy": False}
         if cache_hit:
             cached_from = cached_from or {}
             row["cached_from_llm_call_id"] = cached_from.get("llm_call_id")
@@ -278,7 +313,7 @@ class RunLog:
             raise ValueError(f"candidate status must be one of {CANDIDATE_STATUSES}, got {fields.get('status')!r}")
         cid = new_id()
         self._add("candidates", {"candidate_id": cid, "university_qid": self.university_qid,
-                                 "created_at": now_iso(), **fields})
+                                 "created_at": now_iso(), "legacy": False, **fields})
         return cid
 
     def add_evidence(self, *, url: str, http_status: Optional[int], content: Optional[bytes],

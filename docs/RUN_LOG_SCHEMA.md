@@ -4,6 +4,8 @@ The run log records every `discover` and batch run in BigQuery, dataset
 `wikidata-academia.academiabot`. It has 4 tables. Large texts (prompts, raw LLM responses,
 page snapshots) are in the bucket `gs://academiabot/runs/<run_id>/`, and each row keeps the
 path. The code is `wikidata_discover/run_log.py`. Anya built it in week 2 (2026-10-14).
+Week 3 added the columns `legacy` and `source_file` to `llm_calls` and `candidates`. Rows
+written before that have `legacy` false.
 
 Types are BigQuery types. "List" means a REPEATED column. A column marked "JSON" holds JSON
 text in a STRING column. Read it with `JSON_VALUE(config, '$.depth')`.
@@ -19,13 +21,13 @@ many scheduled invocations, so it has one row per invocation.
 | invocation_id | STRING, required | Id of this invocation inside the run |
 | who | STRING | Person or service account that started the run |
 | git_commit | STRING | Code version. `<sha>-dirty-<hash>` means uncommitted changes |
-| command | STRING | `discover` or `batch` |
+| command | STRING | `discover`, `batch`, `snapshot`, or `import-legacy` |
 | args | STRING, JSON | The exact command arguments |
 | qids | STRING, list | Universities the command was asked to process |
 | config | STRING, JSON | Providers with a key, models, depth, and where each API key came from (`env`, `dotenv`, `secret_manager`). Never the key itself |
 | host | STRING | `local`, or the Cloud Function name |
 | started_at, ended_at | TIMESTAMP | Start and end of the invocation (UTC) |
-| outcome | STRING | `ok`, `failed`, or `stopped_for_time` (batch only) |
+| outcome | STRING | `ok`, `failed`, `stopped_for_time` (batch only), `partial` (snapshot: some universities failed and are retried on the next start), or `interrupted` (stopped by hand) |
 | summary | STRING, JSON | Counts and the QIDs finished |
 | source_patch_path | STRING | Saved patch of uncommitted code, so the exact code can be rebuilt |
 | storage_problems | STRING, JSON | Bucket or BigQuery error, if one happened. Empty when all writes worked |
@@ -57,6 +59,8 @@ row, and a failed attempt keeps its row with `error`.
 | error | STRING | Error text when the attempt failed |
 | note | STRING | Explanation when no raw response exists |
 | called_at | TIMESTAMP | Time of the call (UTC) |
+| legacy | BOOLEAN | True for a row imported from a run before the run log (run `us-tier1`). Such a row has no prompt and no raw response |
+| source_file | STRING | For a legacy row: the original file in the bucket that the row came from. Empty otherwise |
 
 ## evidence
 
@@ -90,7 +94,7 @@ with the result of the check against Wikidata.
 | unit_type | STRING | Type the LLM gave, as free text (for example "College") |
 | status | STRING | `linked` (on Wikidata and linked to the university), `orphan` (on Wikidata, not linked), `missing` (not found on Wikidata), `unresolved` (could not be checked) |
 | matched_qid, matched_label | STRING | The Wikidata item it was matched to, and that item's label |
-| match_method | STRING | `fuzzy` (name comparison), `llm` (an LLM picked the item), `none` (no match) |
+| match_method | STRING | `fuzzy` (name comparison), `llm` (an LLM picked the item), `none` (no match), `legacy_unknown` (legacy row: the old run did not save how it matched) |
 | match_choices | STRING, JSON | Every Wikidata item the match step considered. `source` is `linked_child` (already linked to the university) or `search` (found by name search) |
 | source_url | STRING | Page the LLM cited for the unit |
 | website | STRING | Unit website the LLM gave |
@@ -98,6 +102,8 @@ with the result of the check against Wikidata.
 | llm_call_ids | STRING, list | The extract call and any match calls behind this row |
 | evidence_ids | STRING, list | Saved pages behind this row. Empty until week 4 |
 | created_at | TIMESTAMP | Time the row was made (UTC) |
+| legacy | BOOLEAN | True for a row imported from a run before the run log (run `us-tier1`). Such a row has no saved prompt, response, or page |
+| source_file | STRING | For a legacy row: the original CSV or cache file in the bucket that the row came from. Empty otherwise |
 
 ## How the tables link
 
@@ -123,8 +129,16 @@ WHERE c.run_id = 'discover-20261014T164359Z-942cfd'
 
 - **No raw response for old answers.** Answers cached before 2026-10-14 have only the parsed
   answer. Their rows have `raw_response_available` false and a `note`.
-- **Old runs are not in the tables.** Run `us-tier1` (2026-10-03, 9,190 candidates) predates
-  the run log. Anya's week 3 imports it.
+- **Legacy rows are less traceable.** Run `us-tier1` (2026-10-03) was imported with
+  `legacy` true: 9,190 candidates and 8,169 llm_calls. It kept no prompt, no raw response,
+  and no page. A legacy linked row has `matched_qid` and `matched_label` empty, because
+  the old run never saved which item it matched. A legacy orphan row has the QID from the
+  CSV, and `matched_label` is the item's English label on the day of the import. Legacy
+  rows have no `source_url` (the old answers cited no page) but keep the unit's `website`.
+  Their `llm_call_ids` list only the extraction call: a match file cannot be traced back
+  to its unit. Run `us-tier1` has no `runs` rows; its invocations are in
+  `gs://academiabot/runs/us-tier1/invocations.jsonl`. Kensington College (Q16998232)
+  failed in that run and has no candidates rows.
 - **Evidence is empty.** No page is fetched yet, so `evidence` has no rows and every
   `evidence_ids` list is empty.
 - **One level only.** Every candidate's parent is the university. Departments come later.

@@ -371,3 +371,17 @@ def test_schema_doc_lists_every_column():
         named = {c.strip() for cell in named for c in cell.split(",")}
         missing = [c for c, _, _ in columns if c not in named]
         assert not missing, f"{table}: {missing} not in docs/RUN_LOG_SCHEMA.md"
+
+
+def test_new_rows_are_not_legacy(make_log):
+    log, bucket, bq = make_log()
+    log.record_llm_call(provider="openai", model="m", purpose="extract", prompt="p", raw_response="r")
+    log.add_candidate(name="School of Law", status="missing")
+    assert log.pending["llm_calls"][0]["legacy"] is False
+    assert log.pending["candidates"][0]["legacy"] is False
+
+
+def test_setup_finds_the_columns_an_old_table_lacks():
+    old = [c[0] for c in run_log.SCHEMAS["candidates"] if c[0] not in ("legacy", "source_file")]
+    assert [c[0] for c in run_log.missing_columns("candidates", old)] == ["legacy", "source_file"]
+    assert run_log.missing_columns("runs", [c[0] for c in run_log.SCHEMAS["runs"]]) == []
