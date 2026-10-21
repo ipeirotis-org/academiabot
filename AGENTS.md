@@ -22,6 +22,8 @@ academiabot/
 │   ├── to_qs_wikidata.py        # Export missing entities as QuickStatements
 │   ├── batch.py                 # Resumable batch over many QIDs; uploads every artifact to the bucket
 │   ├── run_log.py               # Run log: BigQuery rows, texts in the bucket, local JSON fallback
+│   ├── snapshot.py              # snapshot <QID>: a university's whole subtree as Wikidata has it today
+│   ├── legacy_import.py         # One-time import of run us-tier1 into llm_calls and candidates (legacy)
 │   ├── cloud/collect_function.py # Cloud Function (gen 2) entry point: one time slice of a run, on a schedule
 │   ├── requirements.txt
 │   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness
@@ -321,6 +323,18 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   fallback). Runs never create tables. `python -m wikidata_discover.run_log setup` creates the
   dataset and tables once; it was run on 2026-10-14. A new column needs a schema change there too.
 - Tests never touch the real run log: `tests/conftest.py` sets `run_log.DISABLED`.
+- `snapshot <QID>...` (or `--all` for `gs://academiabot/universities_us_tier1.json`) writes one
+  runs row per invocation and saves each snapshot to `gs://academiabot/runs/<run_id>/snapshots/`,
+  `results/runs/<run_id>/snapshots/`, and `results/snapshots/<QID>.json` (latest copy). With a
+  fixed `--run-id`, a restart skips universities already in the bucket. It builds its bucket and
+  BigQuery clients at the start, so a long run survives the session-end hook that deletes the
+  key file. Start a long run with `setsid nohup ... &` so it does not belong to the Claude shell.
+  Full run `snapshot-us-tier1` started 2026-10-20; pilot `snapshot-pilot-20261020` (6 universities,
+  older format without qualifiers in `parents`).
+- `python -m wikidata_discover.legacy_import` (dry run) and `--write` (once; refuses when legacy
+  rows exist) import run `us-tier1`. Rules and limits are in `docs/RUN_LOG_SCHEMA.md`. It reads only
+  the bucket, never `results/cache`. Dry run 2026-10-21: 9,190 candidates (2,327 linked, 450
+  orphan, 6,413 missing), 8,169 llm_calls, 1 university not imported (Q16998232, failed run).
 
 | Table | One row per | Must contain |
 |---|---|---|
