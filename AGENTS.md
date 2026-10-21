@@ -329,12 +329,26 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   fixed `--run-id`, a restart skips universities already in the bucket. It builds its bucket and
   BigQuery clients at the start, so a long run survives the session-end hook that deletes the
   key file. Start a long run with `setsid nohup ... &` so it does not belong to the Claude shell.
-  Full run `snapshot-us-tier1` started 2026-10-20; pilot `snapshot-pilot-20261020` (6 universities,
+  Full run `snapshot-us-tier1` finished 2026-10-21 05:45 UTC: 1,519 of 1,519 ok, none truncated,
+  20,997 units, 592 universities with no units. It took two invocations. The first
+  (`c44afd9efc21`, 1,062 universities) stopped at 01:57 UTC, probably at the Codespace's 30 minute
+  idle timeout, and has no runs row (that row is written at the end); `progress.jsonl` keeps its
+  invocation id. Keep the Codespace active during a long run. Pilot `snapshot-pilot-20261020` (6 universities,
   older format without qualifiers in `parents`).
 - `python -m wikidata_discover.legacy_import` (dry run) and `--write` (once; refuses when legacy
   rows exist) import run `us-tier1`. Rules and limits are in `docs/RUN_LOG_SCHEMA.md`. It reads only
   the bucket, never `results/cache`. Dry run 2026-10-21: 9,190 candidates (2,327 linked, 450
   orphan, 6,413 missing), 8,169 llm_calls, 1 university not imported (Q16998232, failed run).
+  `--write` ran 2026-10-21 (run `import-legacy-20261021T122118Z-a5c0a3`): the same counts are in
+  BigQuery; 446 of 450 orphans got a label (4 QIDs have no English label). The us-tier1 answers
+  had no reference field, so `source_url` is empty in every legacy row; `website` has the URL.
+- `python -m wikidata_discover.gap_report --candidates bigquery` writes `results/gap_report.csv`
+  (one row per university; `gap` = LLM proposed minus Wikidata direct units). Wikidata counts
+  include every unit the snapshot follows (P749, P361, P527, P355, P199), not only schools, so a
+  large negative gap (Stanford, -1,219) is not a list of missing schools. Final run 2026-10-21:
+  `gap-report-20261021T122252Z-f29e6e`.
+- `python -m wikidata_discover.scripts.check4_sample` redoes the week 3 check 4 draw (seed
+  20261021) into `results/check4_missing_sample.csv`; inputs are named in its docstring.
 
 | Table | One row per | Must contain |
 |---|---|---|
