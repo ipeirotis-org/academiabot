@@ -249,6 +249,15 @@ class RunLog:
         self.local_written = True
         return str(path)
 
+    def attach_source_patch(self, run_dir: Path, identity: str) -> Optional[str]:
+        """Upload the patch that batch.source_identity() saved for a dirty worktree and
+        record where it went in source_patch_path. Does nothing for a clean commit."""
+        patch = Path(run_dir) / f"source-{identity}.patch"
+        if not patch.exists():
+            return None
+        self.run_row["source_patch_path"] = self.save_text(patch.name, patch.read_text())
+        return self.run_row["source_patch_path"]
+
     # ── rows ─────────────────────────────────────────────────────────────
 
     def set_university(self, qid: Optional[str]) -> None:

@@ -27,9 +27,7 @@ def discover_with_run_log(qids, argv) -> None:
     identity = source_identity(run_dir)
     log = run_log.start(run_id, command="discover", args={"argv": argv}, qids=qids,
                         who=operator_identity(), git_commit=identity, run_config=run_config(key_sources))
-    patch = run_dir / f"source-{identity}.patch"
-    if patch.exists():
-        log.run_row["source_patch_path"] = log.save_text(patch.name, patch.read_text())
+    log.attach_source_patch(run_dir, identity)
     outcome, done = "failed", []
     try:
         for qid in qids:

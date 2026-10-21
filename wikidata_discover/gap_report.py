@@ -169,6 +169,18 @@ def read_crowd(bq) -> Dict[int, dict]:
     return crowd_tree(dict(r) for r in bq.query(q).result())
 
 
+def start_log(run_id: str, run_dir: Path, argv: List[str], args, bucket, bq):
+    """The run log of this invocation. A dirty worktree's patch goes to the bucket and
+    its path into source_patch_path, as for snapshot and discover."""
+    from wikidata_discover.batch import operator_identity, source_identity
+    identity = source_identity(run_dir)
+    log = run_log.start(run_id, command="gap-report", args={"argv": ["gap-report"] + argv},
+                        who=operator_identity(), git_commit=identity, bucket=bucket, bq_client=bq,
+                        run_config={"snapshot_run": args.snapshot_run, "candidates": args.candidates})
+    log.attach_source_patch(run_dir, identity)
+    return log
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Gap report: Wikidata vs LLM vs crowd table, per university")
     p.add_argument("--candidates", required=True,
@@ -176,15 +188,12 @@ def main(argv=None) -> int:
     p.add_argument("--snapshot-run", default="snapshot-us-tier1")
     args = p.parse_args(argv)
     from google.cloud import bigquery, storage
-    from wikidata_discover.batch import operator_identity, source_identity
     bucket = storage.Client(project=config.GCP_PROJECT).bucket(config.RUNLOG_BUCKET)
     bq = bigquery.Client(project=config.GCP_PROJECT)
     run_id = run_log.new_run_id("gap-report")
     run_dir = config.RESULTS_DIR / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    log = run_log.start(run_id, command="gap-report", args={"argv": ["gap-report"] + list(argv or sys.argv[1:])},
-                        who=operator_identity(), git_commit=source_identity(run_dir), bucket=bucket, bq_client=bq,
-                        run_config={"snapshot_run": args.snapshot_run, "candidates": args.candidates})
+    log = start_log(run_id, run_dir, list(argv or sys.argv[1:]), args, bucket, bq)
     outcome, summary = "failed", {}
     try:
         universities = json.loads(bucket.blob("universities_us_tier1.json").download_as_text())

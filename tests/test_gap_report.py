@@ -65,3 +65,44 @@ def test_an_alias_can_match_the_crowd_name():
     crowd = [{"id": 7, "name": "MIT", "parent_id": None, "website_url": None}]
     snaps = {"Q8": snap("Q8", "Massachusetts Institute of Technology", [], aliases=["MIT"])}
     assert g.match_crowd(snaps, g.crowd_tree(crowd)) == {"Q8": (7, "name")}
+
+
+
+class UploadBucket:
+    """A bucket that keeps uploaded texts by name."""
+    name = "academiabot"
+
+    def __init__(self):
+        self.store = {}
+
+    def blob(self, name):
+        store = self.store
+
+        class Blob:
+            def upload_from_string(self, text, **kw):
+                store[name] = text
+        return Blob()
+
+
+def test_a_dirty_worktree_patch_goes_to_the_bucket_and_into_the_runs_row(monkeypatch, tmp_path):
+    import argparse
+    import wikidata_discover.batch as batch
+    from wikidata_discover import config
+    from wikidata_discover import gap_report
+
+    def dirty(run_dir):
+        (run_dir / "source-abc-dirty-456.patch").write_text("diff --git a/y b/y\n")
+        return "abc-dirty-456"
+    monkeypatch.setattr(batch, "source_identity", dirty)
+    monkeypatch.setattr(batch, "operator_identity", lambda: "tester")
+    monkeypatch.setattr(config, "RESULTS_DIR", tmp_path)   # a fallback never writes to results/
+    args = argparse.Namespace(snapshot_run="snapshot-us-tier1", candidates="bigquery")
+    bucket = UploadBucket()
+    log = gap_report.start_log("gap-report-t1", tmp_path, ["--candidates", "bigquery"], args, bucket, bq=None)
+    assert log.run_row["git_commit"] == "abc-dirty-456"
+    assert log.run_row["source_patch_path"] == "gs://academiabot/runs/gap-report-t1/source-abc-dirty-456.patch"
+    assert bucket.store["runs/gap-report-t1/source-abc-dirty-456.patch"] == "diff --git a/y b/y\n"
+
+    monkeypatch.setattr(batch, "source_identity", lambda run_dir: "abc")
+    clean = gap_report.start_log("gap-report-t2", tmp_path, [], args, UploadBucket(), bq=None)
+    assert "source_patch_path" not in clean.run_row

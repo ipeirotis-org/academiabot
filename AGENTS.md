@@ -343,6 +343,12 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   `--write` ran 2026-10-21 (run `import-legacy-20261021T122118Z-a5c0a3`): the same counts are in
   BigQuery; 446 of 450 orphans got a label (4 QIDs have no English label). The us-tier1 answers
   had no reference field, so `source_url` is empty in every legacy row; `website` has the URL.
+- Until 2026-10-21, `legacy_import` and `gap_report` saved the dirty-worktree patch only locally
+  and left `source_patch_path` empty; both now upload it with `RunLog.attach_source_patch()`, as
+  snapshot and discover do. The two real runs from before the fix (`import-legacy-20261021T122118Z-a5c0a3`
+  and `gap-report-20261021T122252Z-f29e6e`, both `7164e67-dirty-1b794ffecf29`) had their patch
+  uploaded afterwards to `runs/<run_id>/source-7164e67-dirty-1b794ffecf29.patch`. Their runs rows
+  still have `source_patch_path` empty, on purpose: rows are not rewritten.
 - `python -m wikidata_discover.gap_report --candidates bigquery` writes `results/gap_report.csv`
   (one row per university; `gap` = LLM proposed minus Wikidata direct units). Wikidata counts
   include every unit the snapshot follows (P749, P361, P527, P355, P199), not only schools, so a

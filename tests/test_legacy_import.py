@@ -161,3 +161,41 @@ def test_a_retry_after_candidates_failed_adds_only_the_missing_rows():
 def test_missing_rows_drops_ids_already_there_and_repeated_ids():
     rows = [{"candidate_id": "a"}, {"candidate_id": "b"}, {"candidate_id": "b"}, {"candidate_id": "c"}]
     assert [r["candidate_id"] for r in li.missing_rows(rows, "candidate_id", {"a"})] == ["b", "c"]
+
+
+
+class UploadBucket:
+    """A bucket that keeps uploaded texts by name."""
+    name = "academiabot"
+
+    def __init__(self):
+        self.store = {}
+
+    def blob(self, name):
+        store = self.store
+
+        class Blob:
+            def upload_from_string(self, text, **kw):
+                store[name] = text
+        return Blob()
+
+
+def test_a_dirty_worktree_patch_goes_to_the_bucket_and_into_the_runs_row(monkeypatch, tmp_path):
+    import wikidata_discover.batch as batch
+    from wikidata_discover import config
+
+    def dirty(run_dir):
+        (run_dir / "source-abc-dirty-123.patch").write_text("diff --git a/x b/x\n")
+        return "abc-dirty-123"
+    monkeypatch.setattr(batch, "source_identity", dirty)
+    monkeypatch.setattr(batch, "operator_identity", lambda: "tester")
+    monkeypatch.setattr(config, "RESULTS_DIR", tmp_path)   # a fallback never writes to results/
+    bucket = UploadBucket()
+    log = li.start_log("import-legacy-t1", tmp_path, ["--write"], True, bucket, bq=None)
+    assert log.run_row["git_commit"] == "abc-dirty-123"
+    assert log.run_row["source_patch_path"] == "gs://academiabot/runs/import-legacy-t1/source-abc-dirty-123.patch"
+    assert bucket.store["runs/import-legacy-t1/source-abc-dirty-123.patch"] == "diff --git a/x b/x\n"
+
+    monkeypatch.setattr(batch, "source_identity", lambda run_dir: "abc")
+    clean = li.start_log("import-legacy-t2", tmp_path, [], False, UploadBucket(), bq=None)
+    assert "source_patch_path" not in clean.run_row

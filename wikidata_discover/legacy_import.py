@@ -246,21 +246,30 @@ def load_table(bq, table: str, rows: List[dict]) -> None:
     job.result()
 
 
+def start_log(run_id: str, run_dir, argv: List[str], write: bool, bucket, bq):
+    """The run log of this invocation. A dirty worktree's patch goes to the bucket and
+    its path into source_patch_path, as for snapshot and discover."""
+    from wikidata_discover.batch import operator_identity, source_identity
+    identity = source_identity(run_dir)
+    log = run_log.start(run_id, command="import-legacy", args={"argv": ["import-legacy"] + argv},
+                        who=operator_identity(), git_commit=identity, bucket=bucket,
+                        bq_client=bq, run_config={"source_run": SOURCE_RUN, "write": write})
+    log.attach_source_patch(run_dir, identity)
+    return log
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Import run us-tier1 into llm_calls and candidates, as legacy rows")
     p.add_argument("--write", action="store_true", help="Load into BigQuery. Without it, a dry run")
     args = p.parse_args(argv)
     from google.cloud import bigquery, storage
     from wikidata_discover import wikidata_api
-    from wikidata_discover.batch import operator_identity, source_identity
     bucket = storage.Client(project=config.GCP_PROJECT).bucket(config.RUNLOG_BUCKET)
     bq = bigquery.Client(project=config.GCP_PROJECT)
     run_id = run_log.new_run_id("import-legacy")
     run_dir = config.RESULTS_DIR / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    log = run_log.start(run_id, command="import-legacy", args={"argv": ["import-legacy"] + list(argv or sys.argv[1:])},
-                        who=operator_identity(), git_commit=source_identity(run_dir), bucket=bucket,
-                        bq_client=bq, run_config={"source_run": SOURCE_RUN, "write": args.write})
+    log = start_log(run_id, run_dir, list(argv or sys.argv[1:]), args.write, bucket, bq)
     outcome = "failed"
     summary: dict = {}
     try:

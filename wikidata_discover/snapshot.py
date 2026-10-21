@@ -299,9 +299,7 @@ def run_snapshots(qids: List[str], run_id: Optional[str] = None, argv=None, *, b
                         results_dir=results_dir,
                         run_config={"properties_up": list(UP), "properties_down": list(DOWN),
                                     "user_agent": config.USER_AGENT, "bucket": config.RUNLOG_BUCKET})
-    patch = run_dir / f"source-{identity}.patch"
-    if patch.exists():
-        log.run_row["source_patch_path"] = log.save_text(patch.name, patch.read_text())
+    log.attach_source_patch(run_dir, identity)
 
     summary = {"requested": len(qids), "skipped_done": 0, "ok": 0, "failed": 0, "failed_qids": [],
                "units": 0}
