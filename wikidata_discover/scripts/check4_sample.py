@@ -7,6 +7,16 @@ The draw is fixed so anyone can repeat it:
 - sort rule: the pool is sorted by candidate_id (stable legacy ids) before the draw
 - draw: random.Random(SEED).sample(pool, N) with SEED = 20261021 and N = 20
 
+The input is kept in two places, so the draw can be repeated without the local folder:
+1. The dry-run folder in the bucket (uploaded 2026-10-21, same files as the local copy):
+   gs://academiabot/runs/import-legacy-20261021T000404Z-d03c16/candidates.jsonl
+   Copy it down, then pass its path as CANDIDATES_JSONL:
+   gcloud storage cp gs://academiabot/runs/import-legacy-20261021T000404Z-d03c16/candidates.jsonl .
+2. After `legacy_import --write`, BigQuery table wikidata-academia.academiabot.candidates.
+   Legacy ids are hashes of fixed inputs, so the rows and candidate_ids are the same. Export
+   `SELECT * FROM academiabot.candidates WHERE run_id = 'us-tier1' AND legacy` as JSON
+   lines and pass that file. Check first that it has 6,413 missing rows.
+
 University names come from gs://academiabot/universities_us_tier1.json. The script sends
 no Wikidata query. The us-tier1 answers had no source URL field, only a website, so the
 source_url column holds the website the LLM gave.
