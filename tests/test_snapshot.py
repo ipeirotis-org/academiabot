@@ -217,3 +217,29 @@ def test_cloud_clients_are_built_before_the_first_university(wd, tmp_path, monke
     snap.run_snapshots(["Q1"], "snap-4", [], bucket=FakeBucket(), sparql=sparql,
                        results_dir=tmp_path, report=lambda m: None)
     assert order.index("bq") < order.index("sparql")
+
+
+def test_a_qid_listed_twice_is_crawled_once_and_counted_once(wd, tmp_path):
+    asked = []
+
+    def counting(query):
+        asked.append(query)
+        return wd(query)
+    reports = []
+    bucket = FakeBucket()
+    s = snap.run_snapshots(["Q1", "Q1"], "snap-dup", [], bucket=bucket, sparql=counting,
+                           results_dir=tmp_path, report=reports.append)
+    once = []
+    snap.run_snapshots(["Q1"], "snap-once", [], bucket=FakeBucket(), sparql=lambda q: once.append(q) or wd(q),
+                       results_dir=tmp_path, report=lambda m: None)
+    assert len(asked) == len(once)                       # the same queries as for one QID
+    assert (s["requested"], s["duplicates_dropped"], s["ok"]) == (2, 1, 1)
+    assert s["units"] == json.loads(bucket.store["runs/snap-dup/snapshots/Q1.json"])["counts"]["units_in_tree"]
+    progress = [json.loads(l) for l in bucket.store["runs/snap-dup/progress.jsonl"].splitlines()]
+    assert [(r["qid"], r["n"], r["of"]) for r in progress] == [("Q1", 1, 1)]
+    assert any("1 duplicate QIDs dropped" in m for m in reports)
+
+
+def test_unique_qids_keeps_the_first_occurrence_in_order():
+    assert snap.unique_qids(["Q3", "Q1", "Q3", "Q2", "Q1"]) == (["Q3", "Q1", "Q2"], 2)
+    assert snap.unique_qids([]) == ([], 0)

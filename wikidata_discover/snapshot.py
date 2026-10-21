@@ -19,7 +19,7 @@ results/snapshots/<QID>.json, and writes one runs row per invocation. With a fix
 import json
 import time
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from wikidata_discover import config
 from wikidata_discover.sparql_helpers import execute_sparql_bindings
@@ -281,6 +281,12 @@ def done_in_bucket(bucket, run_id: str) -> set:
             if b.name.endswith(".json")}
 
 
+def unique_qids(qids: List[str]) -> Tuple[List[str], int]:
+    """The QIDs in order, each once (the first occurrence kept), and how many were dropped."""
+    out = list(dict.fromkeys(qids))
+    return out, len(qids) - len(out)
+
+
 def run_snapshots(qids: List[str], run_id: Optional[str] = None, argv=None, *, bucket=None,
                   sparql: Callable[[str], List[dict]] = execute_sparql_bindings,
                   results_dir: Optional[Path] = None, report=print) -> dict:
@@ -301,8 +307,12 @@ def run_snapshots(qids: List[str], run_id: Optional[str] = None, argv=None, *, b
                                     "user_agent": config.USER_AGENT, "bucket": config.RUNLOG_BUCKET})
     log.attach_source_patch(run_dir, identity)
 
-    summary = {"requested": len(qids), "skipped_done": 0, "ok": 0, "failed": 0, "failed_qids": [],
-               "units": 0}
+    requested = len(qids)
+    qids, dropped = unique_qids(qids)
+    if dropped:
+        report(f"{dropped} duplicate QIDs dropped; {len(qids)} universities left, first occurrence kept")
+    summary = {"requested": requested, "duplicates_dropped": dropped, "skipped_done": 0, "ok": 0,
+               "failed": 0, "failed_qids": [], "units": 0}
     # Build both clients now. Each reads the service account key file once and keeps the
     # credentials in memory, so a long run survives the session-end hook that deletes
     # the file. A client that cannot be built here makes the run log fall back to local
