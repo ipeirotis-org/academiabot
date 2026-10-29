@@ -51,6 +51,35 @@ def discover_with_run_log(qids, argv) -> None:
         config.console.print(f"[dim]{run_log.describe(status)}[/dim]")
 
 
+def subunits_with_run_log(qids, argv) -> None:
+    """Ask for the sub-units of each QID and record the run in the run log."""
+    from wikidata_discover import subunits
+    from wikidata_discover.batch import operator_identity, source_identity, RESULTS_DIR
+    key_sources = config.load_api_keys()
+    check_only_provider()
+    run_id = run_log.new_run_id("subunits")
+    run_dir = RESULTS_DIR / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    identity = source_identity(run_dir)
+    log = run_log.start(run_id, command="subunits", args={"argv": argv}, qids=qids,
+                        who=operator_identity(), git_commit=identity, run_config=run_config(key_sources))
+    log.attach_source_patch(run_dir, identity)
+    outcome, done = "failed", []
+    try:
+        for qid in qids:
+            try:
+                s = subunits.subunits_for(qid, log)
+                done.append(s)
+                config.console.print(f"{qid} {s['label']}: {s['units']} sub-units from {s['provider']} "
+                                     f"{s['by_type']}, {s['no_url']} without a URL. Wrote {s['csv']}")
+            finally:
+                log.flush()
+        outcome = "ok"
+    finally:
+        status = log.finish(outcome, {"done": done})
+        config.console.print(f"[dim]{run_log.describe(status)}[/dim]")
+
+
 def snapshot_command(args, argv) -> None:
     from wikidata_discover import snapshot
     from wikidata_discover.batch import is_qid
@@ -82,6 +111,14 @@ def run_cli():
                    help="Run one AI alone, for extraction and matching. Default: the first that answers")
     d.add_argument("--debug", action="store_true", help="Enable debug logging")
 
+    u = sub.add_parser("subunits", help="Ask an AI for the sub-units of a university or school")
+    u.add_argument("unit_qids", nargs="+", help="Q-IDs of units (e.g. Q770467 for NYU Stern)")
+    u.add_argument("--provider", choices=config.PROVIDERS, default=None,
+                   help="Run one AI alone. Default: the first that answers")
+    u.add_argument("--max-searches", type=int, default=None,
+                   help="Web searches per request (Anthropic and OpenAI). Default: 10")
+    u.add_argument("--debug", action="store_true", help="Enable debug logging")
+
     # harvest subcommand
     h = sub.add_parser("harvest", help="Fetch all U.S. universities to JSON")
 
@@ -101,6 +138,18 @@ def run_cli():
             config.LLM_MODEL = args.llm_model
         config.ONLY_PROVIDER = args.provider
         discover_with_run_log(args.university_qids, sys.argv[1:])
+
+    elif args.command == "subunits":
+        from wikidata_discover.batch import is_qid
+        bad = [q for q in args.unit_qids if not is_qid(q)]
+        if bad:
+            raise SystemExit("subunits: give Q-IDs such as Q770467. Bad: " + ", ".join(bad))
+        if args.debug:
+            logging.basicConfig(level=logging.DEBUG, force=True)
+        config.ONLY_PROVIDER = args.provider
+        if args.max_searches:
+            llm_helpers.SUBUNIT_MAX_SEARCHES = args.max_searches
+        subunits_with_run_log(args.unit_qids, sys.argv[1:])
 
     elif args.command == "harvest":
         fetch_us_universities()

@@ -1016,6 +1016,31 @@ class LLMHelper:
         raise LLMUnavailable(f"no provider could judge candidate {candidate!r}")
 
 
+    @staticmethod
+    def extract_subunits(unit: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """The direct sub-units of one unit (a university or a school), each with a name,
+        a type, a website, one source URL, and a country with the page or address that
+        shows it. Tries the providers in order, or only config.ONLY_PROVIDER, and returns
+        the first answer with units. Each provider searches the web while it answers.
+
+        unit: {"qid", "label", "parent_label", "website", "country"} from Wikidata.
+        Sets last_subunit_provider and last_subunit_call_ids. Raises ValueError when no
+        provider answered with units."""
+        global last_subunit_provider, last_subunit_call_ids
+        last_subunit_provider, last_subunit_call_ids = None, []
+        mode = f"only_{config.ONLY_PROVIDER}" if config.ONLY_PROVIDER else "best_available"
+        for provider in chosen([(p,) for p in config.PROVIDERS]):
+            try:
+                units, call_ids = _subunits_from(provider[0], unit, mode)
+            except ValueError as e:      # no key for this provider
+                logger.debug("extract_subunits: %s not available (%s)", provider[0], e)
+                continue
+            if units:
+                last_subunit_provider, last_subunit_call_ids = provider[0], call_ids
+                return units
+        who = f"{config.ONLY_PROVIDER} (run alone with --provider)" if config.ONLY_PROVIDER else "No provider"
+        raise ValueError(f"{who} returned no sub-units for {unit.get('label')!r} ({unit.get('qid')}).")
+
 def parse_match_answer(answer: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:
     """Turn a choose_match reply into (qid, label), ("ORPHAN:" + qid, label), or None.
 
@@ -1043,3 +1068,235 @@ def _union_names(names_a: List[str], names_b: List[str]) -> List[str]:
         if not any(_names_match(name, r) for r in result):
             result.append(name)
     return result
+
+
+# ─────────────────────────  SUB-UNITS (week 4)  ─────────────────────────
+
+SUBUNIT_TYPES = ("school", "department", "program", "center", "campus", "office", "other")
+# Panos's scope rule (2026-10-29): offices are out; centers and "other" need a person.
+SUBUNIT_IN_SCOPE = {"school": "yes", "department": "yes", "program": "yes", "campus": "yes",
+                    "office": "no", "center": "check", "other": "check"}
+
+SYSTEM_SUBUNITS = (
+    "You list the organizational sub-units of one academic unit, for a database of university "
+    "structures. The input gives the unit, the university it belongs to, its website, and the "
+    "country Wikidata has for it.\n"
+    "List the direct sub-units only, one level down. For a university: its schools, colleges, "
+    "faculties, and campuses. For a school or college: its departments, the degree programs that "
+    "are not part of a listed department, its research centers, its campuses, and its offices.\n"
+    "Do not list courses, majors, or concentrations inside a department. Do not invent units.\n"
+    "Search the web to find and check each unit. For each unit give:\n"
+    "- name: the name the unit uses for itself.\n"
+    "- unit_type: one of school, department, program, center, campus, office, other.\n"
+    "- website: the unit's own website, or null.\n"
+    "- source_url: one page, on an official site of the university when possible, that names this "
+    "unit as part of the parent unit. Give the exact URL you saw. Use null if you found none.\n"
+    "- country: the country where the unit is, in English. Do not copy the parent's country: a "
+    "unit can be in another country (NYU Abu Dhabi is in the United Arab Emirates).\n"
+    "- country_source: the URL of a page, or the street address, that shows that country.\n"
+    "Reply with one JSON object and nothing else: {\"units\": [ ... ]}."
+)
+
+SUBUNITS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "units": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "unit_type": {"type": "string", "enum": list(SUBUNIT_TYPES)},
+                    "website": {"type": ["string", "null"]},
+                    "source_url": {"type": ["string", "null"]},
+                    "country": {"type": ["string", "null"]},
+                    "country_source": {"type": ["string", "null"]},
+                },
+                "required": ["name", "unit_type", "website", "source_url", "country", "country_source"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["units"],
+    "additionalProperties": False,
+}
+
+SUBUNIT_PROMPT_HASH = _prompt_hash(SYSTEM_SUBUNITS, SUBUNITS_SCHEMA)
+SUBUNIT_MAX_SEARCHES = 10        # web searches per request (Anthropic max_uses, OpenAI max_tool_calls)
+
+
+def subunit_tools(provider: str) -> list:
+    """The search tool each provider gets, with the current search limit (Gemini has none)."""
+    return {"openai": [{"type": "web_search_preview"}],
+            "anthropic": [{"type": "web_search_20260209", "name": "web_search", "max_uses": SUBUNIT_MAX_SEARCHES}],
+            "gemini": [{"google_search": {}}]}[provider]
+SUBUNIT_MAX_TOKENS = 16000
+SUBUNIT_TIMEOUT_S = 600          # one request; a web search over a whole school takes minutes
+_MAX_CONTINUATIONS = 3           # Anthropic pause_turn resumptions per request
+
+last_subunit_provider: Optional[str] = None
+last_subunit_call_ids: list = []
+
+
+def subunit_input(unit: Dict[str, Any]) -> str:
+    """The user message of a sub-unit request. Pure."""
+    return (f"Unit: {unit.get('label')} ({unit.get('qid')})\n"
+            f"Part of: {unit.get('parent_label') or 'none (this unit is the university)'}\n"
+            f"Website: {unit.get('website') or 'unknown'}\n"
+            f"Country on Wikidata (a first guess only): {unit.get('country') or 'unknown'}")
+
+
+def json_with_units(text: str) -> Any:
+    """The last JSON object in `text` that has a "units" key. The model may write a
+    sentence or a code fence around it. Raises ValueError when there is none. Pure."""
+    if not text:
+        raise ValueError("empty response text")
+    decoder, found = json.JSONDecoder(), None
+    for i, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(text[i:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "units" in obj:
+            found = obj
+    if found is None:
+        raise ValueError("no JSON object with a 'units' key in the response")
+    return found
+
+
+def _http_url(value: Any) -> Optional[str]:
+    v = value.strip() if isinstance(value, str) else ""
+    return v if re.match(r"^https?://\S+$", v, re.I) else None
+
+
+def normalize_subunits(payload: Any) -> List[Dict[str, Any]]:
+    """Clean one answer: a known type ("other" otherwise), http(s) URLs only, one row
+    per name, the in_scope value of Panos's rule, and a no_url flag. Pure."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("units"), list):
+        raise ValueError("expected an object with a 'units' list")
+    out, seen = [], set()
+    for u in payload["units"]:
+        if not isinstance(u, dict) or not str(u.get("name") or "").strip():
+            continue
+        name = " ".join(str(u["name"]).split())
+        if name.casefold() in seen:
+            continue
+        seen.add(name.casefold())
+        t = str(u.get("unit_type") or "").strip().lower()
+        t = t if t in SUBUNIT_TYPES else "other"
+        source = _http_url(u.get("source_url"))
+        country_source = u.get("country_source")
+        country_source = " ".join(country_source.split()) if isinstance(country_source, str) and country_source.strip() else None
+        country = u.get("country")
+        out.append({"name": name, "unit_type": t, "in_scope": SUBUNIT_IN_SCOPE[t],
+                    "website": _http_url(u.get("website")), "source_url": source,
+                    "country": country.strip() if isinstance(country, str) and country.strip() else None,
+                    "country_source": country_source, "no_url": source is None})
+    return out
+
+
+def _subunit_timeout() -> float:
+    left = config.seconds_left()
+    return SUBUNIT_TIMEOUT_S if left is None else max(5.0, min(SUBUNIT_TIMEOUT_S, left))
+
+
+def _subunit_requests(provider: str, model: str, user: str):
+    """Send one sub-unit request. Yields (response, text) for every API response, so
+    each is recorded before the next; the text of the last one holds the answer."""
+    if provider == "openai":
+        client = _get_openai_client().with_options(timeout=_subunit_timeout(), max_retries=0)
+        resp = client.responses.create(
+            model=model, input=[{"role": "system", "content": SYSTEM_SUBUNITS}, {"role": "user", "content": user}],
+            tools=subunit_tools("openai"), max_tool_calls=SUBUNIT_MAX_SEARCHES, store=False,
+            text={"format": {"type": "json_schema", "name": "subunits", "schema": SUBUNITS_SCHEMA}})
+        yield resp, (resp.output_text if resp.output else None)
+    elif provider == "anthropic":
+        # Streamed, so a long search never sits silent until the read timeout, and no SDK
+        # retry: the attempt loop in _subunits_from retries and records every attempt.
+        client = _get_anthropic_client().with_options(timeout=_subunit_timeout(), max_retries=0)
+        messages = [{"role": "user", "content": user}]
+        for _ in range(_MAX_CONTINUATIONS + 1):
+            t0 = time.time()
+            with client.messages.stream(model=model, max_tokens=SUBUNIT_MAX_TOKENS, system=SYSTEM_SUBUNITS,
+                                        tools=subunit_tools("anthropic"), messages=messages) as stream:
+                for event in stream:
+                    block = getattr(event, "content_block", None)
+                    if getattr(event, "type", None) == "content_block_start" and \
+                            getattr(block, "type", None) == "server_tool_use":
+                        logger.info("extract_subunits anthropic: web search started (%.0f s)", time.time() - t0)
+                resp = stream.get_final_message()
+            searches = getattr(getattr(getattr(resp, "usage", None), "server_tool_use", None), "web_search_requests", None)
+            logger.info("extract_subunits anthropic: done in %.0f s, stop %s, %s searches, %s output tokens",
+                        time.time() - t0, resp.stop_reason, searches, getattr(getattr(resp, "usage", None), "output_tokens", None))
+            text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+            yield resp, (text or None)
+            if resp.stop_reason != "pause_turn":
+                return
+            # The server stopped its search loop early: send the turn back and it resumes.
+            messages = messages + [{"role": "assistant", "content": resp.content}]
+    elif provider == "gemini":
+        from google.genai import types as genai_types
+        client = _get_gemini_client()
+        resp = client.models.generate_content(
+            model=model, contents=f"{SYSTEM_SUBUNITS}\n\n{user}",
+            config=genai_types.GenerateContentConfig(
+                tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())],
+                max_output_tokens=SUBUNIT_MAX_TOKENS,
+                http_options=genai_types.HttpOptions(timeout=int(_subunit_timeout() * 1000))))
+        yield resp, (resp.text or None)
+    else:
+        raise ValueError(f"unknown provider {provider!r}")
+
+
+def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """One provider's sub-units for one unit, from the cache or a fresh call, and the
+    llm_calls ids behind them. Raises ValueError when the provider has no key."""
+    model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
+    user = subunit_input(unit)
+    request = {"tools": subunit_tools(provider), "max_tokens": SUBUNIT_MAX_TOKENS,
+               "max_searches": SUBUNIT_MAX_SEARCHES if provider != "gemini" else None}
+    # The key holds the whole request: unit, input, tools, and limits, so a run with
+    # search never reads an answer made without it.
+    key = _cache_key(unit.get("label") or "", provider, model, purpose="subunits", prompt_hash=SUBUNIT_PROMPT_HASH,
+                     extra=json.dumps({"qid": unit.get("qid"), "input": user, **request}, sort_keys=True))
+    call = {"provider": provider, "model": model, "purpose": "extract",
+            "prompt": {"system": SYSTEM_SUBUNITS, "user": user, "schema": SUBUNITS_SCHEMA},
+            "cache_key": key, "prompt_hash": SUBUNIT_PROMPT_HASH,
+            "request_config": {"step": "subunits", "extraction_mode": mode, "sample": None, **request}}
+    cached = _load_cache(key)
+    if isinstance(cached, list):
+        return cached, [i for i in [_record_cache_hit(call, key)] if i]
+    if provider == "openai":
+        require_key("OPENAI_API_KEY", config.OPENAI_API_KEY)
+    elif provider == "anthropic":
+        require_key("ANTHROPIC_API_KEY", config.ANTHROPIC_API_KEY)
+    else:
+        require_key("GOOGLE_API_KEY", config.GOOGLE_API_KEY)
+
+    for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
+        if not enough_time_for_llm_call():
+            logger.warning("extract_subunits: deadline too close, not calling %s for %s", provider, unit.get("label"))
+            break
+        call_ids, text, t0 = [], None, time.time()
+        try:
+            for n, (resp, text) in enumerate(_subunit_requests(provider, model, user)):
+                part = call if n == 0 else {**call, "request_config": {**call["request_config"], "continuation": n}}
+                call_ids.append(_record_response(part, resp, text, attempt, t0))
+                t0 = time.time()
+        except Exception as e:  # noqa: BLE001 - recorded, then the next attempt
+            call_ids.append(_record_error(call, e, attempt, t0))
+            logger.error("extract_subunits %s attempt %d/%d: API error for %s: %s",
+                         provider, attempt, _EXTRACT_MAX_RETRIES, unit.get("label"), e)
+            continue
+        try:
+            units = normalize_subunits(json_with_units(text or ""))
+        except ValueError as e:
+            logger.error("extract_subunits %s attempt %d/%d: no usable answer for %s: %s",
+                         provider, attempt, _EXTRACT_MAX_RETRIES, unit.get("label"), e)
+            continue
+        _save_cache(key, units)
+        _save_cache_meta(key, call_ids[-1])
+        return units, [i for i in call_ids if i]
+    return [], []

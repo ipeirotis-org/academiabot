@@ -81,7 +81,7 @@ SCHEMAS: Dict[str, List[tuple]] = {
     ],
 }
 
-CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved")
+CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved", "unaligned")
 
 # Columns added after the tables were first created (week 3). setup_tables() adds them
 # to existing tables, and fills `legacy` with false on rows written before.
@@ -308,7 +308,7 @@ class RunLog:
         return call_id
 
     def add_candidate(self, **fields) -> str:
-        """Add one candidates row. status must be linked, orphan, missing, or unresolved."""
+        """Add one candidates row. status must be linked, orphan, missing, unresolved, or unaligned."""
         if fields.get("status") not in CANDIDATE_STATUSES:
             raise ValueError(f"candidate status must be one of {CANDIDATE_STATUSES}, got {fields.get('status')!r}")
         cid = new_id()

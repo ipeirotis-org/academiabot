@@ -92,7 +92,7 @@ with the result of the check against Wikidata.
 | parent_candidate_id | STRING | Parent's candidate_id when the parent has no QID. Empty today |
 | name | STRING | Name the LLM gave |
 | unit_type | STRING | Type the LLM gave, as free text (for example "College") |
-| status | STRING | `linked` (on Wikidata and linked to the university), `orphan` (on Wikidata, not linked), `missing` (not found on Wikidata), `unresolved` (could not be checked) |
+| status | STRING | `linked` (on Wikidata and linked to the university), `orphan` (on Wikidata, not linked), `missing` (not found on Wikidata), `unresolved` (could not be checked), `unaligned` (a sub-unit from the week 4 `subunits` step, not yet compared with Wikidata) |
 | matched_qid, matched_label | STRING | The Wikidata item it was matched to, and that item's label |
 | match_method | STRING | `fuzzy` (name comparison), `llm` (an LLM picked the item), `none` (no match), `legacy_unknown` (legacy row: the old run did not save how it matched) |
 | match_choices | STRING, JSON | Every Wikidata item the match step considered. `source` is `linked_child` (already linked to the university) or `search` (found by name search) |
