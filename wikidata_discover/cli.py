@@ -114,9 +114,9 @@ def run_cli():
     u = sub.add_parser("subunits", help="Ask an AI for the sub-units of a university or school")
     u.add_argument("unit_qids", nargs="+", help="Q-IDs of units (e.g. Q770467 for NYU Stern)")
     u.add_argument("--provider", choices=config.PROVIDERS, default=None,
-                   help="Run one AI alone. Default: the first that answers")
+                   help="Run one AI alone. Default: Anthropic, then OpenAI, then Gemini")
     u.add_argument("--max-searches", type=int, default=None,
-                   help="Web searches per request (Anthropic and OpenAI). Default: 10")
+                   help="Web searches per request (Anthropic and OpenAI). Default: 5")
     u.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     # harvest subcommand

@@ -1029,7 +1029,9 @@ class LLMHelper:
         global last_subunit_provider, last_subunit_call_ids
         last_subunit_provider, last_subunit_call_ids = None, []
         mode = f"only_{config.ONLY_PROVIDER}" if config.ONLY_PROVIDER else "best_available"
-        for provider in chosen([(p,) for p in config.PROVIDERS]):
+        # Anthropic first here: on Stern it found all 10 units of Shuo's ground truth in
+        # 55 s, and OpenAI found 5 (week 4 experiments). discover keeps its own order.
+        for provider in chosen([(p,) for p in SUBUNIT_PROVIDER_ORDER]):
             try:
                 units, call_ids = _subunits_from(provider[0], unit, mode)
             except ValueError as e:      # no key for this provider
@@ -1122,13 +1124,17 @@ SUBUNITS_SCHEMA = {
 }
 
 SUBUNIT_PROMPT_HASH = _prompt_hash(SYSTEM_SUBUNITS, SUBUNITS_SCHEMA)
-SUBUNIT_MAX_SEARCHES = 10        # web searches per request (Anthropic max_uses, OpenAI max_tool_calls)
+SUBUNIT_PROVIDER_ORDER = ("anthropic", "openai", "gemini")
+SUBUNIT_MAX_SEARCHES = 5         # web searches per request (Anthropic max_uses, OpenAI max_tool_calls)
+# The basic Anthropic search tool. The newer web_search_20260209 filters results by running
+# code: on Stern it made 46 code-execution steps for 3 searches (552k input tokens, 808 s).
+ANTHROPIC_SEARCH_TOOL = "web_search_20250305"
 
 
 def subunit_tools(provider: str) -> list:
     """The search tool each provider gets, with the current search limit (Gemini has none)."""
     return {"openai": [{"type": "web_search_preview"}],
-            "anthropic": [{"type": "web_search_20260209", "name": "web_search", "max_uses": SUBUNIT_MAX_SEARCHES}],
+            "anthropic": [{"type": ANTHROPIC_SEARCH_TOOL, "name": "web_search", "max_uses": SUBUNIT_MAX_SEARCHES}],
             "gemini": [{"google_search": {}}]}[provider]
 SUBUNIT_MAX_TOKENS = 16000
 SUBUNIT_TIMEOUT_S = 600          # one request; a web search over a whole school takes minutes

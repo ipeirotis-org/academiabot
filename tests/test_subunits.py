@@ -109,7 +109,7 @@ def test_anthropic_searches_resumes_after_pause_turn_and_caches_the_answer(monke
     units = LLMHelper.extract_subunits(STERN)
     assert [u["name"] for u in units] == ["Finance", "Career Center"] and lh.last_subunit_provider == "anthropic"
     assert len(sent) == 2
-    assert sent[0]["tools"] == [{"type": "web_search_20260209", "name": "web_search", "max_uses": 10}]
+    assert sent[0]["tools"] == [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
     assert sent[1]["messages"][-1]["role"] == "assistant"                # the paused turn is sent back
     assert "NYU Abu Dhabi" in sent[0]["system"] and "Q770467" in sent[0]["messages"][0]["content"]
     # A second request for the same unit reads the cache: no new call.
@@ -123,7 +123,7 @@ def test_the_cache_key_changes_with_the_search_limit(monkeypatch, tmp_path):
     answer = Resp([Block("text", json.dumps(ANSWER))], "end_turn")
     sent = fake_anthropic(monkeypatch, [answer, answer])
     LLMHelper.extract_subunits(STERN)
-    monkeypatch.setattr(lh, "SUBUNIT_MAX_SEARCHES", 3)               # same request, fewer searches
+    monkeypatch.setattr(lh, "SUBUNIT_MAX_SEARCHES", 3)               # same request, other search limit
     LLMHelper.extract_subunits(STERN)
     assert len(sent) == 2
 
@@ -152,3 +152,15 @@ def test_subunits_for_writes_both_csv_files_and_unaligned_candidates(monkeypatch
     cands = log.pending["candidates"]
     assert {c["status"] for c in cands} == {"unaligned"} and cands[0]["llm_call_ids"] == ["c1"]
     assert cands[0]["university_qid"] == "Q49210" and cands[0]["parent_qid"] == "Q770467"
+
+
+def test_without_provider_the_subunit_step_asks_anthropic_first(monkeypatch):
+    asked = []
+
+    def fake(provider, unit, mode):
+        asked.append(provider)
+        return ([{"name": "X"}], ["c"]) if provider == "openai" else ([], [])
+    monkeypatch.setattr(lh, "_subunits_from", fake)
+    monkeypatch.setattr(config, "ONLY_PROVIDER", None)
+    assert LLMHelper.extract_subunits(STERN) == [{"name": "X"}]
+    assert asked == ["anthropic", "openai"] and lh.last_subunit_provider == "openai"
