@@ -198,3 +198,47 @@ def test_each_cited_page_is_fetched_once_saved_and_linked_to_its_candidates(monk
     rows = {r["name"]: r for r in csv.DictReader((tmp_path / "Q770467_anthropic.csv").open())}
     assert (rows["Finance"]["evidence_outcome"], rows["Old Lab"]["evidence_outcome"], rows["No Page"]["no_url"]) == ("ok", "refused", "yes")
     assert s["pages"] == {"ok": 1, "refused": 1}
+
+
+def _run_with_pages(monkeypatch, tmp_path, answer):
+    from wikidata_discover import fetcher
+    monkeypatch.setattr(LLMHelper, "extract_subunits", staticmethod(lambda unit: lh.normalize_subunits(answer)))
+    monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
+    monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
+    fetched = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        return fetcher.FetchResult(url=url, outcome="ok", final_url=url, status=200,
+                                   content=b"<p>NYU Abu Dhabi, United Arab Emirates</p>", content_type="text/html")
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    subunits.subunits_for("Q49210", log, out_dir=tmp_path, fetch=lambda q: STERN, fetch_page=fake_fetch)
+    ev = {e["url"]: e for e in log.pending["evidence"]}
+    cands = {c["name"]: c for c in log.pending["candidates"]}
+    rows = {r["name"]: r for r in csv.DictReader((tmp_path / "Q49210_anthropic.csv").open())}
+    return fetched, ev, cands, rows
+
+
+def test_a_country_page_is_fetched_once_and_linked_to_its_unit(monkeypatch, tmp_path):
+    answer = {"units": [
+        {"name": "NYU Abu Dhabi", "unit_type": "campus", "source_url": "https://all.example/",
+         "country": "United Arab Emirates", "country_source": "https://nyuad.example/about"},
+        {"name": "NYU Shanghai", "unit_type": "campus", "source_url": "https://all.example/",
+         "country": "China", "country_source": "https://all.example/"}]}   # same page twice: one fetch
+    fetched, ev, cands, rows = _run_with_pages(monkeypatch, tmp_path, answer)
+    assert fetched == ["https://all.example/", "https://nyuad.example/about"]
+    assert ev["https://nyuad.example/about"]["unit_names"] == ["NYU Abu Dhabi"]
+    assert cands["NYU Abu Dhabi"]["evidence_ids"] == [ev["https://all.example/"]["evidence_id"],
+                                                     ev["https://nyuad.example/about"]["evidence_id"]]
+    assert cands["NYU Shanghai"]["evidence_ids"] == [ev["https://all.example/"]["evidence_id"]]
+    assert rows["NYU Abu Dhabi"]["country_evidence_outcome"] == "ok"
+
+
+def test_a_country_source_that_is_an_address_is_not_fetched(monkeypatch, tmp_path):
+    answer = {"units": [{"name": "Finance", "unit_type": "department", "source_url": "https://stern.example/depts",
+                         "country": "United States", "country_source": "44 West 4th Street, New York, NY"}]}
+    fetched, ev, cands, rows = _run_with_pages(monkeypatch, tmp_path, answer)
+    assert fetched == ["https://stern.example/depts"]
+    assert len(cands["Finance"]["evidence_ids"]) == 1
+    assert rows["Finance"]["country_evidence_outcome"] == ""

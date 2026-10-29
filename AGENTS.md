@@ -372,7 +372,8 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   request dict changes the key for every provider, so the next run calls the LLM again.
 - `fetcher.py` fetches cited pages under the URL rules above (one test or more per rule in
   `tests/test_fetcher.py`); `subunits` saves each cited URL once in `evidence` and links it to
-  the citing candidates. New `evidence` columns (2026-10-29, added in BigQuery to that table only):
+  the citing candidates. A `country_source` that is a URL counts as a cited URL (an address is
+  not fetched); the CSV column `country_evidence_outcome` gives its fetch outcome. New `evidence` columns (2026-10-29, added in BigQuery to that table only):
   final_url, outcome, detail, content_type, text_path. nyu.edu answers 405 to the fetcher's
   User-Agent on some pages; the fetcher does not pose as a browser.
 

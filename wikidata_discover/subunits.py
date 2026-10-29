@@ -5,12 +5,15 @@ that searches the web (Anya, week 4).
 
 For each unit it writes, under wikidata_discover/results/subunits/:
 - <QID>_<provider>.csv: every sub-unit, with name, unit_type, in_scope, website, one
-  source_url, a no_url flag, country, and country_source (the page or address that shows it);
+  source_url, a no_url flag, country, country_source (the page or address that shows it), and the fetch
+  outcome of the source page and of the country page;
 - <QID>_<provider>_departments.csv: the department rows only, the input of Shuo's scorer.
+A country source that is a web page is fetched and saved like a source URL; an address is not.
 Each sub-unit also adds a candidates row with status "unaligned": it is not yet compared
 with Wikidata (alignment is week 6). Offices are kept, with in_scope "no".
 """
 import csv
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -19,7 +22,7 @@ from wikidata_discover.sparql_helpers import execute_sparql_bindings
 
 OUT_DIR = config.RESULTS_DIR / "subunits"
 COLUMNS = ["name", "unit_type", "in_scope", "website", "source_url", "no_url", "evidence_outcome", "country",
-           "country_source", "parent_qid", "parent_label", "provider"]
+           "country_source", "country_evidence_outcome", "parent_qid", "parent_label", "provider"]
 
 UNIT_QUERY = """
 SELECT ?label ?website ?countryLabel ?parent ?parentLabel ?prop WHERE {
@@ -54,13 +57,24 @@ def fetch_unit(qid: str) -> Dict[str, Any]:
     return unit_from_bindings(qid, flatten(execute_sparql_bindings(UNIT_QUERY % {"q": qid})))
 
 
+def country_url(u: Dict[str, Any]) -> str:
+    """The country source when it is a web page, else "" (a street address is not fetched)."""
+    src = (u.get("country_source") or "").strip()
+    return src if re.match(r"https?://", src, re.I) else ""
+
+
+def cited_urls(u: Dict[str, Any]) -> List[str]:
+    """The pages one unit cites: its source URL, then its country page if that differs."""
+    return list(dict.fromkeys(x for x in [u.get("source_url") or "", country_url(u)] if x))
+
+
 def fetch_cited(units: List[Dict[str, Any]], log, fetch=fetcher.fetch) -> Dict[str, Dict[str, Any]]:
-    """Fetch every cited source URL once and save it as an evidence row. Returns
-    {url: {"evidence_id", "outcome"}}. Units that cite the same page share one fetch."""
+    """Fetch every cited page (source URL or country page) once and save it as an evidence
+    row. Returns {url: {"evidence_id", "outcome"}}. Units that cite the same page share one fetch."""
     citing: Dict[str, List[str]] = {}
     for u in units:
-        if u.get("source_url"):
-            citing.setdefault(u["source_url"], []).append(u["name"])
+        for url in cited_urls(u):
+            citing.setdefault(url, []).append(u["name"])
     out = {}
     for url, names in citing.items():
         result = fetch(url)
@@ -78,7 +92,9 @@ def csv_rows(units: List[Dict[str, Any]], unit: Dict[str, Any], provider: str,
              "no_url": "yes" if u.get("no_url") else "",
              "evidence_outcome": evidence.get(u.get("source_url") or "", {}).get("outcome", ""),
              "country": u.get("country") or "",
-             "country_source": u.get("country_source") or "", "parent_qid": unit["qid"],
+             "country_source": u.get("country_source") or "",
+             "country_evidence_outcome": evidence.get(country_url(u), {}).get("outcome", ""),
+             "parent_qid": unit["qid"],
              "parent_label": unit["label"], "provider": provider} for u in units]
 
 
@@ -112,7 +128,7 @@ def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path
                               name=u["name"], unit_type=u["unit_type"], status="unaligned", match_method="none",
                               source_url=u.get("source_url"), website=u.get("website"), provider=provider,
                               llm_call_ids=list(llm_helpers.last_subunit_call_ids),
-                              evidence_ids=[e for e in [evidence.get(u.get("source_url") or "", {}).get("evidence_id")] if e])
+                              evidence_ids=[e for e in [evidence.get(url, {}).get("evidence_id") for url in cited_urls(u)] if e])
     by_type: Dict[str, int] = {}
     for u in units:
         by_type[u["unit_type"]] = by_type.get(u["unit_type"], 0) + 1
