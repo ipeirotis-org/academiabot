@@ -10,7 +10,7 @@ sheet, and the export follow them. Each rule has one real example from weeks 1 t
 
 Schools, campuses, departments, and degree programs are in scope. Each one has its own type.
 
-Offices, institutes, museums, and libraries are out of scope.
+Offices, museums, and libraries are out of scope.
 
 Examples:
 
@@ -19,13 +19,14 @@ Examples:
 - Out of scope: the Grey Art Gallery (Q16972698) is a museum of NYU. The Elmer Holmes Bobst Library
   (Q3051566) is a library of NYU. Both are direct units of NYU in the week 3 snapshot.
 
-**Open:** are centers in scope or out of scope? Example: in check 1, the LLM found 21
-centers at Stern, such as the Berkley Center for Entrepreneurship. Until this is decided,
-the sub-unit step gives each center `in_scope` "check".
+**Open (ask Panos):** are centers, institutes, and labs in scope, and should each of these
+three get its own type? Until this is decided, the sub-unit step gives each center
+`in_scope` "check". Examples from check 1:
 
-**Open (ask Panos):** are labs in scope, and do they get their own type, lab? Example: in
-check 1, the LLM found the Music and Audio Research Laboratory at Steinhardt. It typed it
-"center", because the sub-unit step has no lab type.
+- Courant's Center for Data Science has its own faculty and grants degrees. Shuo's ground
+  truth lists it as a department. The LLM typed it "center".
+- Steinhardt's Music and Audio Research Laboratory is a lab. The LLM typed it "center",
+  because the sub-unit step has no lab type.
 
 ## 2. Types
 
@@ -63,15 +64,7 @@ the heading "Academic Departments and Programs", so the page does not settle it.
 
 **Open:** how to decide when the website does not make the difference clear.
 
-## 5. A unit named "center" that works as a department
-
-Example: Courant's Center for Data Science grants degrees and has its own faculty. Shuo's
-ground truth lists it as a department. In check 1, the LLM typed it "center".
-
-**Open:** does it count as a department, because it meets rule 3? Or is it a center, so
-that the open question on centers in rule 1 decides its scope?
-
-## 6. Campuses
+## 5. Campuses
 
 A campus is a place. Record it with type campus.
 
@@ -88,7 +81,7 @@ Examples:
 - In run `us-tier1`, the LLM proposed "USU Wendover" (Utah State University) as a school.
   It is a campus. The week 3 check 4 sample marked it as not a school.
 
-## 7. Offices
+## 6. Offices
 
 Never record an office as a unit. Examples of offices are a registrar, student services,
 and career services.
@@ -105,7 +98,7 @@ Examples:
 - In check 1, the LLM found 13 offices at Steinhardt. None of them is in the department
   list.
 
-## 8. Endowed chairs
+## 7. Endowed chairs
 
 An endowed chair is a named professorship. It is a position, not a unit. Never count a
 chair as a unit.
@@ -114,7 +107,7 @@ Example: in the week 3 snapshot, 904 of Stanford's 1,228 direct units on Wikidat
 "chair" (Q1363750) as their P31. One example is the King Philanthropies Professorship. This
 is the main reason why Stanford's gap in the week 3 gap report is -1,219.
 
-## 9. Open questions
+## 8. Open questions
 
 - **Open: a unit with parents in two universities.** Example: NYU Shanghai has P749 to NYU
   and also to East China Normal University. It is not decided which tree owns it, or
