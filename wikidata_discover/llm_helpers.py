@@ -1215,7 +1215,9 @@ def _subunit_requests(provider: str, model: str, user: str):
         client = _get_openai_client().with_options(timeout=_subunit_timeout(), max_retries=0)
         resp = client.responses.create(
             model=model, input=[{"role": "system", "content": SYSTEM_SUBUNITS}, {"role": "user", "content": user}],
-            tools=subunit_tools("openai"), max_tool_calls=SUBUNIT_MAX_SEARCHES, store=False,
+            # Without a forced search, gpt-4o answered Stern from memory (no search call).
+            tools=subunit_tools("openai"), tool_choice={"type": "web_search_preview"},
+            max_tool_calls=SUBUNIT_MAX_SEARCHES, max_output_tokens=SUBUNIT_MAX_TOKENS, store=False,
             text={"format": {"type": "json_schema", "name": "subunits", "schema": SUBUNITS_SCHEMA}})
         yield resp, (resp.output_text if resp.output else None)
     elif provider == "anthropic":
@@ -1262,7 +1264,8 @@ def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[List
     model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
     user = subunit_input(unit)
     request = {"tools": subunit_tools(provider), "max_tokens": SUBUNIT_MAX_TOKENS,
-               "max_searches": SUBUNIT_MAX_SEARCHES if provider != "gemini" else None}
+               "max_searches": SUBUNIT_MAX_SEARCHES if provider != "gemini" else None,
+               "search_forced": provider == "openai"}
     # The key holds the whole request: unit, input, tools, and limits, so a run with
     # search never reads an answer made without it.
     key = _cache_key(unit.get("label") or "", provider, model, purpose="subunits", prompt_hash=SUBUNIT_PROMPT_HASH,
