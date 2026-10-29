@@ -64,8 +64,8 @@ row, and a failed attempt keeps its row with `error`.
 
 ## evidence
 
-One row is one web page that the pipeline fetched and saved. The table is empty until pages
-are fetched (Anya's week 4).
+One row is one attempt to fetch one cited web page (Anya's week 4, `wikidata_discover/fetcher.py`).
+A page that was refused or did not arrive still gets a row, with its outcome and the reason.
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -76,7 +76,12 @@ are fetched (Anya's week 4).
 | http_status | INTEGER | Web server answer, for example 200 (found) or 404 (not found) |
 | content_hash | STRING | SHA-256 hash of the page. Same hash means same content |
 | snapshot_path | STRING | Saved copy of the page in the bucket |
-| unit_names | STRING, list | Unit names found on the page |
+| unit_names | STRING, list | Names of the units that cite this page and appear in its text |
+| final_url | STRING | The last address asked for, after redirects |
+| outcome | STRING | `ok`, `http_error` (the server answered with an error status), `refused` (a safety rule stopped it; nothing was fetched), `too_many_redirects` (more than 5), `too_large` (over 5 MB), `timeout` (over 20 seconds), or `error` (connection or TLS problem) |
+| detail | STRING | Why, for any outcome but `ok`. For a refusal: the rule and, for a redirect, its number |
+| content_type | STRING | The Content-Type the server sent |
+| text_path | STRING | Saved visible text of the page in the bucket |
 
 ## candidates
 
@@ -92,7 +97,7 @@ with the result of the check against Wikidata.
 | parent_candidate_id | STRING | Parent's candidate_id when the parent has no QID. Empty today |
 | name | STRING | Name the LLM gave |
 | unit_type | STRING | Type the LLM gave, as free text (for example "College") |
-| status | STRING | `linked` (on Wikidata and linked to the university), `orphan` (on Wikidata, not linked), `missing` (not found on Wikidata), `unresolved` (could not be checked) |
+| status | STRING | `linked` (on Wikidata and linked to the university), `orphan` (on Wikidata, not linked), `missing` (not found on Wikidata), `unresolved` (could not be checked), `unaligned` (a sub-unit from the week 4 `subunits` step, not yet compared with Wikidata) |
 | matched_qid, matched_label | STRING | The Wikidata item it was matched to, and that item's label |
 | match_method | STRING | `fuzzy` (name comparison), `llm` (an LLM picked the item), `none` (no match), `legacy_unknown` (legacy row: the old run did not save how it matched) |
 | match_choices | STRING, JSON | Every Wikidata item the match step considered. `source` is `linked_child` (already linked to the university) or `search` (found by name search) |
@@ -139,8 +144,8 @@ WHERE c.run_id = 'discover-20261014T164359Z-942cfd'
   to its unit. Run `us-tier1` has no `runs` rows; its invocations are in
   `gs://academiabot/runs/us-tier1/invocations.jsonl`. Kensington College (Q16998232)
   failed in that run and has no candidates rows.
-- **Evidence is empty.** No page is fetched yet, so `evidence` has no rows and every
-  `evidence_ids` list is empty.
+- **Evidence starts in week 4.** Legacy rows and the rows of `discover` have empty
+  `evidence_ids`. The `subunits` step fills them.
 - **One level only.** Every candidate's parent is the university. Departments come later.
 - **unit_type is free text.** The LLM chooses the word. `docs/MODELING_RULES.md` (week 4)
   will set the allowed types.

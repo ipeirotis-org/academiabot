@@ -65,6 +65,9 @@ SCHEMAS: Dict[str, List[tuple]] = {
         ("fetched_at", "TIMESTAMP", "NULLABLE"), ("http_status", "INTEGER", "NULLABLE"),
         ("content_hash", "STRING", "NULLABLE"), ("snapshot_path", "STRING", "NULLABLE"),
         ("unit_names", "STRING", "REPEATED"),
+        ("final_url", "STRING", "NULLABLE"), ("outcome", "STRING", "NULLABLE"),
+        ("detail", "STRING", "NULLABLE"), ("content_type", "STRING", "NULLABLE"),
+        ("text_path", "STRING", "NULLABLE"),
     ],
     "candidates": [
         ("candidate_id", "STRING", "REQUIRED"), ("run_id", "STRING", "REQUIRED"),
@@ -81,7 +84,7 @@ SCHEMAS: Dict[str, List[tuple]] = {
     ],
 }
 
-CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved")
+CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved", "unaligned")
 
 # Columns added after the tables were first created (week 3). setup_tables() adds them
 # to existing tables, and fills `legacy` with false on rows written before.
@@ -308,7 +311,7 @@ class RunLog:
         return call_id
 
     def add_candidate(self, **fields) -> str:
-        """Add one candidates row. status must be linked, orphan, missing, or unresolved."""
+        """Add one candidates row. status must be linked, orphan, missing, unresolved, or unaligned."""
         if fields.get("status") not in CANDIDATE_STATUSES:
             raise ValueError(f"candidate status must be one of {CANDIDATE_STATUSES}, got {fields.get('status')!r}")
         cid = new_id()
@@ -317,17 +320,22 @@ class RunLog:
         return cid
 
     def add_evidence(self, *, url: str, http_status: Optional[int], content: Optional[bytes],
-                     unit_names=()) -> str:
-        """Add one evidence row with a saved snapshot. Nothing calls this yet: pages are
-        fetched from Anya's week 4 on."""
+                     unit_names=(), final_url: Optional[str] = None, outcome: str = "ok",
+                     detail: str = "", content_type: str = "", text: Optional[str] = None) -> str:
+        """Add one evidence row for one fetch: the saved page and its text when it arrived,
+        or the outcome and the reason when it did not (a refused URL is "refused")."""
         eid = new_id()
-        snapshot = None
+        snapshot = text_path = None
         if content is not None:
             snapshot = self.save_text(f"evidence/{eid}.html", content.decode("utf-8", "replace"), "text/html")
+        if text is not None:
+            text_path = self.save_text(f"evidence/{eid}.txt", text)
         self._add("evidence", {"evidence_id": eid, "url": url, "fetched_at": now_iso(),
                                "http_status": http_status,
                                "content_hash": hashlib.sha256(content).hexdigest() if content is not None else None,
-                               "snapshot_path": snapshot, "unit_names": list(unit_names)})
+                               "snapshot_path": snapshot, "unit_names": list(unit_names),
+                               "final_url": final_url, "outcome": outcome, "detail": detail or None,
+                               "content_type": content_type or None, "text_path": text_path})
         return eid
 
     # ── writing ──────────────────────────────────────────────────────────
