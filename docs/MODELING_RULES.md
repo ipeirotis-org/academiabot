@@ -117,5 +117,9 @@ is the main reason why Stanford's gap in the week 3 gap report is -1,219.
   School" (Q15265896), with no P749 or P361 to Penn State. The week 3 check 4 sample found
   it. Alignment by name alone did not find it.
 - **Open: typos on Wikidata.** It is not decided whether we match through a typo, fix it, or
-  report it to a person. Example: none has been recorded yet in weeks 1 to 4. Add the
-  first real case here.
+  report it to a person. Example: the English label of Q10867642 is "University of
+  Michigan–Shanghai Jiao Tong Univeristy Joint Institute", with "Univeristy" for
+  "University". It is a joint institute with P749 to the University of Michigan (Q230492)
+  and to Shanghai Jiao Tong University (Q525169). The week 3 snapshot `snapshot-us-tier1`
+  has it, and week 3 check 3 found it. It is the only label with this typo in the 1,519
+  snapshots.
