@@ -8,14 +8,16 @@ sheet, and the export follow them. Each rule has one real example from weeks 1 t
 
 ## 1. Scope
 
-Schools, campuses, departments, and degree programs are in scope. Each one has its own type.
+Schools, campuses, departments, degree programs, and labs are in scope. Each one has its own
+type.
 
 Offices, institutes, museums, and libraries are out of scope.
 
 Examples:
 
 - In scope: Stern (Q770467) is a school of NYU. Applied Psychology is a department of
-  Steinhardt (check 1).
+  Steinhardt (check 1). The Music and Audio Research Laboratory is a lab of Steinhardt
+  (check 1). The LLM typed it "center", because the sub-unit step has no lab type yet.
 - Out of scope: the Grey Art Gallery (Q16972698) is a museum of NYU. The Elmer Holmes Bobst Library
   (Q3051566) is a library of NYU. Both are direct units of NYU in the week 3 snapshot.
 
@@ -25,8 +27,8 @@ the sub-unit step gives each center `in_scope` "check".
 
 ## 2. Types
 
-Each unit gets exactly one of these types: school, campus, department, program, center,
-office, other.
+Each unit gets exactly one of these types: school, campus, department, program, lab,
+center, office, other.
 
 Never record a department or a program as a school.
 
