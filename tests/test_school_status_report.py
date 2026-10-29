@@ -20,16 +20,35 @@ def test_summary_counts_statuses_types_and_universities_without_a_linked_school(
     types = {t: n for t, n, _ in s["by_type"]}
     assert types == {"school": 1, "campus": 1, "college": 1, "student services": 1}
     assert s["universities_with_0_linked"] == 1          # Q2 has rows but no linked school
-    assert s["flagged_not_school"] == 2 and s["providers"] == {"openai": 3, "anthropic": 1}
+    assert s["providers"] == {"openai": 3, "anthropic": 1}
+    groups = {g: (n, c) for g, n, c in s["by_group"]}
+    assert groups["school"] == (2, {"linked": 1, "orphan": 1}) and groups["campus"] == (1, {"missing": 1})
+    assert groups["office"] == (1, {"missing": 1}) and groups["other"] == (0, {})
+    scope = {k: (n, c) for k, n, c in s["by_scope"]}
+    assert scope["yes"] == (3, {"linked": 1, "missing": 1, "orphan": 1}) and scope["no"] == (1, {"missing": 1})
 
 
-def test_unit_types_like_campus_office_program_or_service_are_flagged():
-    assert ssr.not_school_word("Branch Campus") == "campus"
-    assert ssr.not_school_word("Administrative Office") == "office"
-    assert ssr.not_school_word("Academic Program") == "program"
-    assert ssr.not_school_word("Student Services") == "service"
-    assert ssr.not_school_word("College") == "" and ssr.not_school_word("Graduate School") == ""
-    assert ssr.not_school_word(None) == ""
+def test_type_group_follows_the_scope_rule():
+    cases = {"College": "school", "Graduate School": "school", "academic division": "school", "كلية": "school",
+             "Campus": "campus", "Branch Campus": "campus", "Instructional Site": "campus",
+             "Regional Education Center": "campus",
+             "Department": "department", "Departamento Académico": "department",
+             "Academic Program": "program", "Online Program": "program", "Online Campus": "program",
+             "Certificate Program": "program", "Major": "program",
+             "Administrative Office": "office", "Student Services": "office", "Administrative Division": "office",
+             "Office of the Registrar": "office", "Career Services": "office",
+             "Research Center": "other", "Institute": "other", "Library": "other", "Camp": "other", None: "other"}
+    assert {t: ssr.type_group(t) for t in cases} == cases
+    assert [ssr.in_scope(t) for t in ("School", "Campus", "Department", "Program", "Office", "Center")] == \
+        ["yes", "yes", "yes", "yes", "no", "check"]
+
+
+def test_summary_sheet_has_status_scope_group_and_type_tables():
+    lines, heads = ssr.summary_lines(ssr.summarize(CANDS, UNIS), "2026-10-29")
+    titles = [lines[h - 1][0] for h in heads]
+    assert titles[1:] == ["Status", "in_scope", "type_group", "unit_type (as the AI gave it, case made uniform)"]
+    office = next(l for l in lines if l and l[0] == "office")
+    assert office == ("office", 1, 25.0, 0, 0, 1, 0, "no")
 
 
 def test_school_rows_note_linked_rows_without_a_match_and_keep_orphan_matches():
@@ -40,7 +59,10 @@ def test_school_rows_note_linked_rows_without_a_match_and_keep_orphan_matches():
     arts = next(r for r in rows if r["School"] == "College of Arts")
     assert (arts["Matched QID"], arts["Matched label"], arts["Note"]) == ("Q9", "Beta College of Arts", "")
     campus = next(r for r in rows if r["School"] == "Main Campus")
-    assert (campus["Likely not a school"], campus["Flag reason"]) == ("yes", "campus")
+    assert (campus["type_group"], campus["in_scope"]) == ("campus", "yes")
+    office = next(r for r in rows if r["School"] == "Career Services")
+    assert (office["type_group"], office["in_scope"]) == ("office", "no")
+    assert "Likely not a school" not in law and "Flag reason" not in law
 
 
 def test_university_rows_are_sorted_by_name_and_use_the_snapshot_counts():
@@ -57,6 +79,6 @@ def test_university_rows_are_sorted_by_name_and_use_the_snapshot_counts():
 
 def test_the_summary_page_names_the_caveats():
     md = ssr.summary_md(ssr.summarize(CANDS, UNIS), "2026-10-29")
-    assert "1 is already on" in md and "6 are not schools" in md
+    assert "Panos" in md and "Out of scope (offices)" in md and "17 are in scope and missing" in md
     assert "3 of 4 orphans" in md and "no matched QID" in md and "Gamma Institute (Q3)" in md
     assert "—" not in md
