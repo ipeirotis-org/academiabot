@@ -10,15 +10,18 @@ sheet, and the export follow them. Each rule has one real example from weeks 1 t
 
 Schools, campuses, departments, and degree programs are in scope. Each one has its own type.
 
-Offices, centers, institutes, museums, and libraries are out of scope.
+Offices, institutes, museums, and libraries are out of scope.
 
 Examples:
 
 - In scope: Stern (Q770467) is a school of NYU. Applied Psychology is a department of
   Steinhardt (check 1).
-- Out of scope: the Berkley Center for Entrepreneurship at Stern is a center (check 1). The
-  Grey Art Gallery (Q16972698) is a museum of NYU. The Elmer Holmes Bobst Library
+- Out of scope: the Grey Art Gallery (Q16972698) is a museum of NYU. The Elmer Holmes Bobst Library
   (Q3051566) is a library of NYU. Both are direct units of NYU in the week 3 snapshot.
+
+**Open:** are centers in scope or out of scope? Example: in check 1, the LLM found 21
+centers at Stern, such as the Berkley Center for Entrepreneurship. Until this is decided,
+the sub-unit step gives each center `in_scope` "check".
 
 ## 2. Types
 
@@ -61,8 +64,8 @@ the heading "Academic Departments and Programs", so the page does not settle it.
 Example: Courant's Center for Data Science grants degrees and has its own faculty. Shuo's
 ground truth lists it as a department. In check 1, the LLM typed it "center".
 
-**Open:** does it count as a department, because it meets rule 3? Or is it out of scope as
-a center, under rule 1?
+**Open:** does it count as a department, because it meets rule 3? Or is it a center, so
+that the open question on centers in rule 1 decides its scope?
 
 ## 6. Campuses
 
