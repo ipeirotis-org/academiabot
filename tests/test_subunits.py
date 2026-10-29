@@ -143,7 +143,7 @@ def test_subunits_for_writes_both_csv_files_and_unaligned_candidates(monkeypatch
     monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
     monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
     log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
-    s = subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=lambda q: STERN)
+    s = subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=lambda q: STERN, fetch_pages=False)
     assert (s["units"], s["no_url"], s["by_type"]) == (2, 1, {"department": 1, "office": 1})
     rows = list(csv.DictReader((tmp_path / "Q770467_anthropic.csv").open()))
     assert [(r["name"], r["in_scope"], r["no_url"]) for r in rows] == [("Finance", "yes", ""), ("Career Center", "no", "yes")]
@@ -164,3 +164,37 @@ def test_without_provider_the_subunit_step_asks_anthropic_first(monkeypatch):
     monkeypatch.setattr(config, "ONLY_PROVIDER", None)
     assert LLMHelper.extract_subunits(STERN) == [{"name": "X"}]
     assert asked == ["anthropic", "openai"] and lh.last_subunit_provider == "openai"
+
+
+def test_each_cited_page_is_fetched_once_saved_and_linked_to_its_candidates(monkeypatch, tmp_path):
+    from wikidata_discover import fetcher
+    answer = {"units": [
+        {"name": "Finance", "unit_type": "department", "source_url": "https://stern.example/depts"},
+        {"name": "Marketing", "unit_type": "department", "source_url": "https://stern.example/depts"},
+        {"name": "Old Lab", "unit_type": "center", "source_url": "http://169.254.169.254/x"},
+        {"name": "No Page", "unit_type": "office", "source_url": None}]}
+    monkeypatch.setattr(LLMHelper, "extract_subunits", staticmethod(lambda unit: lh.normalize_subunits(answer)))
+    monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
+    monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
+    fetched = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        if "169.254" in url:
+            return fetcher.fetch(url, connect=lambda *a: pytest.fail("must not connect"))
+        return fetcher.FetchResult(url=url, outcome="ok", final_url=url, status=200,
+                                   content=b"<p>Departments: Finance, Marketing</p>", content_type="text/html")
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    s = subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=lambda q: STERN, fetch_page=fake_fetch)
+    assert fetched == ["https://stern.example/depts", "http://169.254.169.254/x"]      # once per page
+    ev = {e["url"]: e for e in log.pending["evidence"]}
+    assert ev["https://stern.example/depts"]["unit_names"] == ["Finance", "Marketing"]
+    assert ev["http://169.254.169.254/x"]["outcome"] == "refused"
+    cands = {c["name"]: c for c in log.pending["candidates"]}
+    assert cands["Finance"]["evidence_ids"] == cands["Marketing"]["evidence_ids"] == [ev["https://stern.example/depts"]["evidence_id"]]
+    assert cands["Old Lab"]["evidence_ids"] == [ev["http://169.254.169.254/x"]["evidence_id"]]
+    assert cands["No Page"]["evidence_ids"] == []
+    rows = {r["name"]: r for r in csv.DictReader((tmp_path / "Q770467_anthropic.csv").open())}
+    assert (rows["Finance"]["evidence_outcome"], rows["Old Lab"]["evidence_outcome"], rows["No Page"]["no_url"]) == ("ok", "refused", "yes")
+    assert s["pages"] == {"ok": 1, "refused": 1}

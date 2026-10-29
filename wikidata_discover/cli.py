@@ -51,7 +51,7 @@ def discover_with_run_log(qids, argv) -> None:
         config.console.print(f"[dim]{run_log.describe(status)}[/dim]")
 
 
-def subunits_with_run_log(qids, argv) -> None:
+def subunits_with_run_log(qids, argv, fetch_pages: bool = True) -> None:
     """Ask for the sub-units of each QID and record the run in the run log."""
     from wikidata_discover import subunits
     from wikidata_discover.batch import operator_identity, source_identity, RESULTS_DIR
@@ -68,10 +68,11 @@ def subunits_with_run_log(qids, argv) -> None:
     try:
         for qid in qids:
             try:
-                s = subunits.subunits_for(qid, log)
+                s = subunits.subunits_for(qid, log, fetch_pages=fetch_pages)
                 done.append(s)
                 config.console.print(f"{qid} {s['label']}: {s['units']} sub-units from {s['provider']} "
-                                     f"{s['by_type']}, {s['no_url']} without a URL. Wrote {s['csv']}")
+                                     f"{s['by_type']}, {s['no_url']} without a URL, cited pages {s['pages']}. "
+                                     f"Wrote {s['csv']}")
             finally:
                 log.flush()
         outcome = "ok"
@@ -117,6 +118,7 @@ def run_cli():
                    help="Run one AI alone. Default: Anthropic, then OpenAI, then Gemini")
     u.add_argument("--max-searches", type=int, default=None,
                    help="Web searches per request (Anthropic and OpenAI). Default: 5")
+    u.add_argument("--no-fetch", action="store_true", help="Do not fetch and save the cited pages")
     u.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     # harvest subcommand
@@ -149,7 +151,7 @@ def run_cli():
         config.ONLY_PROVIDER = args.provider
         if args.max_searches:
             llm_helpers.SUBUNIT_MAX_SEARCHES = args.max_searches
-        subunits_with_run_log(args.unit_qids, sys.argv[1:])
+        subunits_with_run_log(args.unit_qids, sys.argv[1:], fetch_pages=not args.no_fetch)
 
     elif args.command == "harvest":
         fetch_us_universities()
