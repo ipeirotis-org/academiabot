@@ -359,6 +359,22 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   `gap-report-20261021T122252Z-f29e6e`.
 - `python -m wikidata_discover.scripts.check4_sample` redoes the week 3 check 4 draw (seed
   20261021) into `results/check4_missing_sample.csv`; inputs are named in its docstring.
+- `subunits <QID>... [--provider X] [--max-searches N] [--no-fetch]` (week 4,
+  `wikidata_discover/subunits.py`, prompt and calls in `llm_helpers.py`): the direct sub-units of a
+  university or school, with type (school, department, program, center, campus, office, other),
+  `in_scope` (offices "no", centers and other "check"), one source URL, and a country with its
+  source. Writes `results/subunits/<QID>_<provider>.csv` and `_departments.csv`; candidates rows get
+  status `unaligned`. Without `--provider` it tries Anthropic first. Anthropic uses the basic
+  `web_search_20250305` tool, streamed: `web_search_20260209` ran 46 code-execution steps for 3
+  searches on Stern (552k input tokens, 808 s). OpenAI needs `tool_choice` forcing the search, or
+  gpt-4o answers from memory, and `max_output_tokens`, or the JSON is cut off.
+- Every value in a sub-unit request is in its cache key (`_subunits_from`). Adding a field to the
+  request dict changes the key for every provider, so the next run calls the LLM again.
+- `fetcher.py` fetches cited pages under the URL rules above (one test or more per rule in
+  `tests/test_fetcher.py`); `subunits` saves each cited URL once in `evidence` and links it to
+  the citing candidates. New `evidence` columns (2026-10-29, added in BigQuery to that table only):
+  final_url, outcome, detail, content_type, text_path. nyu.edu answers 405 to the fetcher's
+  User-Agent on some pages; the fetcher does not pose as a browser.
 
 | Table | One row per | Must contain |
 |---|---|---|
