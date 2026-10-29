@@ -7,6 +7,7 @@ DNS answer and the connection and checks what the fetcher tried to do.
 import socket
 import threading
 import time
+import types
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -214,6 +215,92 @@ def test_the_time_limit_covers_all_redirects_together():
     assert r.outcome == "timeout"
 
 
+
+def test_a_dns_lookup_that_hangs_is_stopped_at_the_time_limit():
+    """The lookup may use only the time that is left. Its late answer is never used."""
+    release = threading.Event()
+
+    def hangs(host, *a):
+        release.wait(10)
+        return answer(PUBLIC)
+    t0 = time.monotonic()
+    try:
+        r = fetcher.fetch("http://slow-dns.example/", resolve=hangs, connect=never_connect, max_seconds=1.0)
+    finally:
+        release.set()
+    assert time.monotonic() - t0 < 2
+    assert r.outcome == "timeout" and "DNS lookup" in r.detail and r.hops == [] and r.content is None
+
+
+def test_a_redirect_whose_dns_lookup_hangs_is_stopped_at_the_time_limit():
+    release = threading.Event()
+
+    def resolve(host, *a):
+        if host == "b.example":
+            release.wait(10)
+        return answer(PUBLIC)
+    conn = FakeConnection([FakeResponse(302, {"Location": "http://b.example/next"})])
+    t0 = time.monotonic()
+    try:
+        r = fetcher.fetch("http://a.example/", resolve=resolve, connect=conn, max_seconds=1.0)
+    finally:
+        release.set()
+    assert time.monotonic() - t0 < 2
+    assert r.outcome == "timeout" and r.detail.startswith("redirect 1: ") and "DNS lookup" in r.detail
+    assert conn.opened == [("http", "a.example", 80, PUBLIC)]          # b.example: no connection
+    assert r.final_url == "http://b.example/next"
+
+
+def test_a_server_that_sends_headers_slowly_is_stopped_at_the_time_limit(server):
+    """Each header byte arrives well inside a per-read timeout, but all of them together
+    take 5 s. The budget covers the headers too, so the fetch ends after 1 s."""
+    def slow_headers(h):
+        head = (b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nX-Pad: " + b"a" * 200
+                + b"\r\nContent-Length: 2\r\n\r\nok")
+        try:
+            for i in range(len(head)):
+                h.wfile.write(head[i:i + 1])
+                h.wfile.flush()
+                time.sleep(0.02)
+        except OSError:
+            pass                                          # the fetcher hung up, as it should
+    Handler.routes["/slow-headers"] = slow_headers
+    t0 = time.monotonic()
+    r = fetcher.fetch(f"http://127.0.0.1:{server}/slow-headers", max_seconds=1.0)
+    assert time.monotonic() - t0 < 2
+    assert r.outcome == "timeout" and r.status is None and r.content is None
+
+
+def test_a_tls_handshake_sent_slowly_is_stopped_at_the_time_limit(monkeypatch):
+    """The server announces a long TLS record and sends it a byte at a time. HTTPS reads
+    after the handshake use the same rule as plain HTTP reads (_DeadlineSSLSocket)."""
+    assert fetcher._ssl_context().sslsocket_class is fetcher._DeadlineSSLSocket
+    monkeypatch.setattr(fetcher, "is_public", lambda ip: ip == "127.0.0.1")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+
+    def drip():
+        conn, _ = listener.accept()
+        try:
+            conn.recv(4096)                               # the client hello
+            conn.sendall(b"\x16\x03\x03\x40\x00")           # a handshake record of 16 kB
+            for _ in range(250):
+                conn.sendall(b"\x02")
+                time.sleep(0.02)
+        except OSError:
+            pass
+        finally:
+            conn.close()
+    threading.Thread(target=drip, daemon=True).start()
+    t0 = time.monotonic()
+    try:
+        r = fetcher.fetch(f"https://127.0.0.1:{listener.getsockname()[1]}/", max_seconds=1.0)
+    finally:
+        listener.close()
+    assert time.monotonic() - t0 < 2
+    assert r.outcome == "timeout" and r.status is None
+
 # ── rule 6: the connection goes to the address that was checked ─────────
 
 def test_dns_rebinding_cannot_reach_the_private_address():
@@ -251,9 +338,12 @@ def test_https_verifies_the_certificate_against_the_name_not_the_address(monkeyp
     class Ctx:
         def wrap_socket(self, sock, server_hostname=None):
             seen["sni"] = server_hostname
-            return sock
+            return types.SimpleNamespace()
+
+    def connect_ip(ip, port, timeout, deadline=None):
+        seen["addr"] = (ip, port)
     monkeypatch.setattr(fetcher, "_ssl_context", lambda: Ctx())
-    monkeypatch.setattr(fetcher, "_connect_ip", lambda ip, port, timeout: seen.setdefault("addr", (ip, port)))
+    monkeypatch.setattr(fetcher, "_connect_ip", connect_ip)
     conn = fetcher.open_connection("https", "www.stern.nyu.edu", 443, PUBLIC, 5)
     conn.connect()
     assert seen == {"addr": (PUBLIC, 443), "sni": "www.stern.nyu.edu"}

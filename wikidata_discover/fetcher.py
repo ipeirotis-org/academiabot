@@ -11,6 +11,10 @@ Rules (SPECS.md, week 4; AGENTS.md, "Run log"):
   moment later (DNS rebinding) cannot reach a private address. HTTPS still verifies
   the certificate against the host name.
 - At most 5 redirects, 5 MB, and 20 seconds for the whole fetch, redirects included.
+  The 20 seconds cover every step: each DNS lookup (it may use only the time that is
+  left, and a late answer is never used), the connection, the TLS handshake, the
+  headers, and the body. Every socket read and write waits only for the time that is
+  left, so a server that sends its headers a byte at a time cannot pass it.
 - A refused URL is recorded as refused, with the reason, and nothing is fetched from it.
 
 fetch(url) returns a FetchResult; it never raises for a bad URL or a bad server.
@@ -20,6 +24,7 @@ import ipaddress
 import os
 import socket
 import ssl
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
@@ -46,6 +51,10 @@ class FetchResult:
 
 class Refused(Exception):
     """The URL breaks a rule; nothing is sent to it."""
+
+
+class LookupTimeout(Exception):
+    """The DNS lookup did not answer within the time that is left; nothing is sent."""
 
 
 def is_public(ip: str) -> bool:
@@ -85,11 +94,35 @@ def check_url(url: str) -> Tuple[str, str, int, str]:
     return scheme, host, port or (443 if scheme == "https" else 80), path
 
 
-def resolve_public(host: str, port: int, resolve: Callable = socket.getaddrinfo) -> str:
+def lookup_within(resolve: Callable, host: str, port: int, seconds: float):
+    """Call resolve(host, port, 0, SOCK_STREAM) in a worker thread and wait at most
+    `seconds`. A lookup that is still running then is abandoned: the thread ends on its
+    own, and its answer is never used. Raises LookupTimeout, or what resolve raised."""
+    box = {}
+    done = threading.Event()
+
+    def run():
+        try:
+            box["infos"] = resolve(host, port, 0, socket.SOCK_STREAM)
+        except BaseException as e:  # noqa: BLE001 (handed to the caller below)
+            box["error"] = e
+        finally:
+            done.set()
+    threading.Thread(target=run, name=f"dns {host}", daemon=True).start()
+    if not done.wait(max(0.0, seconds)):
+        raise LookupTimeout(f"the DNS lookup for {host} took over {max(0.0, seconds):.1f} s")
+    if "error" in box:
+        raise box["error"]
+    return box["infos"]
+
+
+def resolve_public(host: str, port: int, resolve: Callable = socket.getaddrinfo,
+                   timeout: Optional[float] = None) -> str:
     """Resolve `host` once and return the address to connect to. Every address the name
     resolves to must be public, so a name with one private answer is refused even
     when another answer is public. An address in the URL itself is checked as it is,
-    never passed to a resolver. Raises Refused."""
+    never passed to a resolver. With `timeout`, the lookup may take at most that many
+    seconds. Raises Refused or LookupTimeout."""
     try:
         literal = str(ipaddress.ip_address(host.strip("[]")))
     except ValueError:
@@ -99,7 +132,10 @@ def resolve_public(host: str, port: int, resolve: Callable = socket.getaddrinfo)
             raise Refused(f"{host} is a non-public address")
         return literal
     try:
-        infos = resolve(host, port, 0, socket.SOCK_STREAM)
+        if timeout is None:
+            infos = resolve(host, port, 0, socket.SOCK_STREAM)
+        else:
+            infos = lookup_within(resolve, host, port, timeout)
     except (socket.gaierror, UnicodeError, OSError) as e:
         raise Refused(f"the host name does not resolve ({type(e).__name__})")
     ips = list(dict.fromkeys(info[4][0] for info in infos))
@@ -119,16 +155,77 @@ def _ssl_context() -> ssl.SSLContext:
             cafile = certifi.where()
         except ImportError:
             cafile = None
-    return ssl.create_default_context(cafile=cafile)
+    ctx = ssl.create_default_context(cafile=cafile)
+    ctx.sslsocket_class = _DeadlineSSLSocket
+    return ctx
 
 
-def _connect_ip(ip: str, port: int, timeout: float) -> socket.socket:
-    """A TCP connection to one address, opened directly: no name lookup of any kind."""
+def _time_left(sock) -> float:
+    """Seconds until the socket's deadline. Raises socket.timeout when none are left."""
+    deadline = getattr(sock, "deadline", None)
+    if deadline is None:
+        return sock.gettimeout()
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise socket.timeout("the time budget is used up")
+    return left
+
+
+class _DeadlineSocket(socket.socket):
+    """A socket whose every read and write waits only for the time left until `deadline`,
+    so many small reads (headers sent a byte at a time) cannot add up past it."""
+    deadline: Optional[float] = None
+
+    def recv(self, *a):
+        self.settimeout(_time_left(self))
+        return super().recv(*a)
+
+    def recv_into(self, *a):
+        self.settimeout(_time_left(self))
+        return super().recv_into(*a)
+
+    def send(self, *a):
+        self.settimeout(_time_left(self))
+        return super().send(*a)
+
+    def sendall(self, *a):
+        self.settimeout(_time_left(self))
+        return super().sendall(*a)
+
+
+class _DeadlineSSLSocket(ssl.SSLSocket):
+    """The same rule for an HTTPS socket."""
+    deadline: Optional[float] = None
+
+    def recv(self, *a):
+        self.settimeout(_time_left(self))
+        return super().recv(*a)
+
+    def recv_into(self, *a):
+        self.settimeout(_time_left(self))
+        return super().recv_into(*a)
+
+    def send(self, *a):
+        self.settimeout(_time_left(self))
+        return super().send(*a)
+
+    def sendall(self, *a):
+        self.settimeout(_time_left(self))
+        return super().sendall(*a)
+
+
+def _connect_ip(ip: str, port: int, timeout: float, deadline: Optional[float] = None) -> socket.socket:
+    """A TCP connection to one address, opened directly: no name lookup of any kind.
+    Every later read and write on it waits only for the time left until `deadline`.
+    The socket's timeout is then the time left, which also bounds a TLS handshake: Python
+    runs the whole handshake as one call under one timeout."""
     family = socket.AF_INET6 if ":" in ip else socket.AF_INET
-    sock = socket.socket(family, socket.SOCK_STREAM)
+    sock = _DeadlineSocket(family, socket.SOCK_STREAM)
     try:
         sock.settimeout(timeout)
         sock.connect((ip, port))
+        sock.deadline = deadline
+        sock.settimeout(_time_left(sock))
     except BaseException:
         sock.close()
         raise
@@ -141,9 +238,10 @@ class _PinnedHTTP(http.client.HTTPConnection):
     def __init__(self, host, port, ip, timeout):
         super().__init__(host, port, timeout=timeout)
         self._ip = ip
+        self._deadline = time.monotonic() + timeout
 
     def connect(self):
-        self.sock = _connect_ip(self._ip, self.port, self.timeout)
+        self.sock = _connect_ip(self._ip, self.port, self.timeout, deadline=self._deadline)
 
 
 class _PinnedHTTPS(http.client.HTTPSConnection):
@@ -152,10 +250,12 @@ class _PinnedHTTPS(http.client.HTTPSConnection):
     def __init__(self, host, port, ip, timeout):
         super().__init__(host, port, timeout=timeout, context=_ssl_context())
         self._ip = ip
+        self._deadline = time.monotonic() + timeout
 
     def connect(self):
-        sock = _connect_ip(self._ip, self.port, self.timeout)
+        sock = _connect_ip(self._ip, self.port, self.timeout, deadline=self._deadline)
         self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        self.sock.deadline = self._deadline
 
 
 def open_connection(scheme: str, host: str, port: int, ip: str, timeout: float):
@@ -173,11 +273,20 @@ def fetch(url: str, *, resolve: Callable = socket.getaddrinfo, connect: Callable
     result = FetchResult(url=url, outcome="error")
     current, redirects = url, 0
     while True:
+        where = f"redirect {redirects}: " if redirects else ""
+        left = max_seconds - (clock() - start)
+        if left <= 0:
+            result.outcome, result.detail = "timeout", f"over {max_seconds:g} s"
+            return result
         try:
             scheme, host, port, path = check_url(current)
-            ip = resolve_public(host, port, resolve)
+            ip = resolve_public(host, port, resolve, timeout=left)
         except Refused as e:
-            result.outcome, result.detail = "refused", (f"redirect {redirects}: " if redirects else "") + str(e)
+            result.outcome, result.detail = "refused", where + str(e)
+            result.final_url = current
+            return result
+        except LookupTimeout as e:
+            result.outcome, result.detail = "timeout", where + str(e)
             result.final_url = current
             return result
         left = max_seconds - (clock() - start)
@@ -206,10 +315,8 @@ def fetch(url: str, *, resolve: Callable = socket.getaddrinfo, connect: Callable
                 if clock() - start > max_seconds:
                     result.outcome, result.detail = "timeout", f"over {max_seconds:g} s"
                     return result
-                # read1 returns what has arrived, and the socket may wait only for the
-                # time that is left, so a server that drips bytes cannot pass 20 seconds.
-                if conn.sock is not None:
-                    conn.sock.settimeout(max(0.01, max_seconds - (clock() - start)))
+                # read1 returns what has arrived. The socket waits only for the time left
+                # (see _DeadlineSocket), so a server that drips bytes cannot pass 20 seconds.
                 chunk = resp.read1(min(65536, max_bytes + 1 - len(body)))
                 if not chunk:
                     break

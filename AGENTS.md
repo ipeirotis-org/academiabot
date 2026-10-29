@@ -375,7 +375,10 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   the citing candidates. A `country_source` that is a URL counts as a cited URL (an address is
   not fetched); the CSV column `country_evidence_outcome` gives its fetch outcome. New `evidence` columns (2026-10-29, added in BigQuery to that table only):
   final_url, outcome, detail, content_type, text_path. nyu.edu answers 405 to the fetcher's
-  User-Agent on some pages; the fetcher does not pose as a browser.
+  User-Agent on some pages; the fetcher does not pose as a browser. The 20 s budget covers each DNS lookup
+  (`lookup_within`: a worker thread, waited on for the time left; a late answer is never used)
+  and every socket read and write (`_DeadlineSocket`, `_DeadlineSSLSocket`), so slow DNS or
+  headers sent a byte at a time cannot pass it.
 
 | Table | One row per | Must contain |
 |---|---|---|
