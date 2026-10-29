@@ -138,6 +138,9 @@ Minimum statement set for any new item: label, English description, P31, P749, P
   enables a web search tool; the other two answer from model knowledge, so their cited URLs are unverified
 - `extract_divisions_best_available()`: first-success fallback (OpenAI, then Anthropic, then Gemini). This is
   what `discover` calls. It does not run all providers and does not call the judge
+- `--provider openai|anthropic|gemini` (sets `config.ONLY_PROVIDER`) runs one provider alone, for extraction
+  and matching, with no fallback. The runs row records `only_provider`. Without it, the cache keys are the
+  same as before; with it, a match decision is cached under that provider alone
 - `extract_divisions_ensemble()`: OpenAI + Anthropic generate, Gemini judges. Used by the eval harness only
 - `judge_union()`: one provider reviews the union of all candidates and keeps only real units
 - `choose_match()`: single-token classification (QID / ORPHAN:QID / NONE)

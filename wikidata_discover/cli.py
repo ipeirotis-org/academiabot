@@ -13,14 +13,23 @@ def run_config(key_sources: dict) -> dict:
     return {"providers": llm_helpers.available_providers(),
             "models": {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL,
                        "gemini": config.GEMINI_MODEL},
-            "depth": 1, "key_sources": key_sources, "user_agent": config.USER_AGENT,
+            "depth": 1, "only_provider": config.ONLY_PROVIDER, "key_sources": key_sources,
+            "user_agent": config.USER_AGENT,
             "dataset": config.RUNLOG_DATASET, "bucket": config.RUNLOG_BUCKET}
+
+
+def check_only_provider() -> None:
+    """Stop before any work when --provider names a provider that has no key."""
+    if config.ONLY_PROVIDER and not llm_helpers.available_providers().get(config.ONLY_PROVIDER):
+        raise SystemExit(f"--provider {config.ONLY_PROVIDER}: no API key for it in the environment, "
+                         ".env, or Secret Manager. Nothing was run.")
 
 
 def discover_with_run_log(qids, argv) -> None:
     """Run discovery for each QID and record the run in the run log."""
     from wikidata_discover.batch import operator_identity, source_identity, RESULTS_DIR
     key_sources = config.load_api_keys()
+    check_only_provider()
     run_id = run_log.new_run_id("discover")
     run_dir = RESULTS_DIR / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +78,8 @@ def run_cli():
     help="One or more Wikidata Q-IDs (e.g. Q49210 Q49115 ...)",
     )
     d.add_argument("--llm", dest="llm_model", default=None)
+    d.add_argument("--provider", choices=config.PROVIDERS, default=None,
+                   help="Run one AI alone, for extraction and matching. Default: the first that answers")
     d.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     # harvest subcommand
@@ -88,6 +99,7 @@ def run_cli():
             logging.basicConfig(level=logging.DEBUG, force=True)
         if args.llm_model:
             config.LLM_MODEL = args.llm_model
+        config.ONLY_PROVIDER = args.provider
         discover_with_run_log(args.university_qids, sys.argv[1:])
 
     elif args.command == "harvest":

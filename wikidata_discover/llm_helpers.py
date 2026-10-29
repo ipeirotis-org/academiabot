@@ -322,6 +322,11 @@ def _extract_call(provider: str, model: str, key: str, prompt: dict, **request) 
             "request_config": {"extraction_mode": _extraction_mode, "sample": None, **request}}
 
 
+def chosen(items: List[Any]) -> List[Any]:
+    """The (provider name, ...) entries to try: all of them, or only config.ONLY_PROVIDER."""
+    return [i for i in items if config.ONLY_PROVIDER in (None, i[0])]
+
+
 def available_providers() -> dict:
     """Which providers have a key right now, in call order. Recorded with every run so
     a replay with a different set of keys cannot pass for the same configuration."""
@@ -657,7 +662,7 @@ class LLMHelper:
         """
         global last_extraction_provider, last_extraction_call_id, _extraction_mode
         last_extraction_provider = last_extraction_call_id = None
-        _extraction_mode = "best_available"
+        _extraction_mode = f"only_{config.ONLY_PROVIDER}" if config.ONLY_PROVIDER else "best_available"
         try:
             return LLMHelper._best_available(univ_label, website)
         finally:
@@ -666,11 +671,11 @@ class LLMHelper:
     @staticmethod
     def _best_available(univ_label: str, website: str) -> List[Dict[str, Any]]:
         global last_extraction_provider
-        providers = [
+        providers = chosen([
             ("openai", LLMHelper.extract_divisions_openai),
             ("anthropic", LLMHelper.extract_divisions_anthropic),
             ("gemini", LLMHelper.extract_divisions_gemini),
-        ]
+        ])
 
         for provider_name, extractor in providers:
             try:
@@ -691,6 +696,9 @@ class LLMHelper:
                 continue
 
         logger.error("extract_divisions_best_available: all providers failed, unavailable, or empty for %s", univ_label)
+        if config.ONLY_PROVIDER:
+            raise ValueError(f"{config.ONLY_PROVIDER} (run alone with --provider) returned no units for "
+                             f"{univ_label!r}: it was not configured, failed, or answered with an empty list.")
         raise ValueError(
             f"No LLM provider returned any units for {univ_label!r}: each one was not "
             f"configured, failed, or answered with an empty list (an empty list usually "
@@ -874,12 +882,12 @@ class LLMHelper:
             + listing
         )
 
-        # Try providers in order
-        providers = [
+        # Try providers in order (only the one given with --provider, if any)
+        providers = chosen([
             ("openai", _get_openai_client, config.LLM_MODEL),
             ("anthropic", _get_anthropic_client, config.ANTHROPIC_MODEL),
             ("gemini", _get_gemini_client, config.GEMINI_MODEL),
-        ]
+        ])
 
         # A match decision is cached on the full prompt (candidate, university, and
         # the exact list of choices), the models in use, and which providers are
@@ -887,7 +895,7 @@ class LLMHelper:
         # cannot flip an earlier decision. A decision that a fallback provider made
         # while the preferred one was failing is not reused once the preferred one
         # is configured again: it is asked afresh and the new answer replaces it.
-        configured = [n for n, on in available_providers().items() if on]
+        configured = [n for n, on in available_providers().items() if on and config.ONLY_PROVIDER in (None, n)]
         match_hash = _prompt_hash(prompt)
         match_key = _cache_key(univ_label, "match", "|".join(m for _, _, m in providers),
                                purpose="match", prompt_hash=match_hash, extra=",".join(configured))

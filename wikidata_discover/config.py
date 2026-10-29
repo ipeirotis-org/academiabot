@@ -24,6 +24,10 @@ USER_AGENT = os.getenv("WD_BOT_USERAGENT", "AcademiaBot/1.0 (ipeirotis@example.c
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-6")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# Providers in the order they are tried. ONLY_PROVIDER (set by --provider) runs one of
+# them alone: no other provider is asked, for extraction or for matching.
+PROVIDERS = ("openai", "anthropic", "gemini")
+ONLY_PROVIDER = None
 SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 
 # All output files (CSV, QuickStatements, harvest JSON, reports, LLM cache) go here
