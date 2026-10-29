@@ -1,7 +1,6 @@
 # Modeling rules
 
-**Status: Proposed by Anya, 2026-10-29.** Shuo has not agreed to these rules yet. A rule
-marked **Open** has no decision yet.
+**Status: Proposed by Anya, 2026-10-29.** A rule marked **Open** has no decision yet.
 
 These rules say which units go into a hierarchy, and with which type. The code, the review
 sheet, and the export follow them. Each rule has one real example from weeks 1 to 4. A
