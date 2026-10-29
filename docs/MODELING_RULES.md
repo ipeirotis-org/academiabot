@@ -77,7 +77,8 @@ Examples:
   nyuad.nyu.edu/en/about/the-nyuad-campus/global-university.html, says "the UAE". The page
   was saved in run `subunits-20261029T135111Z-a3e3d4` (week 4, check 4).
 - NYU Shanghai is in China. Its own page, shanghai.nyu.edu, was saved in the same run. That
-  page names Shanghai but never writes "China".
+  page names the city but not the country. A page with the full address would be stronger.
+  **Flagged for review** (week 4, check 4).
 - In run `us-tier1`, the LLM proposed "USU Wendover" (Utah State University) as a school.
   It is a campus. The week 3 check 4 sample marked it as not a school.
 
