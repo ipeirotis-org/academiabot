@@ -383,13 +383,33 @@ def review_sample(groups: List[dict], size: int = REVIEW_SIZE, seed: int = REVIE
 
 # ─────────────────────────  DRAWING THE SMALL UNIVERSITIES  ─────────────────────────
 
-def draw_small(universities: Sequence[Tuple[str, str, int]], seed: int, k: int = 6) -> List[Tuple[str, str, int]]:
-    """Draw k universities at random from the bottom third of the list by Wikidata
-    sitelinks. Rows are (qid, name, sitelinks). Ties are broken by the QID number, so
-    the same list and seed always give the same draw."""
+DRAW_SEED = 2026
+DRAW_ORDER_SIZE = 20
+# A person looked up each drawn university in order (2026-11-04, Shuo's rule): one with no
+# top-level academic unit is skipped, and the first 6 with at least one are kept.
+SKIPPED_NO_UNITS = {
+    "Q6841624": "Middle Tennessee School of Anesthesia: one program, no units",
+    "Q38251806": "Williamsburg Technical College: no named units found",
+    "Q6467825": "Lac Courte Oreilles Ojibwe University: no named units found",
+}
+SMALL_UNIVERSITIES = ["Q4929506", "Q7114753", "Q7896431", "Q7208107", "Q7122600", "Q7429134"]
+
+
+def draw_small(universities: Sequence[Tuple[str, str, int]], seed: int, k: int = DRAW_ORDER_SIZE) -> List[Tuple[str, str, int]]:
+    """The first k universities of a random order of the bottom third of the list by
+    Wikidata sitelinks. Rows are (qid, name, sitelinks). Ties are broken by the QID
+    number, so the same list and seed always give the same order, and the first items
+    are the same for any k."""
     ordered = sorted(universities, key=lambda u: (u[2], int(u[0][1:])))
     bottom = ordered[: len(ordered) // 3]
     return random.Random(seed).sample(bottom, k)
+
+
+def keep_with_units(order: Sequence[Tuple[str, str, int]], skipped: Iterable[str], k: int = 6) -> List[str]:
+    """Walk the drawn order and keep the first k universities that are not skipped
+    (skipped: a person found no top-level academic unit)."""
+    skipped = set(skipped)
+    return [q for q, _, _ in order if q not in skipped][:k]
 
 
 def fetch_sitelinks(qids: Sequence[str], batch: int = 200) -> Dict[str, int]:
@@ -659,7 +679,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--compare", nargs=2, metavar=("DIR_A", "DIR_B"), help="check that two runs gave the same report")
     parser.add_argument("--draw-small", action="store_true", help="draw the small universities and stop")
     parser.add_argument("--seed", type=int, help="seed for --draw-small")
-    parser.add_argument("--k", type=int, default=6, help="how many universities --draw-small draws")
+    parser.add_argument("--k", type=int, default=DRAW_ORDER_SIZE, help="how long the order --draw-small prints is")
     args = parser.parse_args(argv)
 
     if args.samples < 1:
@@ -675,8 +695,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         bottom = sorted(table, key=lambda u: (u[2], int(u[0][1:])))[: len(table) // 3]
         print(f"{len(table)} universities; bottom third: {len(bottom)} (at most {bottom[-1][2]} sitelinks); "
               f"seed {args.seed}; sitelinks from {SITELINKS_SNAPSHOT.name}")
-        for q, n, s in draw_small(table, args.seed, args.k):
-            print(f"{q}\t{n}\t{s} sitelinks")
+        order = draw_small(table, args.seed, args.k)
+        kept = keep_with_units(order, SKIPPED_NO_UNITS)
+        for i, (q, n, s) in enumerate(order, 1):
+            mark = "kept" if q in kept else ("skipped: " + SKIPPED_NO_UNITS[q] if q in SKIPPED_NO_UNITS else "")
+            print(f"{i:>2}  {q}\t{n}\t{s} sitelinks\t{mark}")
+        if args.seed == DRAW_SEED and kept != SMALL_UNIVERSITIES:
+            print("Warning: this draw does not give SMALL_UNIVERSITIES.")
         return
     run(args)
 

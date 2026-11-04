@@ -186,9 +186,13 @@ when it exists), 3 samples each (`--samples`). Report: `results/agreement/<run_i
   answers, so BigQuery does not get a second copy of the same candidates and checks.
 - `--compare DIR_A DIR_B` checks that two runs gave identical report files (`ids.csv` and
   `cache_files.csv` hold new ids or paths each run and are left out).
-- `--draw-small --seed 2026` draws the 6 small universities: sort us-tier1 by (sitelinks, QID
-  number), take the bottom third (506), `random.Random(seed).sample(bottom, 6)`. Sitelinks come
-  from the saved snapshot `eval/us_tier1_sitelinks.csv` (2026-10-23), because live counts drift.
+- `--draw-small --seed 2026` prints the draw order of the small universities: sort us-tier1 by
+  (sitelinks, QID number), take the bottom third (506), `random.Random(seed).sample(bottom, 20)`.
+  Sitelinks come from the saved snapshot `eval/us_tier1_sitelinks.csv` (2026-10-23), because live
+  counts drift. Shuo's rule (2026-11-04): walk the order and keep the first 6 universities with
+  at least one top-level academic unit. A person decided which have none (`SKIPPED_NO_UNITS`:
+  #1, #6, #8), so the 6 kept QIDs are fixed in `SMALL_UNIVERSITIES` (#2 to #5, #7, #9). The
+  sample therefore shows small universities that have schools, not all small universities.
 - `single_provider_review.csv` is a random sample (seed 2026) of 20 one-provider schools, with
   blank `real` and `notes` columns for Shuo's verdicts.
 - The `checks` table must exist in BigQuery (`python -m wikidata_discover.run_log setup` creates

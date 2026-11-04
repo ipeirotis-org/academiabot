@@ -188,7 +188,9 @@ agreement check passes when 2 or more providers named the school. A second group
 already matched true school is a duplicate and counts as wrong (a repeated name counts once, as in
 week 2). Wrong groups are split into duplicate, non-academic, campus, and invented. S1 uses
 Chapman for pairs of providers and model M_t for three providers and for the samples of one
-provider. The 6 small universities were drawn with seed 2026 from a saved sitelink snapshot.
+provider. The small universities were drawn with seed 2026 from a saved sitelink snapshot; walking that
+order, the first 6 with at least one top-level academic unit are kept (3 without units skipped,
+2026-11-04).
 
 ### Shuo, week 4 (Oct 23 to 29)
 

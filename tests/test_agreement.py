@@ -284,17 +284,26 @@ def test_review_sample_is_one_provider_schools_and_repeatable():
 
 def test_draw_small_uses_the_bottom_third_and_the_seed():
     unis = [(f"Q{i}", f"U{i}", i % 10) for i in range(1, 31)]          # 30 universities
-    drawn = ag.draw_small(unis, seed=1)
+    drawn = ag.draw_small(unis, seed=1, k=6)
     assert len(drawn) == 6 and len({q for q, _, _ in drawn}) == 6
     bottom = sorted(unis, key=lambda u: (u[2], int(u[0][1:])))[:10]
     assert set(drawn) <= set(bottom)
-    assert drawn == ag.draw_small(list(reversed(unis)), seed=1)        # input order does not matter
+    assert drawn == ag.draw_small(list(reversed(unis)), seed=1, k=6)       # input order does not matter
 
 
 def test_draw_small_reproduces_the_week_3_draw():
-    """Seed 2026 on the saved sitelink snapshot gives the 6 universities in the ground truth."""
-    drawn = ag.draw_small(ag.sitelinks_table(), seed=2026)
-    assert [q for q, _, _ in drawn] == ["Q6841624", "Q4929506", "Q7114753", "Q7896431", "Q7208107", "Q38251806"]
+    """Seed 2026 on the saved sitelink snapshot gives the drawn order; skipping the ones
+    without units gives the 6 small universities."""
+    order = ag.draw_small(ag.sitelinks_table(), seed=ag.DRAW_SEED)
+    assert [q for q, _, _ in order[:9]] == ["Q6841624", "Q4929506", "Q7114753", "Q7896431", "Q7208107",
+                                            "Q38251806", "Q7122600", "Q6467825", "Q7429134"]
+    assert ag.keep_with_units(order, ag.SKIPPED_NO_UNITS) == ag.SMALL_UNIVERSITIES
+    assert [q for q, _, _ in ag.draw_small(ag.sitelinks_table(), seed=2026, k=6)] == [q for q, _, _ in order[:6]]
+
+
+def test_keep_with_units_walks_the_order():
+    order = [("Q1", "", 0), ("Q2", "", 0), ("Q3", "", 0), ("Q4", "", 0)]
+    assert ag.keep_with_units(order, {"Q2"}, k=2) == ["Q1", "Q3"]
 
 
 # ── the whole report, without any call ───────────────────────────────────
