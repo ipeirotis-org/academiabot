@@ -318,7 +318,7 @@ already exists.
 **You do yourself:** Read the gap report. Pick the 5 universities with the biggest gap
 between Wikidata and the LLM. Check two of them by hand: who is right?
 
-- [ ] **Hand to Panos:** the gap report, and your baseline: of 20 "missing" schools, how
+- [x] **Hand to Panos:** the gap report, and your baseline: of 20 "missing" schools, how
   many were not missing, and how many were not schools.
 
 ### Anya, week 4 (Oct 23 to 29): departments, with evidence
