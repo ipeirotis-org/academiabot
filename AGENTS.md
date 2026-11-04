@@ -24,7 +24,8 @@ academiabot/
 │   ├── run_log.py               # Run log: BigQuery rows, texts in the bucket, local JSON fallback
 │   ├── cloud/collect_function.py # Cloud Function (gen 2) entry point: one time slice of a run, on a schedule
 │   ├── requirements.txt
-│   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness
+│   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness;
+│   │                            #   dept_scorer.py scores a department list against a department CSV
 │   ├── results/                 # Output CSVs, universities_us.json, LLM cache
 │   └── scripts/
 │       ├── wikidata_division_discover.py   # Entrypoint
@@ -34,7 +35,7 @@ academiabot/
 ├── docs/                        # BACKGROUND.md (origins, decisions), LITERATURE.md (research behind the plan),
 │                                #   RUN_LOG_SCHEMA.md (the 4 run-log tables, for readers);
 │                                #   later MODELING_RULES.md, REVIEW_GUIDE.md, REVIEW_PROTOCOL.md
-├── tests/                       # pytest unit tests (fuzzy matching)
+├── tests/                       # pytest unit tests; tests/fixtures/ holds made-up CSVs
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
 ```
 
@@ -65,6 +66,7 @@ pip install -r wikidata_discover/requirements.txt -r wikidata_discover/cloud/req
 python -m wikidata_discover.scripts.wikidata_division_discover harvest
 python -m wikidata_discover.scripts.wikidata_division_discover discover Q49210  # NYU
 python -m wikidata_discover.eval.run_eval      # precision/recall against ground truth
+python -m wikidata_discover.eval.dept_scorer --truth gt.csv --proposed list.csv  # department scores
 python -m pytest tests -q
 ```
 
@@ -129,6 +131,24 @@ Minimum statement set for any new item: label, English description, P31, P749, P
       `unresolved_candidates` and never written to the CSV or QuickStatements file)
    g. Results exported to CSV + QuickStatements: missing entities as CREATE blocks, orphans as a single
       statement linking the existing QID to the university
+
+## Department scorer (Shuo, week 2)
+
+`wikidata_discover/eval/dept_scorer.py` loads a department ground-truth CSV (parent, name, type,
+source_url, qid; qid "none" means searched and not found, blank means not checked) and scores a
+proposed list (name, optional parent and qid) from the same university. Matching is one to one:
+first within the same parent, then a leftover row may match a same-name department under another
+school. Shuo chose this on 2026-10-16: it counts as found for name recall, wrong for edge F1, and
+1 of 2 ancestors right for ancestor F1. "Department of", "Dept. of", "Division of" and "Program in"
+are removed before the fuzzy match; `discover` is unchanged. A parent may be a short form ("Stern"
+for "Stern School of Business", either way) when it fits exactly one school. A proposed row
+whose parent is not a school in the answer key is left out of every score
+(`parent_not_in_answer_key`), even when its name matches a key department: the key covers
+only some schools, and other schools have departments with the same names (Economics).
+QIDs only break a tie between equally good matches. An empty list scores 0 recall and F1. Shuo's ground truth for
+Stern, Courant and Steinhardt is `wikidata_discover/eval/dept_ground_truth.csv` (24 rows, 2026-10-16);
+`tests/fixtures/dept_truth_sample.csv` is a copy, and a test fails if the two differ.
+Tests: `tests/test_dept_scorer.py`.
 
 ## LLM integration details
 

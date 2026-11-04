@@ -664,6 +664,8 @@ The four parts of each week work as in section 5.
   - One proposed name can match only one true department.
   - A repeated name counts once.
   - Two departments with the same name under different schools are different rows.
+  - A department under the wrong school counts as found for names, but wrong for edge F1.
+    It gets half credit in ancestor F1, because the university is right.
 
 **You check it by:**
 
