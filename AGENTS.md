@@ -35,7 +35,8 @@ academiabot/
 ├── deploy/                      # deploy_collect_function.sh: Cloud Function + paused half-hourly Scheduler job
 ├── SPECS.md                     # Full build spec for each week of TASKS.md (students read the short version)
 ├── docs/                        # BACKGROUND.md (origins, decisions), LITERATURE.md (research behind the plan),
-│                                #   RUN_LOG_SCHEMA.md (the 4 run-log tables, for readers);
+│                                #   RUN_LOG_SCHEMA.md (the 4 run-log tables, for readers),
+│                                #   SPARQL_QUERIES.md (the queries the snapshot runs, for pasting);
 │                                #   later MODELING_RULES.md, REVIEW_GUIDE.md, REVIEW_PROTOCOL.md
 ├── tests/                       # pytest unit tests; tests/fixtures/ holds made-up CSVs
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
@@ -179,8 +180,15 @@ are part of the weekly tasks. So:
 - Work on exactly the track and week in `TASKS.md` that the student names. Do not start the next one.
 - Build to the full specification for that week in `SPECS.md`. `TASKS.md` has the short version for
   the student. If you change a week, change it in both files in the same pull request.
-- The "You check it by" steps for that week in `TASKS.md` are the acceptance test. Make them pass and
-  show them passing.
+- The acceptance test is the "You check it by" steps for that week in `TASKS.md`, plus the **Tests**
+  list for that week in `SPECS.md`. Write each Tests item as a pytest test. Make them all pass and
+  show them passing. Since 2026-11-04 `TASKS.md` keeps at most 5 build items and 5 checks per week;
+  put any new edge case in `SPECS.md`, not in `TASKS.md`.
+- Open each pull request against `master`. Pull request 21 (Anya's week 4) was opened against
+  `anya-week-3` after that branch was already merged, so its work missed `master` until pull
+  request 22.
+- Push the branch at the end of every session, finished or not. On 2026-11-04 the code behind 685
+  `checks` rows (Shuo's week 3, commits `3122988` and `ff51783`) was in a Codespace only.
 - Before writing code, give a short plan (five lines or fewer) and wait for a go-ahead.
 - Explain what you did in plain language. Assume the reader can run a command and open a CSV but will not read a diff.
 - Run `python -m pytest tests -q` before saying anything is done. Add a test for every behavior you add.
@@ -600,7 +608,7 @@ flowchart LR
 - The Wikidata action API (`wbsearchentities`) can return 429 to a cloud session's shared IP
   while the SPARQL endpoint still answers. For a read-only lookup from a session, the SPARQL
   `wikibase:mwapi` service with `wikibase:api "Search"` (full-text) or `"EntitySearch"` (prefix)
-  works; see the last query in TASKS.md section 11.
+  works; see the last query in `docs/SPARQL_QUERIES.md`.
 
 ## BigQuery access
 
