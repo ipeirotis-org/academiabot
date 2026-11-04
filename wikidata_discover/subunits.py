@@ -106,7 +106,7 @@ def name_on_page(name: str, page: Optional[Dict[str, Any]]) -> str:
         return ""
     if page["name_check"] != "done":
         return "skipped"
-    return "yes" if fetcher.names_on_page([name], page.get("text") or "") else "no"
+    return "yes" if fetcher.name_in_text(name, page.get("text") or "") else "no"
 
 
 def csv_rows(units: List[Dict[str, Any]], unit: Dict[str, Any], provider: str,

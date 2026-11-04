@@ -400,13 +400,24 @@ def page_text_or_skip(content: bytes, content_type: str) -> Tuple[str, str]:
     return "", f"skipped: content type {media} is not read"
 
 
+def _norm_words(s: str) -> str:
+    return " ".join(s.lower().replace("&", " and ").split())
+
+
+def name_in_text(name: str, text: str) -> bool:
+    """True when the whole name appears in the text as a run of whole words, ignoring case,
+    spacing, and "&" against "and". "School of Art" is found in "the School of Art and
+    Design"; "Art" is not found in "Department". Pure."""
+    n = _norm_words(name or "")
+    if not n:
+        return False
+    return re.search(r"(?<!\w)" + re.escape(n) + r"(?!\w)", _norm_words(text or "")) is not None
+
+
 def names_on_page(names, text: str) -> List[str]:
-    """The unit names that appear in the page text, ignoring case, spacing, and "&" against
-    "and". Pure."""
-    def norm(s):
-        return " ".join(s.lower().replace("&", " and ").split())
-    t = norm(text)
-    return [n for n in names if n and norm(n) in t]
+    """The unit names that appear in the page text as whole words (see name_in_text). Pure."""
+    t = _norm_words(text or "")
+    return [n for n in names if n and name_in_text(n, t)]
 
 
 def read_result(result: FetchResult) -> Tuple[Optional[str], Optional[str]]:

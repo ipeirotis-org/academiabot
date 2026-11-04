@@ -454,3 +454,29 @@ def test_the_bucket_gets_the_raw_bytes_with_the_servers_content_type(tmp_path):
     data, ctype = stored[row["snapshot_path"].split("gs://fake/", 1)[1]]
     assert data == body and hashlib.sha256(data).hexdigest() == row["content_hash"]
     assert ctype == "text/html; charset=ISO-8859-1"
+
+
+# ── names on the page: whole words only ─────────────────────────────────
+
+def test_a_short_name_is_not_found_inside_a_longer_word():
+    assert not fetcher.name_in_text("Art", "Department of Economics")
+    assert fetcher.names_on_page(["Art"], "Department of Economics") == []
+
+
+def test_a_name_is_found_as_whole_words_inside_a_longer_phrase():
+    assert fetcher.name_in_text("School of Art", "Welcome to the School of Art and Design.")
+    assert fetcher.name_in_text("Art", "Art, Design, and Media")
+    assert not fetcher.name_in_text("School of Art", "the School of Arts")
+
+
+def test_ampersand_against_and_case_and_spacing_still_match():
+    assert fetcher.name_in_text("Finance & Banking", "Department of  FINANCE and banking")
+    assert fetcher.name_in_text("Arts and Science", "College of Arts & Science")
+    assert fetcher.name_in_text("Département d'Économie", "le département d'économie")
+
+
+def test_the_csv_name_on_page_uses_whole_words():
+    from wikidata_discover import subunits
+    page = {"name_check": "done", "text": "Department of Economics"}
+    assert subunits.name_on_page("Art", page) == "no"
+    assert subunits.name_on_page("Economics", page) == "yes"

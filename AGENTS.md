@@ -415,6 +415,11 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   its source URL or website also matches an earlier unit (or neither has any URL); two units
   with the same name and different pages are both kept. Checked 2026-11-04: no week 4 answer
   had a repeated name, so no run lost a unit to the old name-only rule.
+- A unit name counts as on the page only as a run of whole words (`fetcher.name_in_text`,
+  used by `names_on_page` and the CSV column `name_on_page`): "Art" is not found in
+  "Department", "School of Art" is found in "the School of Art and Design". Case, spacing,
+  and "&" against "and" are ignored as before. Rechecked 2026-11-04 on the saved text of
+  all 16 week 4 evidence rows (166 unit-to-page links): no result changed.
 
 | Table | One row per | Must contain |
 |---|---|---|
