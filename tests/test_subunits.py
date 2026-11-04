@@ -282,3 +282,28 @@ def test_two_qids_citing_one_page_share_one_fetch_and_one_evidence_row(monkeypat
 def test_name_on_page_is_skipped_for_a_page_that_is_not_read():
     assert subunits.name_on_page("Law", {"name_check": "skipped: PDF text is not extracted", "text": ""}) == "skipped"
     assert subunits.name_on_page("Law", {"name_check": None}) == "" and subunits.name_on_page("Law", None) == ""
+
+
+def test_a_pause_turn_continuation_saves_the_exact_request_it_sent(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(run_log, "DISABLED", False)
+    paused = [Block("text", "Let me search."), Block("server_tool_use"), Block("web_search_tool_result")]
+    sent = fake_anthropic(monkeypatch, [Resp(paused, "pause_turn"),
+                                        Resp([Block("text", json.dumps(ANSWER))], "end_turn")])
+    log = run_log.start("subunits-test", "inv1", results_dir=tmp_path)
+    log.gcs_error = log.bq_error = "no cloud in tests"                  # texts go to local files
+    LLMHelper.extract_subunits(STERN)
+    first, second = log.pending["llm_calls"]
+    saved = json.loads(open(second["prompt_path"]).read())
+    assert saved["messages"] == lh._jsonable(sent[1]["messages"])      # what the second request sent
+    assert saved["messages"][0] == {"role": "user", "content": sent[0]["messages"][0]["content"]}
+    assert [b["type"] for b in saved["messages"][1]["content"]] == ["text", "server_tool_use", "web_search_tool_result"]
+    assert saved["system"] == sent[1]["system"]
+    assert saved["request"] == lh._jsonable({k: v for k, v in sent[1].items() if k not in ("system", "messages")})
+    cfg1, cfg2 = json.loads(first["request_config"]), json.loads(second["request_config"])
+    assert "continuation" not in cfg1
+    assert cfg2["continuation"] == 1 and cfg2["continues_llm_call_id"] == first["llm_call_id"]
+    original = json.loads(open(first["prompt_path"]).read())
+    assert original["user"] == sent[0]["messages"][0]["content"] and "messages" not in original

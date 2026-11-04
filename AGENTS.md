@@ -403,6 +403,13 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   `name_on_page` (yes, no, skipped, or empty). The evidence row's `unit_names` keeps only
   the names found at fetch time, because that row may already be in BigQuery and rows are
   not rewritten. A `checks` row (Shuo, kind `name_on_page`) is the place for it later.
+- An Anthropic `pause_turn` continuation is its own `llm_calls` row. Since 2026-11-04 its
+  `prompt_path` holds the exact request sent: `system`, the full `messages` (the user prompt
+  plus every earlier assistant turn, tool results included), and `request` (model,
+  max_tokens, tools). Its `request_config` has `continuation` (1, 2, ...) and
+  `continues_llm_call_id` (the call before it). A failed continuation logs the request
+  that failed. Checked 2026-11-04: no week 4 `llm_calls` row is a continuation (all fresh
+  Anthropic responses stopped with `end_turn`), so no saved prompt is wrong.
 
 | Table | One row per | Must contain |
 |---|---|---|

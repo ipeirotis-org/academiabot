@@ -1208,9 +1208,26 @@ def _subunit_timeout() -> float:
     return SUBUNIT_TIMEOUT_S if left is None else max(5.0, min(SUBUNIT_TIMEOUT_S, left))
 
 
-def _subunit_requests(provider: str, model: str, user: str):
+def _jsonable(obj: Any) -> Any:
+    """Plain JSON values for a request payload that holds SDK content blocks. Pure."""
+    if isinstance(obj, dict):
+        return {k: _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonable(v) for v in obj]
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    if hasattr(obj, "model_dump"):
+        return _jsonable(obj.model_dump(mode="json", exclude_none=True))
+    if hasattr(obj, "__dict__"):
+        return _jsonable({k: v for k, v in vars(obj).items() if not k.startswith("_")})
+    return str(obj)
+
+
+def _subunit_requests(provider: str, model: str, user: str, sent: Optional[list] = None):
     """Send one sub-unit request. Yields (response, text) for every API response, so
-    each is recorded before the next; the text of the last one holds the answer."""
+    each is recorded before the next; the text of the last one holds the answer.
+    For Anthropic, each request is appended to `sent` before it goes out: a pause_turn
+    continuation carries the earlier assistant content, so it is a different prompt."""
     if provider == "openai":
         client = _get_openai_client().with_options(timeout=_subunit_timeout(), max_retries=0)
         resp = client.responses.create(
@@ -1227,8 +1244,11 @@ def _subunit_requests(provider: str, model: str, user: str):
         messages = [{"role": "user", "content": user}]
         for _ in range(_MAX_CONTINUATIONS + 1):
             t0 = time.time()
-            with client.messages.stream(model=model, max_tokens=SUBUNIT_MAX_TOKENS, system=SYSTEM_SUBUNITS,
-                                        tools=subunit_tools("anthropic"), messages=messages) as stream:
+            request = {"model": model, "max_tokens": SUBUNIT_MAX_TOKENS, "system": SYSTEM_SUBUNITS,
+                       "tools": subunit_tools("anthropic"), "messages": messages}
+            if sent is not None:
+                sent.append(request)
+            with client.messages.stream(**request) as stream:
                 for event in stream:
                     block = getattr(event, "content_block", None)
                     if getattr(event, "type", None) == "content_block_start" and \
@@ -1256,6 +1276,20 @@ def _subunit_requests(provider: str, model: str, user: str):
         yield resp, (resp.text or None)
     else:
         raise ValueError(f"unknown provider {provider!r}")
+
+
+def _continuation_call(call: dict, sent: list, n: int, call_ids: list) -> dict:
+    """The record of request n of one attempt. Request 0 is the original prompt. A
+    pause_turn continuation (n >= 1) saves the exact request sent (system, every message
+    so far with the earlier assistant content and tool results, and the settings) as its
+    prompt, and request_config names the call before it in continues_llm_call_id. Pure."""
+    if n == 0 or n >= len(sent):
+        return call
+    request = _jsonable(sent[n])
+    return {**call, "prompt": {"system": request.pop("system", None), "messages": request.pop("messages", []),
+                               "request": request},
+            "request_config": {**call["request_config"], "continuation": n,
+                               "continues_llm_call_id": call_ids[n - 1] if len(call_ids) >= n else None}}
 
 
 def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -1288,14 +1322,14 @@ def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[List
         if not enough_time_for_llm_call():
             logger.warning("extract_subunits: deadline too close, not calling %s for %s", provider, unit.get("label"))
             break
-        call_ids, text, t0 = [], None, time.time()
+        call_ids, text, t0, sent = [], None, time.time(), []
         try:
-            for n, (resp, text) in enumerate(_subunit_requests(provider, model, user)):
-                part = call if n == 0 else {**call, "request_config": {**call["request_config"], "continuation": n}}
-                call_ids.append(_record_response(part, resp, text, attempt, t0))
+            for n, (resp, text) in enumerate(_subunit_requests(provider, model, user, sent)):
+                call_ids.append(_record_response(_continuation_call(call, sent, n, call_ids), resp, text, attempt, t0))
                 t0 = time.time()
         except Exception as e:  # noqa: BLE001 - recorded, then the next attempt
-            call_ids.append(_record_error(call, e, attempt, t0))
+            n = max(len(sent) - 1, 0)        # the request that failed
+            call_ids.append(_record_error(_continuation_call(call, sent, n, call_ids), e, attempt, t0))
             logger.error("extract_subunits %s attempt %d/%d: API error for %s: %s",
                          provider, attempt, _EXTRACT_MAX_RETRIES, unit.get("label"), e)
             continue
