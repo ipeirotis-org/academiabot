@@ -376,3 +376,81 @@ def test_a_fetched_page_is_saved_with_status_final_url_hash_and_text(tmp_path):
     assert (tmp_path / "runs" / "fetch-test").exists()
     text = open(row["text_path"]).read()
     assert text == "Department of Finance & Banking"
+
+
+# ── saved snapshots: raw bytes, the server's type, and the declared charset ──
+
+def _fetch_page(body, content_type):
+    conn = FakeConnection([FakeResponse(200, {"Content-Type": content_type}, body)])
+    return fetcher.fetch("http://stern.example/", resolve=lambda *a: answer(PUBLIC), connect=conn)
+
+
+def _sha256(path):
+    import hashlib
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()
+
+
+def test_an_iso_8859_1_page_is_saved_byte_for_byte_and_read_with_its_charset(tmp_path):
+    log = run_log.RunLog("fetch-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    body = "<html><p>Département d'Économie</p></html>".encode("iso-8859-1")
+    fetcher.record(log, _fetch_page(body, "text/html; charset=ISO-8859-1"), ["Département d'Économie"])
+    row = log.pending["evidence"][0]
+    assert row["snapshot_path"].endswith(".html")
+    assert open(row["snapshot_path"], "rb").read() == body
+    assert _sha256(row["snapshot_path"]) == row["content_hash"]
+    assert row["content_type"] == "text/html; charset=ISO-8859-1"
+    assert open(row["text_path"]).read() == "Département d'Économie"
+    assert row["unit_names"] == ["Département d'Économie"] and row["name_check"] == "done"
+
+
+def test_a_charset_in_a_meta_tag_is_used_when_the_header_has_none():
+    body = '<html><head><meta charset="iso-8859-1"></head><p>Économie</p></html>'.encode("iso-8859-1")
+    assert fetcher.page_text(body, "text/html") == "Économie"
+    assert fetcher.page_text("<p>Économie</p>".encode("utf-8"), "text/html") == "Économie"
+
+
+def test_a_pdf_is_saved_as_pdf_and_its_name_check_is_skipped_not_failed(tmp_path):
+    log = run_log.RunLog("fetch-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    body = (b"%PDF-1.4\n1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj\n"
+            b"2 0 obj <</Type /Pages /Kids [] /Count 0>> endobj\n"
+            b"BT (School of Law \xe9) Tj ET\ntrailer <</Root 1 0 R>>\n%%EOF\n")
+    fetcher.record(log, _fetch_page(body, "application/pdf"), ["School of Law"])
+    row = log.pending["evidence"][0]
+    assert row["snapshot_path"].endswith(".pdf")
+    assert open(row["snapshot_path"], "rb").read() == body
+    assert _sha256(row["snapshot_path"]) == row["content_hash"]
+    assert row["content_type"] == "application/pdf"
+    assert open(row["text_path"]).read() == ""
+    assert row["unit_names"] == [] and row["name_check"].startswith("skipped")
+
+
+def test_an_unknown_type_is_saved_as_bin_and_not_read(tmp_path):
+    log = run_log.RunLog("fetch-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    fetcher.record(log, _fetch_page(b"\x89PNG School of Law", "image/png"), ["School of Law"])
+    row = log.pending["evidence"][0]
+    assert row["snapshot_path"].endswith(".bin") and row["name_check"].startswith("skipped")
+    assert row["unit_names"] == []
+
+
+def test_the_bucket_gets_the_raw_bytes_with_the_servers_content_type(tmp_path):
+    import hashlib
+    stored = {}
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def upload_from_string(self, data, content_type=None, timeout=None):
+            stored[self.name] = (data, content_type)
+
+    bucket = type("Bucket", (), {"name": "fake", "blob": lambda self, n: Blob(n)})()
+    log = run_log.RunLog("fetch-test", results_dir=tmp_path, enabled=False, bucket=bucket)
+    body = "<p>Économie</p>".encode("iso-8859-1")
+    fetcher.record(log, _fetch_page(body, "text/html; charset=ISO-8859-1"), ["Économie"])
+    row = log.pending["evidence"][0]
+    data, ctype = stored[row["snapshot_path"].split("gs://fake/", 1)[1]]
+    assert data == body and hashlib.sha256(data).hexdigest() == row["content_hash"]
+    assert ctype == "text/html; charset=ISO-8859-1"

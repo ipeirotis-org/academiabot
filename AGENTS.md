@@ -386,6 +386,16 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   (`lookup_within`: a worker thread, waited on for the time left; a late answer is never used)
   and every socket read and write (`_DeadlineSocket`, `_DeadlineSSLSocket`), so slow DNS or
   headers sent a byte at a time cannot pass it.
+- Since 2026-11-04, `add_evidence` saves the page bytes exactly as received (`RunLog.save_bytes`,
+  bucket or local fallback), named `.html`, `.pdf`, or `.bin` and stored with the server's
+  Content-Type, so the snapshot's SHA-256 equals `content_hash`. The `.txt` text decodes HTML
+  with its declared charset (header, then `<meta>`; ISO-8859-1 is read as windows-1252, as in
+  the HTML standard). PDFs and other types are not read: the text is empty and the new
+  evidence column `name_check` says `skipped: ...`, so an empty `unit_names` there never means
+  "name not found". The 16 evidence rows from 2026-10-29 were saved as UTF-8 text; all 16 were
+  checked on 2026-11-04 and their SHA-256 matches `content_hash` (all were UTF-8 HTML).
+  The BigQuery `evidence` table needs the `name_check` column: run
+  `python -m wikidata_discover.run_log setup` once. Until then, evidence rows fall back to local JSON.
 
 | Table | One row per | Must contain |
 |---|---|---|

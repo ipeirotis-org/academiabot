@@ -19,9 +19,11 @@ Rules (SPECS.md, week 4; AGENTS.md, "Run log"):
 
 fetch(url) returns a FetchResult; it never raises for a bad URL or a bad server.
 """
+import codecs
 import http.client
 import ipaddress
 import os
+import re
 import socket
 import ssl
 import threading
@@ -34,6 +36,7 @@ MAX_REDIRECTS = 5
 MAX_BYTES = 5 * 1024 * 1024
 MAX_SECONDS = 20.0
 REDIRECTS = (301, 302, 303, 307, 308)
+HTML_TYPES = ("text/html", "application/xhtml+xml")
 USER_AGENT = "AcademiaBot-evidence/1.0 (research; https://github.com/ipeirotis-org/academiabot)"
 
 
@@ -342,15 +345,59 @@ def fetch(url: str, *, resolve: Callable = socket.getaddrinfo, connect: Callable
                     pass
 
 
-def page_text(content: Optional[bytes]) -> str:
+def media_type(content_type: str) -> str:
+    """The media type of a Content-Type header, lower case, without parameters. Pure."""
+    return (content_type or "").split(";", 1)[0].strip().lower()
+
+
+def declared_charset(content: bytes, content_type: str) -> Optional[str]:
+    """The charset the page declares: the Content-Type header first, then a <meta> tag in
+    the first 2 KB of an HTML page. None when it declares none or names an unknown one. Pure."""
+    found = None
+    m = re.search(r"charset\s*=\s*[\"']?([\w.:-]+)", content_type or "", re.I)
+    if m:
+        found = m.group(1)
+    elif media_type(content_type) in HTML_TYPES or not content_type:
+        m = re.search(rb"<meta[^>]+charset\s*=\s*[\"']?([\w.:-]+)", content[:2048], re.I)
+        found = m.group(1).decode("ascii") if m else None
+    if not found:
+        return None
+    try:
+        name = codecs.lookup(found).name
+    except LookupError:
+        return None
+    # The HTML standard reads a page labeled ISO-8859-1 or ASCII as windows-1252.
+    return "cp1252" if name in ("iso8859-1", "latin-1", "ascii") else name
+
+
+def decode_page(content: bytes, content_type: str) -> str:
+    """The page as text, decoded with its declared charset, else UTF-8. Pure."""
+    return content.decode(declared_charset(content, content_type) or "utf-8", "replace")
+
+
+def page_text(content: Optional[bytes], content_type: str = "") -> str:
     """The visible text of an HTML page, one space between words. Pure."""
     if not content:
         return ""
     from bs4 import BeautifulSoup
-    soup = BeautifulSoup(content, "html.parser")
+    soup = BeautifulSoup(decode_page(content, content_type), "html.parser")
     for tag in soup(["script", "style", "noscript", "template"]):
         tag.decompose()
     return " ".join(soup.get_text(" ").split())
+
+
+def page_text_or_skip(content: bytes, content_type: str) -> Tuple[str, str]:
+    """(text, name_check) for a page that arrived. HTML, plain text, and a page without a
+    Content-Type are read ("done"). A PDF or any other type is not read: the text is
+    empty and the name check is "skipped: ...", so it is never "name not found". Pure."""
+    media = media_type(content_type)
+    if media in HTML_TYPES or not media:
+        return page_text(content, content_type), "done"
+    if media == "text/plain":
+        return " ".join(decode_page(content, content_type).split()), "done"
+    if media == "application/pdf":
+        return "", "skipped: PDF text is not extracted"
+    return "", f"skipped: content type {media} is not read"
 
 
 def names_on_page(names, text: str) -> List[str]:
@@ -363,11 +410,15 @@ def names_on_page(names, text: str) -> List[str]:
 
 
 def record(log, result: FetchResult, unit_names) -> str:
-    """Save one fetch as an evidence row: the page, its text, and the names of the citing
-    units that appear in it when the page arrived; the outcome and the reason always.
+    """Save one fetch as an evidence row: the page bytes, its text, and the names of the
+    citing units that appear in it when the page arrived; the outcome and the reason always.
     Returns the evidence id."""
-    text = page_text(result.content) if result.content is not None else None
-    found = names_on_page(unit_names, text) if text else []
+    text = name_check = None
+    found: List[str] = []
+    if result.content is not None:
+        text, name_check = page_text_or_skip(result.content, result.content_type)
+        found = names_on_page(unit_names, text) if name_check == "done" else []
     return log.add_evidence(url=result.url, http_status=result.status, content=result.content,
                             unit_names=found, final_url=result.final_url, outcome=result.outcome,
-                            detail=result.detail, content_type=result.content_type, text=text)
+                            detail=result.detail, content_type=result.content_type, text=text,
+                            name_check=name_check)
