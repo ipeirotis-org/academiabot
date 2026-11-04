@@ -1,0 +1,665 @@
+"""Week 4 sub-unit step: prompt answer parsing, the Anthropic pause_turn loop, the cache,
+and the CSV files. No network."""
+import csv
+import json
+
+import pytest
+
+import wikidata_discover.config as config
+from wikidata_discover import llm_helpers as lh
+from wikidata_discover import run_log, subunits
+from wikidata_discover.llm_helpers import LLMHelper
+
+STERN = {"qid": "Q770467", "label": "NYU Stern School of Business", "parent_label": "New York University",
+         "parent_qid": "Q49210", "website": "https://www.stern.nyu.edu", "country": "United States"}
+ANSWER = {"units": [
+    {"name": "Finance", "unit_type": "department", "website": None,
+     "source_url": "https://www.stern.nyu.edu/finance", "country": "United States",
+     "country_source": "44 West 4th Street, New York, NY"},
+    {"name": "Career Center", "unit_type": "office", "website": "https://stern.nyu.edu/cdc",
+     "source_url": None, "country": "United States", "country_source": None},
+]}
+
+
+def test_the_json_answer_is_found_inside_text_and_fences():
+    text = 'I searched the site.\n```json\n{"note": 1}\n' + json.dumps(ANSWER) + "\n```\nDone."
+    assert lh.json_with_units(text) == ANSWER
+    with pytest.raises(ValueError):
+        lh.json_with_units("no json here {not json}")
+
+
+def test_normalize_keeps_offices_out_of_scope_and_flags_units_without_a_url():
+    units = lh.normalize_subunits({"units": ANSWER["units"] + [
+        {"name": "  Finance ", "unit_type": "department",
+         "source_url": "https://www.stern.nyu.edu/finance"},                  # repeated name and page
+        {"name": "Center for Sustainable Business", "unit_type": "Research Center",
+         "source_url": "javascript:alert(1)", "website": "ftp://x"},
+        {"name": "", "unit_type": "department"}]})
+    by = {u["name"]: u for u in units}
+    assert list(by) == ["Finance", "Career Center", "Center for Sustainable Business"]
+    assert (by["Finance"]["in_scope"], by["Finance"]["no_url"]) == ("yes", False)
+    assert (by["Career Center"]["in_scope"], by["Career Center"]["no_url"]) == ("no", True)
+    other = by["Center for Sustainable Business"]
+    assert (other["unit_type"], other["in_scope"], other["source_url"], other["website"]) == ("other", "check", None, None)
+    assert by["Finance"]["country_source"] == "44 West 4th Street, New York, NY"
+
+
+def test_the_parent_is_read_from_p749_before_p361():
+    rows = [{"label": "Courant", "parent": "http://www.wikidata.org/entity/Q2", "parentLabel": "B", "prop": "P361"},
+            {"label": "Courant", "parent": "http://www.wikidata.org/entity/Q1", "parentLabel": "A", "prop": "P749",
+             "countryLabel": "United States"}]
+    u = subunits.unit_from_bindings("Q946028", rows)
+    assert (u["label"], u["parent_qid"], u["parent_label"], u["country"]) == ("Courant", "Q1", "A", "United States")
+    assert subunits.unit_from_bindings("Q5", [])["label"] == "Q5"
+    raw = [{"label": {"type": "literal", "value": "Courant"},
+            "parent": {"type": "uri", "value": "http://www.wikidata.org/entity/Q49210"}}]
+    assert subunits.flatten(raw) == [{"label": "Courant", "parent": "http://www.wikidata.org/entity/Q49210"}]
+
+
+class Block:
+    def __init__(self, type_, text=None):
+        self.type, self.text = type_, text
+
+
+class Resp:
+    def __init__(self, blocks, stop):
+        self.content, self.stop_reason = blocks, stop
+
+    def model_dump_json(self, indent=2):
+        return json.dumps({"stop_reason": self.stop_reason})
+
+
+def fake_anthropic(monkeypatch, replies):
+    sent = []
+
+    class Client:
+        def with_options(self, **kw):
+            return self
+
+        class messages:
+            @staticmethod
+            def stream(**kw):
+                sent.append(kw)
+                reply = replies[len(sent) - 1]
+
+                class Stream:
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *a):
+                        return False
+
+                    def __iter__(self):
+                        return iter([type("E", (), {"type": "content_block_start",
+                                                    "content_block": Block("server_tool_use")})()])
+
+                    def get_final_message(self):
+                        return reply
+                return Stream()
+    monkeypatch.setattr(lh, "_get_anthropic_client", lambda: Client())
+    return sent
+
+
+def test_anthropic_searches_resumes_after_pause_turn_and_caches_the_answer(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    sent = fake_anthropic(monkeypatch, [
+        Resp([Block("text", "Let me search."), Block("server_tool_use")], "pause_turn"),
+        Resp([Block("web_search_tool_result"), Block("text", json.dumps(ANSWER))], "end_turn")])
+    units = LLMHelper.extract_subunits(STERN)
+    assert [u["name"] for u in units] == ["Finance", "Career Center"] and lh.last_subunit_provider == "anthropic"
+    assert len(sent) == 2
+    assert sent[0]["tools"] == [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
+    assert sent[1]["messages"][-1]["role"] == "assistant"                # the paused turn is sent back
+    assert "NYU Abu Dhabi" in sent[0]["system"] and "Q770467" in sent[0]["messages"][0]["content"]
+    # A second request for the same unit reads the cache: no new call.
+    assert LLMHelper.extract_subunits(STERN) == units and len(sent) == 2
+
+
+def test_the_cache_key_changes_with_the_search_limit(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    answer = Resp([Block("text", json.dumps(ANSWER))], "end_turn")
+    sent = fake_anthropic(monkeypatch, [answer, answer])
+    LLMHelper.extract_subunits(STERN)
+    monkeypatch.setattr(lh, "SUBUNIT_MAX_SEARCHES", 3)               # same request, other search limit
+    LLMHelper.extract_subunits(STERN)
+    assert len(sent) == 2
+
+
+def test_a_chosen_provider_that_answers_nothing_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    bad = Resp([Block("text", "I could not find anything.")], "end_turn")
+    fake_anthropic(monkeypatch, [bad, bad])
+    with pytest.raises(ValueError, match="anthropic .run alone with --provider. returned no usable sub-unit answer"):
+        LLMHelper.extract_subunits(STERN)
+
+
+def test_subunits_for_writes_both_csv_files_and_unaligned_candidates(monkeypatch, tmp_path):
+    monkeypatch.setattr(LLMHelper, "extract_subunits", staticmethod(lambda unit: lh.normalize_subunits(ANSWER)))
+    monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
+    monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    s = subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=wikidata_tree(), fetch_pages=False)
+    assert (s["units"], s["no_url"], s["by_type"]) == (2, 1, {"department": 1, "office": 1})
+    rows = list(csv.DictReader((tmp_path / "Q770467_anthropic.csv").open()))
+    assert [(r["name"], r["in_scope"], r["no_url"]) for r in rows] == [("Finance", "yes", ""), ("Career Center", "no", "yes")]
+    depts = list(csv.DictReader((tmp_path / "Q770467_anthropic_departments.csv").open()))
+    assert [r["name"] for r in depts] == ["Finance"] and "parent" not in depts[0]   # scorer input
+    cands = log.pending["candidates"]
+    assert {c["status"] for c in cands} == {"unaligned"} and cands[0]["llm_call_ids"] == ["c1"]
+    assert cands[0]["university_qid"] == "Q49210" and cands[0]["parent_qid"] == "Q770467"
+
+
+def test_without_provider_the_subunit_step_asks_anthropic_first(monkeypatch):
+    asked = []
+
+    def fake(provider, unit, mode):
+        asked.append(provider)
+        return ([{"name": "X"}], ["c"]) if provider == "openai" else (None, [])     # anthropic: no answer parsed
+    monkeypatch.setattr(lh, "_subunits_from", fake)
+    monkeypatch.setattr(config, "ONLY_PROVIDER", None)
+    assert LLMHelper.extract_subunits(STERN) == [{"name": "X"}]
+    assert asked == ["anthropic", "openai"] and lh.last_subunit_provider == "openai"
+
+
+def test_each_cited_page_is_fetched_once_saved_and_linked_to_its_candidates(monkeypatch, tmp_path):
+    from wikidata_discover import fetcher
+    answer = {"units": [
+        {"name": "Finance", "unit_type": "department", "source_url": "https://stern.example/depts"},
+        {"name": "Marketing", "unit_type": "department", "source_url": "https://stern.example/depts"},
+        {"name": "Old Lab", "unit_type": "center", "source_url": "http://169.254.169.254/x"},
+        {"name": "No Page", "unit_type": "office", "source_url": None}]}
+    monkeypatch.setattr(LLMHelper, "extract_subunits", staticmethod(lambda unit: lh.normalize_subunits(answer)))
+    monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
+    monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
+    fetched = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        if "169.254" in url:
+            return fetcher.fetch(url, connect=lambda *a: pytest.fail("must not connect"))
+        return fetcher.FetchResult(url=url, outcome="ok", final_url=url, status=200,
+                                   content=b"<p>Departments: Finance, Marketing</p>", content_type="text/html")
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    s = subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=lambda q: STERN, fetch_page=fake_fetch)
+    assert fetched == ["https://stern.example/depts", "http://169.254.169.254/x"]      # once per page
+    ev = {e["url"]: e for e in log.pending["evidence"]}
+    assert ev["https://stern.example/depts"]["unit_names"] == ["Finance", "Marketing"]
+    assert ev["http://169.254.169.254/x"]["outcome"] == "refused"
+    cands = {c["name"]: c for c in log.pending["candidates"]}
+    assert cands["Finance"]["evidence_ids"] == cands["Marketing"]["evidence_ids"] == [ev["https://stern.example/depts"]["evidence_id"]]
+    assert cands["Old Lab"]["evidence_ids"] == [ev["http://169.254.169.254/x"]["evidence_id"]]
+    assert cands["No Page"]["evidence_ids"] == []
+    rows = {r["name"]: r for r in csv.DictReader((tmp_path / "Q770467_anthropic.csv").open())}
+    assert (rows["Finance"]["evidence_outcome"], rows["Old Lab"]["evidence_outcome"], rows["No Page"]["no_url"]) == ("ok", "refused", "yes")
+    assert s["pages"] == {"ok": 1, "refused": 1}
+
+
+def _run_with_pages(monkeypatch, tmp_path, answer):
+    from wikidata_discover import fetcher
+    monkeypatch.setattr(LLMHelper, "extract_subunits", staticmethod(lambda unit: lh.normalize_subunits(answer)))
+    monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
+    monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
+    fetched = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        return fetcher.FetchResult(url=url, outcome="ok", final_url=url, status=200,
+                                   content=b"<p>NYU Abu Dhabi, United Arab Emirates</p>", content_type="text/html")
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    subunits.subunits_for("Q49210", log, out_dir=tmp_path, fetch=lambda q: STERN, fetch_page=fake_fetch)
+    ev = {e["url"]: e for e in log.pending["evidence"]}
+    cands = {c["name"]: c for c in log.pending["candidates"]}
+    rows = {r["name"]: r for r in csv.DictReader((tmp_path / "Q49210_anthropic.csv").open())}
+    return fetched, ev, cands, rows
+
+
+def test_a_country_page_is_fetched_once_and_linked_to_its_unit(monkeypatch, tmp_path):
+    answer = {"units": [
+        {"name": "NYU Abu Dhabi", "unit_type": "campus", "source_url": "https://all.example/",
+         "country": "United Arab Emirates", "country_source": "https://nyuad.example/about"},
+        {"name": "NYU Shanghai", "unit_type": "campus", "source_url": "https://all.example/",
+         "country": "China", "country_source": "https://all.example/"}]}   # same page twice: one fetch
+    fetched, ev, cands, rows = _run_with_pages(monkeypatch, tmp_path, answer)
+    assert fetched == ["https://all.example/", "https://nyuad.example/about"]
+    assert ev["https://nyuad.example/about"]["unit_names"] == ["NYU Abu Dhabi"]
+    assert cands["NYU Abu Dhabi"]["evidence_ids"] == [ev["https://all.example/"]["evidence_id"],
+                                                     ev["https://nyuad.example/about"]["evidence_id"]]
+    assert cands["NYU Shanghai"]["evidence_ids"] == [ev["https://all.example/"]["evidence_id"]]
+    assert rows["NYU Abu Dhabi"]["country_evidence_outcome"] == "ok"
+
+
+def test_a_country_source_that_is_an_address_is_not_fetched(monkeypatch, tmp_path):
+    answer = {"units": [{"name": "Finance", "unit_type": "department", "source_url": "https://stern.example/depts",
+                         "country": "United States", "country_source": "44 West 4th Street, New York, NY"}]}
+    fetched, ev, cands, rows = _run_with_pages(monkeypatch, tmp_path, answer)
+    assert fetched == ["https://stern.example/depts"]
+    assert len(cands["Finance"]["evidence_ids"]) == 1
+    assert rows["Finance"]["country_evidence_outcome"] == ""
+
+
+def test_two_qids_citing_one_page_share_one_fetch_and_one_evidence_row(monkeypatch, tmp_path):
+    from wikidata_discover import fetcher
+    answers = {"Q770467": {"units": [{"name": "Finance", "unit_type": "department", "source_url": "https://nyu.example/all"}]},
+               "Q1569124": {"units": [{"name": "Physics", "unit_type": "department", "source_url": "https://nyu.example/all"},
+                                      {"name": "Chemistry", "unit_type": "department", "source_url": "https://nyu.example/all"}]}}
+    current = {}
+    monkeypatch.setattr(LLMHelper, "extract_subunits",
+                        staticmethod(lambda unit: lh.normalize_subunits(answers[current["qid"]])))
+    monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
+    monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
+    fetched = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        return fetcher.FetchResult(url=url, outcome="ok", final_url=url, status=200,
+                                   content=b"<p>Finance, Physics</p>", content_type="text/html")
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    pages = subunits.CitedPages(log, fake_fetch)
+    for qid in answers:
+        current["qid"] = qid
+        subunits.subunits_for(qid, log, out_dir=tmp_path, fetch=lambda q: {**STERN, "qid": q}, pages=pages)
+    assert fetched == ["https://nyu.example/all"]                                  # fetched once
+    assert len(log.pending["evidence"]) == 1
+    eid = log.pending["evidence"][0]["evidence_id"]
+    cands = {c["name"]: c for c in log.pending["candidates"]}
+    assert {c["parent_qid"] for c in cands.values()} == {"Q770467", "Q1569124"}
+    assert all(c["evidence_ids"] == [eid] for c in cands.values())
+    rows = {r["name"]: r for r in csv.DictReader((tmp_path / "Q1569124_anthropic.csv").open())}
+    assert (rows["Physics"]["name_on_page"], rows["Chemistry"]["name_on_page"]) == ("yes", "no")   # checked against the saved text
+    assert rows["Physics"]["evidence_outcome"] == "ok"
+    first = {r["name"]: r for r in csv.DictReader((tmp_path / "Q770467_anthropic.csv").open())}
+    assert first["Finance"]["name_on_page"] == "yes"
+
+
+def test_name_on_page_is_skipped_for_a_page_that_is_not_read():
+    assert subunits.name_on_page("Law", {"name_check": "skipped: PDF text is not extracted", "text": ""}) == "skipped"
+    assert subunits.name_on_page("Law", {"name_check": None}) == "" and subunits.name_on_page("Law", None) == ""
+
+
+def test_a_pause_turn_continuation_saves_the_exact_request_it_sent(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(run_log, "DISABLED", False)
+    paused = [Block("text", "Let me search."), Block("server_tool_use"), Block("web_search_tool_result")]
+    sent = fake_anthropic(monkeypatch, [Resp(paused, "pause_turn"),
+                                        Resp([Block("text", json.dumps(ANSWER))], "end_turn")])
+    log = run_log.start("subunits-test", "inv1", results_dir=tmp_path)
+    log.gcs_error = log.bq_error = "no cloud in tests"                  # texts go to local files
+    LLMHelper.extract_subunits(STERN)
+    first, second = log.pending["llm_calls"]
+    saved = json.loads(open(second["prompt_path"]).read())
+    assert saved["messages"] == lh._jsonable(sent[1]["messages"])      # what the second request sent
+    assert saved["messages"][0] == {"role": "user", "content": sent[0]["messages"][0]["content"]}
+    assert [b["type"] for b in saved["messages"][1]["content"]] == ["text", "server_tool_use", "web_search_tool_result"]
+    assert saved["system"] == sent[1]["system"]
+    assert saved["request"] == lh._jsonable({k: v for k, v in sent[1].items() if k not in ("system", "messages")})
+    cfg1, cfg2 = json.loads(first["request_config"]), json.loads(second["request_config"])
+    assert "continuation" not in cfg1
+    assert cfg2["continuation"] == 1 and cfg2["continues_llm_call_id"] == first["llm_call_id"]
+    original = json.loads(open(first["prompt_path"]).read())
+    assert original["user"] == sent[0]["messages"][0]["content"] and "messages" not in original
+
+
+def test_same_name_units_with_different_pages_are_both_kept_and_exact_repeats_are_dropped():
+    units = lh.normalize_subunits({"units": [
+        {"name": "Graduate Program", "unit_type": "program", "source_url": "https://a.example/econ/grad"},
+        {"name": "Graduate Program", "unit_type": "program", "source_url": "https://a.example/math/grad"},
+        {"name": "Finance", "unit_type": "department", "source_url": "https://a.example/fin",
+         "website": "https://fin.example"},
+        {"name": "finance", "unit_type": "department", "source_url": "https://a.example/fin/",
+         "website": "https://fin.example"},                                          # exact repeat
+        {"name": "Marketing", "unit_type": "department"},
+        {"name": "Marketing", "unit_type": "department"},                            # repeat, no pages
+        {"name": "Law", "unit_type": "school", "source_url": "https://a.example/law"},
+        {"name": "Law", "unit_type": "school", "website": "https://law.example"}]})  # nothing shared: kept
+    assert [(u["name"], u["source_url"]) for u in units] == [
+        ("Graduate Program", "https://a.example/econ/grad"), ("Graduate Program", "https://a.example/math/grad"),
+        ("Finance", "https://a.example/fin"), ("Marketing", None),
+        ("Law", "https://a.example/law"), ("Law", None)]
+
+
+# ── a parsed empty answer is valid; only an unparseable one is a failure ──
+
+def _anthropic_then_openai(monkeypatch, anthropic_text, openai_answer):
+    """Anthropic answers with anthropic_text; OpenAI (if asked) with openai_answer."""
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "k")
+    sent = fake_anthropic(monkeypatch, [Resp([Block("text", anthropic_text)], "end_turn")] * 3)
+    asked_openai = []
+
+    class OpenAI:
+        def with_options(self, **kw):
+            return self
+
+        class responses:
+            @staticmethod
+            def create(**kw):
+                asked_openai.append(kw)
+                return type("R", (), {"output": [1], "output_text": json.dumps(openai_answer),
+                                      "model_dump_json": lambda self, indent=2: "{}"})()
+    monkeypatch.setattr(lh, "_get_openai_client", lambda: OpenAI())
+    return sent, asked_openai
+
+
+def test_an_empty_answer_with_provider_writes_empty_csvs_and_does_not_fail(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    sent, asked_openai = _anthropic_then_openai(monkeypatch, '{"units": []}', ANSWER)
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    s = subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=lambda q: STERN, fetch_page=lambda u: pytest.fail("no page"))
+    assert (s["outcome"], s["units"], s["provider"]) == ("no sub-units", 0, "anthropic")
+    assert len(sent) == 1 and asked_openai == []
+    for name in ("Q770467_anthropic.csv", "Q770467_anthropic_departments.csv"):
+        lines = (tmp_path / name).read_text().splitlines()
+        assert lines == [",".join(subunits.COLUMNS)]                           # header only
+    assert log.pending["candidates"] == []
+
+
+def test_an_empty_answer_without_provider_asks_only_the_first_provider(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", None)
+    sent, asked_openai = _anthropic_then_openai(monkeypatch, 'Done. {"units": []}', ANSWER)
+    assert LLMHelper.extract_subunits(STERN) == []
+    assert len(sent) == 1 and asked_openai == [] and lh.last_subunit_provider == "anthropic"
+
+
+def test_an_unparseable_answer_still_falls_back_to_the_next_provider(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", None)
+    sent, asked_openai = _anthropic_then_openai(monkeypatch, "I could not find a list.", ANSWER)
+    units = LLMHelper.extract_subunits(STERN)
+    assert [u["name"] for u in units] == ["Finance", "Career Center"]
+    assert len(sent) == lh._EXTRACT_MAX_RETRIES and len(asked_openai) == 1
+    assert lh.last_subunit_provider == "openai"
+
+
+# ── university_qid is the root of the tree; parent_qid is the immediate parent ──
+
+NYU = {"qid": "Q49210", "label": "New York University", "website": "https://www.nyu.edu",
+       "country": "United States", "parent_qid": "Q1068569", "parent_label": "Association of American Universities",
+       "is_university": True}
+AAU = {"qid": "Q1068569", "label": "Association of American Universities", "parent_qid": None, "is_university": False}
+NYUAD = {"qid": "Q1135432", "label": "NYU Abu Dhabi", "parent_qid": "Q49210", "parent_label": "New York University",
+         "country": "United Arab Emirates", "is_university": False}
+NYUAD_SCIENCE = {"qid": "Q900001", "label": "NYUAD Division of Science", "parent_qid": "Q1135432",
+                 "parent_label": "NYU Abu Dhabi", "is_university": False}
+STERN_FINANCE = {"qid": "Q900002", "label": "Stern Department of Finance", "parent_qid": "Q770467",
+                 "parent_label": "NYU Stern School of Business", "is_university": False}
+
+
+def wikidata_tree(*extra):
+    """A fake fetch_unit over NYU, the AAU above it, Stern, and any extra units."""
+    units = {u["qid"]: u for u in (NYU, AAU, STERN, *extra)}
+    asked = []
+
+    def fetch(q):
+        asked.append(q)
+        return units[q]
+    fetch.asked = asked
+    return fetch
+
+
+def _candidates_for(monkeypatch, tmp_path, qid, fetch, **kw):
+    monkeypatch.setattr(LLMHelper, "extract_subunits", staticmethod(lambda unit: lh.normalize_subunits(ANSWER)))
+    monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
+    monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    s = subunits.subunits_for(qid, log, out_dir=tmp_path, fetch=fetch, fetch_pages=False, **kw)
+    return s, log, log.pending["candidates"]
+
+
+def test_a_school_whose_parent_is_the_university(monkeypatch, tmp_path):
+    s, log, cands = _candidates_for(monkeypatch, tmp_path, "Q770467", wikidata_tree())
+    assert s["university_qid"] == log.university_qid == "Q49210"
+    assert {(c["university_qid"], c["parent_qid"]) for c in cands} == {("Q49210", "Q770467")}
+
+
+def test_a_school_under_a_campus_keeps_the_university(monkeypatch, tmp_path):
+    fetch = wikidata_tree(NYUAD, NYUAD_SCIENCE)
+    s, log, cands = _candidates_for(monkeypatch, tmp_path, "Q900001", fetch)
+    assert s["university_qid"] == "Q49210"                                     # not NYU Abu Dhabi
+    assert {(c["university_qid"], c["parent_qid"]) for c in cands} == {("Q49210", "Q900001")}
+    assert "Q1068569" in fetch.asked                                           # looked above NYU, kept NYU
+
+
+def test_a_campus_that_is_itself_a_university_still_gives_the_top_university(monkeypatch, tmp_path):
+    fetch = wikidata_tree({**NYUAD, "is_university": True}, NYUAD_SCIENCE)
+    s, _, _ = _candidates_for(monkeypatch, tmp_path, "Q900001", fetch)
+    assert s["university_qid"] == "Q49210"
+
+
+def test_a_unit_two_levels_down(monkeypatch, tmp_path):
+    s, _, cands = _candidates_for(monkeypatch, tmp_path, "Q900002", wikidata_tree(STERN_FINANCE))
+    assert s["university_qid"] == "Q49210"
+    assert {(c["university_qid"], c["parent_qid"]) for c in cands} == {("Q49210", "Q900002")}
+
+
+def test_a_deeper_run_passes_the_university_down_without_walking(monkeypatch, tmp_path):
+    fetch = wikidata_tree(STERN_FINANCE)
+    s, _, cands = _candidates_for(monkeypatch, tmp_path, "Q900002", fetch, university_qid="Q49210")
+    assert fetch.asked == ["Q900002"]                                          # no walk up
+    assert {(c["university_qid"], c["parent_qid"]) for c in cands} == {("Q49210", "Q900002")}
+
+
+def test_the_university_itself_is_its_own_root_and_a_loop_or_no_university_gives_none():
+    assert subunits.find_university(NYU, wikidata_tree()) == "Q49210"
+    loop_a = {"qid": "Q1", "parent_qid": "Q2", "is_university": False}
+    loop_b = {"qid": "Q2", "parent_qid": "Q1", "is_university": False}
+    assert subunits.find_university(loop_a, wikidata_tree(loop_a, loop_b)) is None
+
+
+def test_the_unit_query_reads_whether_the_unit_is_a_university():
+    assert subunits.unit_from_bindings("Q49210", [{"label": "NYU", "isUniversity": "true"}])["is_university"] is True
+    assert subunits.unit_from_bindings("Q770467", [{"label": "Stern", "isUniversity": "false"}])["is_university"] is False
+    assert subunits.unit_from_bindings("Q184478", [{"label": "UC", "isUniversity": "true", "isSystem": "true"}])["is_system"] is True
+
+
+UC = {"qid": "Q184478", "label": "University of California", "parent_qid": None, "is_university": True, "is_system": True}
+BERKELEY = {"qid": "Q168756", "label": "University of California, Berkeley", "parent_qid": "Q184478",
+            "is_university": True, "is_system": False}
+HAAS = {"qid": "Q900003", "label": "Haas School of Business", "parent_qid": "Q168756", "is_university": False}
+CUNY = {"qid": "Q762266", "label": "City University of New York", "parent_qid": None, "is_university": True, "is_system": True}
+BARUCH = {"qid": "Q900004", "label": "Baruch College", "parent_qid": "Q762266", "is_university": False}
+
+
+def test_a_university_system_is_never_the_root_of_its_universities():
+    tree = wikidata_tree(UC, BERKELEY, HAAS)
+    assert subunits.find_university(BERKELEY, tree) == "Q168756"            # not the UC system
+    assert subunits.find_university(HAAS, tree) == "Q168756"
+
+
+def test_a_run_on_a_system_itself_keeps_the_system_as_root():
+    tree = wikidata_tree(CUNY, BARUCH)
+    assert subunits.find_university(CUNY, tree) == "Q762266"
+    assert subunits.find_university(BARUCH, tree) == "Q762266"
+
+
+def test_a_joint_unit_under_two_universities_gets_no_university():
+    ecnu = {"qid": "Q2034790", "label": "East China Normal University", "parent_qid": None, "is_university": True}
+    shanghai = {"qid": "Q13652966", "label": "NYU Shanghai", "parent_qid": "Q2034790",
+                "parent_qids": ["Q2034790", "Q49210"], "is_university": True}
+    school = {"qid": "Q900005", "label": "NYU Shanghai Business", "parent_qid": "Q13652966", "is_university": False}
+    tree = wikidata_tree(ecnu, shanghai, school)
+    assert subunits.find_university(shanghai, tree) is None                 # never guessed
+    assert subunits.find_university(school, tree) is None
+
+
+def test_a_joint_unit_with_one_university_branch_gets_that_university():
+    hospital = {"qid": "Q900006", "label": "A Hospital", "parent_qid": None, "is_university": False}
+    lab = {"qid": "Q900007", "label": "Joint Lab", "parent_qid": "Q49210",
+           "parent_qids": ["Q49210", "Q900006"], "is_university": False}
+    assert subunits.find_university(lab, wikidata_tree(hospital, lab)) == "Q49210"
+
+
+def test_parent_qids_keeps_every_parent_of_the_chosen_property():
+    rows = [{"label": "NYU Shanghai", "parent": "http://www.wikidata.org/entity/Q49210", "prop": "P749"},
+            {"label": "NYU Shanghai", "parent": "http://www.wikidata.org/entity/Q2034790", "prop": "P749"},
+            {"label": "NYU Shanghai", "parent": "http://www.wikidata.org/entity/Q1", "prop": "P361"}]
+    assert subunits.unit_from_bindings("Q13652966", rows)["parent_qids"] == ["Q2034790", "Q49210"]
+
+
+# ── a pause_turn continuation near the deadline ─────────────────────────
+
+class FakeClock:
+    """Seconds left before config.DEADLINE; each streamed request uses `cost` of them."""
+    def __init__(self, left, cost):
+        self.left, self.cost = left, cost
+
+
+def clocked_anthropic(monkeypatch, clock, replies):
+    """A fake Anthropic client on a fake clock. Returns (sent requests, timeouts given)."""
+    sent, timeouts = [], []
+
+    class Client:
+        def with_options(self, timeout=None, **kw):
+            timeouts.append(timeout)
+            return self
+
+        class messages:
+            @staticmethod
+            def stream(**kw):
+                sent.append(json.loads(json.dumps(lh._jsonable(kw))))
+                reply = replies[len(sent) - 1]
+                clock.left -= clock.cost
+
+                class Stream:
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *a):
+                        return False
+
+                    def __iter__(self):
+                        return iter([])
+
+                    def get_final_message(self):
+                        return reply
+                return Stream()
+    monkeypatch.setattr(lh, "_get_anthropic_client", lambda: Client())
+    monkeypatch.setattr(config, "seconds_left", lambda: clock.left)
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    return sent, timeouts
+
+
+def test_no_continuation_is_sent_when_time_runs_out_and_it_is_not_no_subunits(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(run_log, "DISABLED", False)
+    clock = FakeClock(left=100, cost=80)                          # 20 s left after the first request
+    sent, timeouts = clocked_anthropic(monkeypatch, clock, [
+        Resp([Block("text", "Searching."), Block("server_tool_use")], "pause_turn"),
+        Resp([Block("text", json.dumps(ANSWER))], "end_turn")])
+    log = run_log.start("subunits-test", "inv1", results_dir=tmp_path)
+    log.gcs_error = log.bq_error = "no cloud in tests"
+    with pytest.raises(lh.LLMDeadline):
+        LLMHelper.extract_subunits(STERN)
+    assert len(sent) == 1 and len(timeouts) == 1                  # no second request
+    first, stopped = log.pending["llm_calls"]
+    cfg = json.loads(stopped["request_config"])
+    assert (cfg["continuation"], cfg["not_sent"], cfg["stopped_for_deadline"]) == (1, True, True)
+    assert "deadline" in stopped["error"] and cfg["continues_llm_call_id"] == first["llm_call_id"]
+    assert not list((tmp_path / "cache").glob("*.json"))          # nothing cached as an answer
+
+
+def test_a_subunits_run_stopped_for_the_deadline_fails_instead_of_writing_no_subunits(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    clock = FakeClock(left=100, cost=80)
+    clocked_anthropic(monkeypatch, clock, [Resp([Block("server_tool_use")], "pause_turn")])
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    with pytest.raises(lh.LLMDeadline):
+        subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=wikidata_tree(), fetch_pages=False)
+    assert not (tmp_path / "Q770467_anthropic.csv").exists() and log.pending["candidates"] == []
+
+
+def test_a_continuation_gets_a_shorter_timeout_from_the_time_left(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    clock = FakeClock(left=500, cost=200)                         # 300 s left for the continuation
+    sent, timeouts = clocked_anthropic(monkeypatch, clock, [
+        Resp([Block("text", "Searching."), Block("server_tool_use")], "pause_turn"),
+        Resp([Block("text", json.dumps(ANSWER))], "end_turn")])
+    units = LLMHelper.extract_subunits(STERN)
+    assert [u["name"] for u in units] == ["Finance", "Career Center"]
+    assert len(sent) == 2 and timeouts == [500, 300]
+    assert timeouts[1] < timeouts[0]
+
+
+def test_still_pause_turn_after_the_last_continuation_is_a_failure_and_is_not_cached(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(run_log, "DISABLED", False)
+    # Every reply pauses, and the text even holds a parseable answer: it must not be used.
+    paused = Resp([Block("text", json.dumps(ANSWER)), Block("server_tool_use")], "pause_turn")
+    sent = fake_anthropic(monkeypatch, [paused] * 20)
+    log = run_log.start("subunits-test", "inv1", results_dir=tmp_path)
+    log.gcs_error = log.bq_error = "no cloud in tests"
+    with pytest.raises(ValueError, match="no usable sub-unit answer"):
+        LLMHelper.extract_subunits(STERN)
+    assert len(sent) == lh._MAX_CONTINUATIONS + 1                        # one attempt, no retry
+    assert not (tmp_path / "cache").exists() or not any((tmp_path / "cache").iterdir())
+    rows = log.pending["llm_calls"]
+    assert len(rows) == lh._MAX_CONTINUATIONS + 1
+    assert rows[-1]["error"] == f"still pause_turn after {lh._MAX_CONTINUATIONS} continuations"
+    assert rows[-1]["response_path"]                                     # the raw response is still kept
+    assert all(r["error"] is None for r in rows[:-1])
+
+
+# ── a nonempty list with no valid unit is a failure; URL sets decide same-name repeats ──
+
+def test_a_nonempty_list_with_no_valid_unit_fails_and_nothing_is_cached(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    bad = Resp([Block("text", json.dumps({"units": ["Finance", {"name": ""}, {"unit_type": "department"}, 7]}))], "end_turn")
+    fake_anthropic(monkeypatch, [bad] * lh._EXTRACT_MAX_RETRIES)
+    with pytest.raises(ValueError, match="no usable sub-unit answer"):
+        LLMHelper.extract_subunits(STERN)
+    assert not (tmp_path / "cache").exists() or not any((tmp_path / "cache").iterdir())
+    with pytest.raises(lh.SubunitsIncomplete):
+        lh.normalize_subunits({"units": [None, {"name": "  "}]})
+
+
+def test_an_all_invalid_list_falls_back_to_the_next_provider(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", None)
+    sent, asked_openai = _anthropic_then_openai(monkeypatch, '{"units": [{"name": null}]}', ANSWER)
+    assert [u["name"] for u in LLMHelper.extract_subunits(STERN)] == ["Finance", "Career Center"]
+    assert len(asked_openai) == 1 and lh.last_subunit_provider == "openai"
+
+
+def test_a_real_empty_list_is_still_a_valid_answer():
+    assert lh.normalize_subunits({"units": []}) == []
+
+
+def test_same_name_rows_whose_url_sets_overlap_are_merged():
+    units = lh.normalize_subunits({"units": [
+        {"name": "Finance", "unit_type": "department", "source_url": "https://a.example/fin"},
+        {"name": "Finance", "unit_type": "department", "website": "https://a.example/fin/"},   # source of the first
+        {"name": "Law", "unit_type": "school", "source_url": "https://a.example/law", "website": "https://law.example"},
+        {"name": "Law", "unit_type": "school", "source_url": "https://law.example"}]})         # website of the first
+    assert [(u["name"], u["source_url"]) for u in units] == [("Finance", "https://a.example/fin"),
+                                                             ("Law", "https://a.example/law")]
+
+
+def test_same_name_rows_with_different_urls_stay_separate_and_rows_without_urls_merge():
+    units = lh.normalize_subunits({"units": [
+        {"name": "Graduate Program", "unit_type": "program", "source_url": "https://a.example/econ",
+         "website": "https://econ.example"},
+        {"name": "Graduate Program", "unit_type": "program", "source_url": "https://a.example/math",
+         "website": "https://math.example"},
+        {"name": "Marketing", "unit_type": "department"},
+        {"name": "Marketing", "unit_type": "department"}]})
+    assert [(u["name"], u["source_url"]) for u in units] == [
+        ("Graduate Program", "https://a.example/econ"), ("Graduate Program", "https://a.example/math"),
+        ("Marketing", None)]
