@@ -420,6 +420,12 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   "Department", "School of Art" is found in "the School of Art and Design". Case, spacing,
   and "&" against "and" are ignored as before. Rechecked 2026-11-04 on the saved text of
   all 16 week 4 evidence rows (166 unit-to-page links): no result changed.
+- In the sub-unit step, an answer that parsed with an empty list (`{"units": []}`) is valid:
+  `_subunits_from` returns `[]` for it and `None` only when no answer parsed. `extract_subunits`
+  stops at the first parsed answer, so an empty one asks no other provider; `subunits_for`
+  writes the two CSV files with the header only, and its summary (in the runs row) has
+  `outcome` "no sub-units" (else "ok"). Only an answer that does not parse falls back. The
+  school-level `discover` is unchanged: an empty list there still counts as a failure.
 
 | Table | One row per | Must contain |
 |---|---|---|

@@ -166,5 +166,6 @@ def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path
     outcomes: Dict[str, int] = {}
     for e in evidence.values():
         outcomes[e["outcome"]] = outcomes.get(e["outcome"], 0) + 1
-    return {"qid": qid, "label": unit["label"], "provider": provider, "units": len(units), "by_type": by_type,
+    return {"qid": qid, "label": unit["label"], "provider": provider,
+            "outcome": "ok" if units else "no sub-units", "units": len(units), "by_type": by_type,
             "no_url": sum(1 for u in units if u.get("no_url")), "pages": outcomes, "csv": str(full)}

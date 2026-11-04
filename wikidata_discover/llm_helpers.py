@@ -1021,11 +1021,12 @@ class LLMHelper:
         """The direct sub-units of one unit (a university or a school), each with a name,
         a type, a website, one source URL, and a country with the page or address that
         shows it. Tries the providers in order, or only config.ONLY_PROVIDER, and returns
-        the first answer with units. Each provider searches the web while it answers.
+        the first answer that parsed, also when its list is empty (no sub-units). Each
+        provider searches the web while it answers.
 
         unit: {"qid", "label", "parent_label", "website", "country"} from Wikidata.
         Sets last_subunit_provider and last_subunit_call_ids. Raises ValueError when no
-        provider answered with units."""
+        provider gave an answer that parsed."""
         global last_subunit_provider, last_subunit_call_ids
         last_subunit_provider, last_subunit_call_ids = None, []
         mode = f"only_{config.ONLY_PROVIDER}" if config.ONLY_PROVIDER else "best_available"
@@ -1037,11 +1038,13 @@ class LLMHelper:
             except ValueError as e:      # no key for this provider
                 logger.debug("extract_subunits: %s not available (%s)", provider[0], e)
                 continue
-            if units:
+            # A parsed answer ends the search, even with no units: it is valid, and asking
+            # another provider would only add cost. Only an answer that did not parse falls back.
+            if units is not None:
                 last_subunit_provider, last_subunit_call_ids = provider[0], call_ids
                 return units
         who = f"{config.ONLY_PROVIDER} (run alone with --provider)" if config.ONLY_PROVIDER else "No provider"
-        raise ValueError(f"{who} returned no sub-units for {unit.get('label')!r} ({unit.get('qid')}).")
+        raise ValueError(f"{who} returned no usable sub-unit answer for {unit.get('label')!r} ({unit.get('qid')}).")
 
 def parse_match_answer(answer: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:
     """Turn a choose_match reply into (qid, label), ("ORPHAN:" + qid, label), or None.
@@ -1304,9 +1307,11 @@ def _continuation_call(call: dict, sent: list, n: int, call_ids: list) -> dict:
                                "continues_llm_call_id": call_ids[n - 1] if len(call_ids) >= n else None}}
 
 
-def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[Optional[List[Dict[str, Any]]], List[str]]:
     """One provider's sub-units for one unit, from the cache or a fresh call, and the
-    llm_calls ids behind them. Raises ValueError when the provider has no key."""
+    llm_calls ids behind them. The list is None when no answer parsed (a failure), and
+    [] when an answer parsed with no units (a valid answer). Raises ValueError when the
+    provider has no key."""
     model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
     user = subunit_input(unit)
     request = {"tools": subunit_tools(provider), "max_tokens": SUBUNIT_MAX_TOKENS,
@@ -1354,4 +1359,4 @@ def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[List
         _save_cache(key, units)
         _save_cache_meta(key, call_ids[-1])
         return units, [i for i in call_ids if i]
-    return [], []
+    return None, []

@@ -135,7 +135,7 @@ def test_a_chosen_provider_that_answers_nothing_raises(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
     bad = Resp([Block("text", "I could not find anything.")], "end_turn")
     fake_anthropic(monkeypatch, [bad, bad])
-    with pytest.raises(ValueError, match="anthropic .run alone with --provider. returned no sub-units"):
+    with pytest.raises(ValueError, match="anthropic .run alone with --provider. returned no usable sub-unit answer"):
         LLMHelper.extract_subunits(STERN)
 
 
@@ -160,7 +160,7 @@ def test_without_provider_the_subunit_step_asks_anthropic_first(monkeypatch):
 
     def fake(provider, unit, mode):
         asked.append(provider)
-        return ([{"name": "X"}], ["c"]) if provider == "openai" else ([], [])
+        return ([{"name": "X"}], ["c"]) if provider == "openai" else (None, [])     # anthropic: no answer parsed
     monkeypatch.setattr(lh, "_subunits_from", fake)
     monkeypatch.setattr(config, "ONLY_PROVIDER", None)
     assert LLMHelper.extract_subunits(STERN) == [{"name": "X"}]
@@ -326,3 +326,59 @@ def test_same_name_units_with_different_pages_are_both_kept_and_exact_repeats_ar
         ("Graduate Program", "https://a.example/econ/grad"), ("Graduate Program", "https://a.example/math/grad"),
         ("Finance", "https://a.example/fin"), ("Marketing", None),
         ("Law", "https://a.example/law"), ("Law", None)]
+
+
+# ── a parsed empty answer is valid; only an unparseable one is a failure ──
+
+def _anthropic_then_openai(monkeypatch, anthropic_text, openai_answer):
+    """Anthropic answers with anthropic_text; OpenAI (if asked) with openai_answer."""
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "k")
+    sent = fake_anthropic(monkeypatch, [Resp([Block("text", anthropic_text)], "end_turn")] * 3)
+    asked_openai = []
+
+    class OpenAI:
+        def with_options(self, **kw):
+            return self
+
+        class responses:
+            @staticmethod
+            def create(**kw):
+                asked_openai.append(kw)
+                return type("R", (), {"output": [1], "output_text": json.dumps(openai_answer),
+                                      "model_dump_json": lambda self, indent=2: "{}"})()
+    monkeypatch.setattr(lh, "_get_openai_client", lambda: OpenAI())
+    return sent, asked_openai
+
+
+def test_an_empty_answer_with_provider_writes_empty_csvs_and_does_not_fail(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    sent, asked_openai = _anthropic_then_openai(monkeypatch, '{"units": []}', ANSWER)
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    s = subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=lambda q: STERN, fetch_page=lambda u: pytest.fail("no page"))
+    assert (s["outcome"], s["units"], s["provider"]) == ("no sub-units", 0, "anthropic")
+    assert len(sent) == 1 and asked_openai == []
+    for name in ("Q770467_anthropic.csv", "Q770467_anthropic_departments.csv"):
+        lines = (tmp_path / name).read_text().splitlines()
+        assert lines == [",".join(subunits.COLUMNS)]                           # header only
+    assert log.pending["candidates"] == []
+
+
+def test_an_empty_answer_without_provider_asks_only_the_first_provider(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", None)
+    sent, asked_openai = _anthropic_then_openai(monkeypatch, 'Done. {"units": []}', ANSWER)
+    assert LLMHelper.extract_subunits(STERN) == []
+    assert len(sent) == 1 and asked_openai == [] and lh.last_subunit_provider == "anthropic"
+
+
+def test_an_unparseable_answer_still_falls_back_to_the_next_provider(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", None)
+    sent, asked_openai = _anthropic_then_openai(monkeypatch, "I could not find a list.", ANSWER)
+    units = LLMHelper.extract_subunits(STERN)
+    assert [u["name"] for u in units] == ["Finance", "Career Center"]
+    assert len(sent) == lh._EXTRACT_MAX_RETRIES and len(asked_openai) == 1
+    assert lh.last_subunit_provider == "openai"

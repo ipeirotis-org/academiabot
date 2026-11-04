@@ -82,7 +82,7 @@ def subunits_with_run_log(qids, argv, fetch_pages: bool = True) -> None:
             try:
                 s = subunits.subunits_for(qid, log, fetch_pages=fetch_pages, pages=pages)
                 done.append(s)
-                config.console.print(f"{qid} {s['label']}: {s['units']} sub-units from {s['provider']} "
+                config.console.print(f"{qid} {s['label']}: {s['outcome']}, {s['units']} sub-units from {s['provider']} "
                                      f"{s['by_type']}, {s['no_url']} without a URL, cited pages {s['pages']}. "
                                      f"Wrote {s['csv']}")
             finally:
