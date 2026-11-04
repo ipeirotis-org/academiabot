@@ -449,6 +449,12 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   provider failure. It is not parsed, not cached, and not retried. The next provider may
   answer, and with `--provider` the step fails. Checked 2026-11-04: no week 4 `llm_calls` row
   and none of the 11 sub-unit cache files ended on `pause_turn`.
+- `normalize_subunits` raises `SubunitsIncomplete` when a nonempty "units" list has no valid
+  member (no object, or no name): like an unparseable answer it is retried, never cached,
+  and then the next provider is asked. A real `{"units": []}` is still a valid empty answer.
+  Two same-name rows are one unit when their URL sets {source_url, website} overlap
+  (empty values ignored), or when neither row has any URL. Checked 2026-11-04: none of the
+  71 cache answer files holds an empty unit list.
 
 | Table | One row per | Must contain |
 |---|---|---|

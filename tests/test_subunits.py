@@ -613,3 +613,53 @@ def test_still_pause_turn_after_the_last_continuation_is_a_failure_and_is_not_ca
     assert rows[-1]["error"] == f"still pause_turn after {lh._MAX_CONTINUATIONS} continuations"
     assert rows[-1]["response_path"]                                     # the raw response is still kept
     assert all(r["error"] is None for r in rows[:-1])
+
+
+# ── a nonempty list with no valid unit is a failure; URL sets decide same-name repeats ──
+
+def test_a_nonempty_list_with_no_valid_unit_fails_and_nothing_is_cached(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    bad = Resp([Block("text", json.dumps({"units": ["Finance", {"name": ""}, {"unit_type": "department"}, 7]}))], "end_turn")
+    fake_anthropic(monkeypatch, [bad] * lh._EXTRACT_MAX_RETRIES)
+    with pytest.raises(ValueError, match="no usable sub-unit answer"):
+        LLMHelper.extract_subunits(STERN)
+    assert not (tmp_path / "cache").exists() or not any((tmp_path / "cache").iterdir())
+    with pytest.raises(lh.SubunitsIncomplete):
+        lh.normalize_subunits({"units": [None, {"name": "  "}]})
+
+
+def test_an_all_invalid_list_falls_back_to_the_next_provider(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", None)
+    sent, asked_openai = _anthropic_then_openai(monkeypatch, '{"units": [{"name": null}]}', ANSWER)
+    assert [u["name"] for u in LLMHelper.extract_subunits(STERN)] == ["Finance", "Career Center"]
+    assert len(asked_openai) == 1 and lh.last_subunit_provider == "openai"
+
+
+def test_a_real_empty_list_is_still_a_valid_answer():
+    assert lh.normalize_subunits({"units": []}) == []
+
+
+def test_same_name_rows_whose_url_sets_overlap_are_merged():
+    units = lh.normalize_subunits({"units": [
+        {"name": "Finance", "unit_type": "department", "source_url": "https://a.example/fin"},
+        {"name": "Finance", "unit_type": "department", "website": "https://a.example/fin/"},   # source of the first
+        {"name": "Law", "unit_type": "school", "source_url": "https://a.example/law", "website": "https://law.example"},
+        {"name": "Law", "unit_type": "school", "source_url": "https://law.example"}]})         # website of the first
+    assert [(u["name"], u["source_url"]) for u in units] == [("Finance", "https://a.example/fin"),
+                                                             ("Law", "https://a.example/law")]
+
+
+def test_same_name_rows_with_different_urls_stay_separate_and_rows_without_urls_merge():
+    units = lh.normalize_subunits({"units": [
+        {"name": "Graduate Program", "unit_type": "program", "source_url": "https://a.example/econ",
+         "website": "https://econ.example"},
+        {"name": "Graduate Program", "unit_type": "program", "source_url": "https://a.example/math",
+         "website": "https://math.example"},
+        {"name": "Marketing", "unit_type": "department"},
+        {"name": "Marketing", "unit_type": "department"}]})
+    assert [(u["name"], u["source_url"]) for u in units] == [
+        ("Graduate Program", "https://a.example/econ"), ("Graduate Program", "https://a.example/math"),
+        ("Marketing", None)]

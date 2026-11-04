@@ -1183,21 +1183,32 @@ def _http_url(value: Any) -> Optional[str]:
     return v if re.match(r"^https?://\S+$", v, re.I) else None
 
 
+class SubunitsIncomplete(ValueError):
+    """The provider's answer is not usable: still pause_turn after the last continuation,
+    or a nonempty "units" list with no valid member. A provider failure like an answer
+    that does not parse: it is never cached, the next provider may answer, and with
+    --provider the step fails."""
+
+
 def _same_unit_urls(a: Tuple[Optional[str], Optional[str]], b: Tuple[Optional[str], Optional[str]]) -> bool:
-    """True when two same-name units are one unit: the same source URL or the same website
-    (ignoring a final "/"), or neither has either. Two units with the same name and
-    different pages are both kept. Pure."""
-    def norm(url):
-        return url.rstrip("/") if url else None
-    (sa, wa), (sb, wb) = [(norm(x), norm(y)) for x, y in (a, b)]
-    if not any((sa, wa, sb, wb)):
+    """True when two same-name units are one unit: their URL sets {source_url, website}
+    overlap (ignoring empty values and a final "/"), so a URL given as one row's source
+    and the other's website counts, or neither row has any URL. Two units with the same
+    name and different pages are both kept. Pure."""
+    def urls(pair):
+        return {u.rstrip("/") for u in pair if u}
+    ua, ub = urls(a), urls(b)
+    if not ua and not ub:
         return True
-    return (sa is not None and sa == sb) or (wa is not None and wa == wb)
+    return bool(ua & ub)
 
 
 def normalize_subunits(payload: Any) -> List[Dict[str, Any]]:
     """Clean one answer: a known type ("other" otherwise), http(s) URLs only, one row per
-    unit (a repeated name is dropped only when its source URL or website matches too), the in_scope value of Panos's rule, and a no_url flag. Pure."""
+    unit (a repeated name is dropped only when its URLs overlap an earlier row's, see
+    _same_unit_urls), the in_scope value of Panos's rule, and a no_url flag. {"units": []}
+    is a valid empty answer; a nonempty list with no valid member raises
+    SubunitsIncomplete. Pure."""
     if not isinstance(payload, dict) or not isinstance(payload.get("units"), list):
         raise ValueError("expected an object with a 'units' list")
     out, seen = [], {}           # casefolded name -> [(source_url, website)] of units kept
@@ -1218,6 +1229,9 @@ def normalize_subunits(payload: Any) -> List[Dict[str, Any]]:
                     "website": website, "source_url": source,
                     "country": country.strip() if isinstance(country, str) and country.strip() else None,
                     "country_source": country_source, "no_url": source is None})
+    if payload["units"] and not out:
+        # Units were listed but none is usable: a failure, never an empty answer.
+        raise SubunitsIncomplete(f"{len(payload['units'])} units listed, none with a name")
     return out
 
 
@@ -1298,12 +1312,6 @@ def _subunit_requests(provider: str, model: str, user: str, sent: Optional[list]
         yield resp, (resp.text or None)
     else:
         raise ValueError(f"unknown provider {provider!r}")
-
-
-class SubunitsIncomplete(ValueError):
-    """The provider's answer is incomplete (still pause_turn after the last continuation).
-    A provider failure like an answer that does not parse: the next provider may answer,
-    and with --provider the step fails."""
 
 
 def _continuation_call(call: dict, sent: list, n: int, call_ids: list) -> dict:
