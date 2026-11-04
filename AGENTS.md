@@ -440,6 +440,11 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   "Department", "School of Art" is found in "the School of Art and Design". Case, spacing,
   and "&" against "and" are ignored as before. Rechecked 2026-11-04 on the saved text of
   all 16 week 4 evidence rows (166 unit-to-page links): no result changed.
+- Since 2026-11-04 (review of pull request 22): a body that ends before its Content-Length is
+  outcome `error` ("connection closed after N of M bytes") and saves no page, because
+  `read1()` returns an empty chunk there and raises nothing. A declared charset that Python
+  knows but cannot decode text with (base64, hex, rot13, zlib, idna) is read as UTF-8 in
+  `decode_page`, so one odd page never stops a run. Tests in `tests/test_fetcher.py`.
 - In the sub-unit step, an answer that parsed with an empty list (`{"units": []}`) is valid:
   `_subunits_from` returns `[]` for it and `None` only when no answer parsed. `extract_subunits`
   stops at the first parsed answer, so an empty one asks no other provider; `subunits_for`

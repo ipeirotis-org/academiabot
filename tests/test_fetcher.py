@@ -192,6 +192,25 @@ def test_a_page_over_5_mb_is_not_saved_and_one_of_5_mb_is(server):
 
 # ── rule 5: at most 20 seconds ──────────────────────────────────────────
 
+def test_a_body_cut_short_of_its_content_length_is_an_error_and_not_saved(server):
+    def cut(h):
+        h.send_response(200)
+        h.send_header("Content-Type", "text/html")
+        h.send_header("Content-Length", "1000")
+        h.end_headers()
+        h.wfile.write(b"<html>partial")
+        h.wfile.flush()
+        h.close_connection = True
+    Handler.routes["/cut"] = cut
+    Handler.routes["/whole"] = send(b"<html>whole</html>")
+    r = fetcher.fetch(f"http://127.0.0.1:{server}/cut")
+    assert r.outcome == "error" and r.content is None and r.status == 200
+    assert "closed after 13 of 1000 bytes" in r.detail
+    assert fetcher.read_result(r) == (None, None)
+    whole = fetcher.fetch(f"http://127.0.0.1:{server}/whole")
+    assert whole.outcome == "ok" and whole.content == b"<html>whole</html>"
+
+
 def test_a_server_that_drips_bytes_is_stopped_at_the_time_limit(server):
     Handler.routes["/slow"] = send(b"y" * 200, delay=0.05)          # 200 bytes over 10 seconds
     t0 = time.monotonic()
@@ -402,6 +421,25 @@ def test_an_iso_8859_1_page_is_saved_byte_for_byte_and_read_with_its_charset(tmp
     assert row["content_type"] == "text/html; charset=ISO-8859-1"
     assert open(row["text_path"]).read() == "Département d'Économie"
     assert row["unit_names"] == ["Département d'Économie"] and row["name_check"] == "done"
+
+
+@pytest.mark.parametrize("charset", ["base64", "hex", "rot13", "idna", "zlib"])
+def test_a_charset_python_cannot_decode_text_with_is_read_as_utf8(charset):
+    # codecs.lookup() knows each of these, but bytes.decode(charset, "replace") raises.
+    body = "<html><p>Économie</p></html>".encode("utf-8")
+    assert fetcher.decode_page(body, f"text/html; charset={charset}") == "<html><p>Économie</p></html>"
+    assert fetcher.page_text(body, f"text/html; charset={charset}") == "Économie"
+    assert fetcher.page_text_or_skip(b"Economie", f"text/plain; charset={charset}") == ("Economie", "done")
+
+
+def test_a_page_with_an_unusable_charset_is_recorded_and_read(tmp_path):
+    log = run_log.RunLog("fetch-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    body = b"<html><p>Department of Economics</p></html>"
+    fetcher.record(log, _fetch_page(body, "text/plain; charset=base64"), ["Department of Economics"])
+    row = log.pending["evidence"][0]
+    assert row["outcome"] == "ok" and row["name_check"] == "done"
+    assert row["unit_names"] == ["Department of Economics"]
 
 
 def test_a_charset_in_a_meta_tag_is_used_when_the_header_has_none():

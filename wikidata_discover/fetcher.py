@@ -327,6 +327,15 @@ def fetch(url: str, *, resolve: Callable = socket.getaddrinfo, connect: Callable
                 if len(body) > max_bytes:
                     result.outcome, result.detail = "too_large", f"over {max_bytes} bytes"
                     return result
+            # read1 returns an empty chunk, and raises nothing, when the server closes the
+            # connection before the Content-Length it declared. A part of a page is not the
+            # page: names in the missing part would wrongly count as "not on the page".
+            missing = getattr(resp, "length", None)
+            if missing:
+                result.outcome = "error"
+                result.detail = (f"connection closed after {len(body)} of "
+                                 f"{len(body) + missing} bytes (Content-Length)")
+                return result
             result.content = body
             result.outcome = "ok" if 200 <= resp.status < 300 else "http_error"
             result.detail = "" if result.outcome == "ok" else f"HTTP {resp.status}"
@@ -371,8 +380,14 @@ def declared_charset(content: bytes, content_type: str) -> Optional[str]:
 
 
 def decode_page(content: bytes, content_type: str) -> str:
-    """The page as text, decoded with its declared charset, else UTF-8. Pure."""
-    return content.decode(declared_charset(content, content_type) or "utf-8", "replace")
+    """The page as text, decoded with its declared charset, else UTF-8. A charset that
+    Python knows but cannot decode text with (base64, hex, rot13, or idna, which refuses
+    "replace") is read as UTF-8 too, so one odd page never stops a run. Pure."""
+    charset = declared_charset(content, content_type) or "utf-8"
+    try:
+        return content.decode(charset, "replace")
+    except (LookupError, UnicodeError):
+        return content.decode("utf-8", "replace")
 
 
 def page_text(content: Optional[bytes], content_type: str = "") -> str:
