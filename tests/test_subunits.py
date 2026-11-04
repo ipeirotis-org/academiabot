@@ -30,7 +30,8 @@ def test_the_json_answer_is_found_inside_text_and_fences():
 
 def test_normalize_keeps_offices_out_of_scope_and_flags_units_without_a_url():
     units = lh.normalize_subunits({"units": ANSWER["units"] + [
-        {"name": "  Finance ", "unit_type": "department"},                    # repeated name
+        {"name": "  Finance ", "unit_type": "department",
+         "source_url": "https://www.stern.nyu.edu/finance"},                  # repeated name and page
         {"name": "Center for Sustainable Business", "unit_type": "Research Center",
          "source_url": "javascript:alert(1)", "website": "ftp://x"},
         {"name": "", "unit_type": "department"}]})
@@ -307,3 +308,21 @@ def test_a_pause_turn_continuation_saves_the_exact_request_it_sent(monkeypatch, 
     assert cfg2["continuation"] == 1 and cfg2["continues_llm_call_id"] == first["llm_call_id"]
     original = json.loads(open(first["prompt_path"]).read())
     assert original["user"] == sent[0]["messages"][0]["content"] and "messages" not in original
+
+
+def test_same_name_units_with_different_pages_are_both_kept_and_exact_repeats_are_dropped():
+    units = lh.normalize_subunits({"units": [
+        {"name": "Graduate Program", "unit_type": "program", "source_url": "https://a.example/econ/grad"},
+        {"name": "Graduate Program", "unit_type": "program", "source_url": "https://a.example/math/grad"},
+        {"name": "Finance", "unit_type": "department", "source_url": "https://a.example/fin",
+         "website": "https://fin.example"},
+        {"name": "finance", "unit_type": "department", "source_url": "https://a.example/fin/",
+         "website": "https://fin.example"},                                          # exact repeat
+        {"name": "Marketing", "unit_type": "department"},
+        {"name": "Marketing", "unit_type": "department"},                            # repeat, no pages
+        {"name": "Law", "unit_type": "school", "source_url": "https://a.example/law"},
+        {"name": "Law", "unit_type": "school", "website": "https://law.example"}]})  # nothing shared: kept
+    assert [(u["name"], u["source_url"]) for u in units] == [
+        ("Graduate Program", "https://a.example/econ/grad"), ("Graduate Program", "https://a.example/math/grad"),
+        ("Finance", "https://a.example/fin"), ("Marketing", None),
+        ("Law", "https://a.example/law"), ("Law", None)]

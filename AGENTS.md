@@ -410,6 +410,11 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   `continues_llm_call_id` (the call before it). A failed continuation logs the request
   that failed. Checked 2026-11-04: no week 4 `llm_calls` row is a continuation (all fresh
   Anthropic responses stopped with `end_turn`), so no saved prompt is wrong.
+- `--max-searches` accepts only a whole number of 1 or more (`cli.positive_int`); argparse
+  stops with an error before any AI call. `normalize_subunits` drops a repeated name only when
+  its source URL or website also matches an earlier unit (or neither has any URL); two units
+  with the same name and different pages are both kept. Checked 2026-11-04: no week 4 answer
+  had a repeated name, so no run lost a unit to the old name-only rule.
 
 | Table | One row per | Must contain |
 |---|---|---|

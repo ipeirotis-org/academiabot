@@ -7,6 +7,17 @@ from wikidata_discover import llm_helpers, run_log
 import wikidata_discover.config as config
 
 
+def positive_int(value: str) -> int:
+    """argparse type: a whole number of 1 or more, else a clear error before any work."""
+    try:
+        n = int(value)
+    except ValueError:
+        n = 0
+    if n < 1 or str(n) != value.strip().lstrip("+"):
+        raise argparse.ArgumentTypeError(f"must be a whole number of 1 or more, got {value!r}")
+    return n
+
+
 def run_config(key_sources: dict) -> dict:
     """The configuration recorded in the runs row: providers, models, depth, and where
     each key came from (never the key itself)."""
@@ -117,7 +128,7 @@ def run_cli():
     u.add_argument("unit_qids", nargs="+", help="Q-IDs of units (e.g. Q770467 for NYU Stern)")
     u.add_argument("--provider", choices=config.PROVIDERS, default=None,
                    help="Run one AI alone. Default: Anthropic, then OpenAI, then Gemini")
-    u.add_argument("--max-searches", type=int, default=None,
+    u.add_argument("--max-searches", type=positive_int, default=None,
                    help="Web searches per request (Anthropic and OpenAI). Default: 5")
     u.add_argument("--no-fetch", action="store_true", help="Do not fetch and save the cited pages")
     u.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -150,7 +161,7 @@ def run_cli():
         if args.debug:
             logging.basicConfig(level=logging.DEBUG, force=True)
         config.ONLY_PROVIDER = args.provider
-        if args.max_searches:
+        if args.max_searches is not None:
             llm_helpers.SUBUNIT_MAX_SEARCHES = args.max_searches
         subunits_with_run_log(args.unit_qids, sys.argv[1:], fetch_pages=not args.no_fetch)
 

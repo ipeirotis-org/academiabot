@@ -1177,27 +1177,39 @@ def _http_url(value: Any) -> Optional[str]:
     return v if re.match(r"^https?://\S+$", v, re.I) else None
 
 
+def _same_unit_urls(a: Tuple[Optional[str], Optional[str]], b: Tuple[Optional[str], Optional[str]]) -> bool:
+    """True when two same-name units are one unit: the same source URL or the same website
+    (ignoring a final "/"), or neither has either. Two units with the same name and
+    different pages are both kept. Pure."""
+    def norm(url):
+        return url.rstrip("/") if url else None
+    (sa, wa), (sb, wb) = [(norm(x), norm(y)) for x, y in (a, b)]
+    if not any((sa, wa, sb, wb)):
+        return True
+    return (sa is not None and sa == sb) or (wa is not None and wa == wb)
+
+
 def normalize_subunits(payload: Any) -> List[Dict[str, Any]]:
-    """Clean one answer: a known type ("other" otherwise), http(s) URLs only, one row
-    per name, the in_scope value of Panos's rule, and a no_url flag. Pure."""
+    """Clean one answer: a known type ("other" otherwise), http(s) URLs only, one row per
+    unit (a repeated name is dropped only when its source URL or website matches too), the in_scope value of Panos's rule, and a no_url flag. Pure."""
     if not isinstance(payload, dict) or not isinstance(payload.get("units"), list):
         raise ValueError("expected an object with a 'units' list")
-    out, seen = [], set()
+    out, seen = [], {}           # casefolded name -> [(source_url, website)] of units kept
     for u in payload["units"]:
         if not isinstance(u, dict) or not str(u.get("name") or "").strip():
             continue
         name = " ".join(str(u["name"]).split())
-        if name.casefold() in seen:
+        source, website = _http_url(u.get("source_url")), _http_url(u.get("website"))
+        if any(_same_unit_urls((source, website), earlier) for earlier in seen.get(name.casefold(), [])):
             continue
-        seen.add(name.casefold())
+        seen.setdefault(name.casefold(), []).append((source, website))
         t = str(u.get("unit_type") or "").strip().lower()
         t = t if t in SUBUNIT_TYPES else "other"
-        source = _http_url(u.get("source_url"))
         country_source = u.get("country_source")
         country_source = " ".join(country_source.split()) if isinstance(country_source, str) and country_source.strip() else None
         country = u.get("country")
         out.append({"name": name, "unit_type": t, "in_scope": SUBUNIT_IN_SCOPE[t],
-                    "website": _http_url(u.get("website")), "source_url": source,
+                    "website": website, "source_url": source,
                     "country": country.strip() if isinstance(country, str) and country.strip() else None,
                     "country_source": country_source, "no_url": source is None})
     return out
