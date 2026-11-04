@@ -75,11 +75,11 @@ def test_the_sample_number_is_in_the_run_log(monkeypatch, tmp_path):
                                              extra=lh._extract_extra("https://www.nyu.edu", 2))
 
 
-# ── run log: not_aligned candidates and checks ────────────────────────────
+# ── run log: unaligned candidates and checks ────────────────────────────
 
 def test_checks_rows_follow_the_schema(tmp_path):
     log = run_log.RunLog("r", "i", enabled=False, results_dir=tmp_path)
-    cid = log.add_candidate(name="School of Law", status="not_aligned", provider="openai")
+    cid = log.add_candidate(name="School of Law", status="unaligned", provider="openai")
     chk = log.add_check(kind="agreement", result="pass", candidate_id=cid, score=0.5,
                         llm_call_ids=["c1", "c2"], detail={"providers": ["openai", "gemini"]})
     row = log.pending["checks"][0]
@@ -105,7 +105,7 @@ def test_checks_go_to_the_local_fallback_too(tmp_path):
         def load_table_from_json(self, *a, **k):
             raise RuntimeError("no BigQuery")
     log = run_log.RunLog("r", "i", results_dir=tmp_path, bq_client=Broken(), bucket=object())
-    cid = log.add_candidate(name="Law", status="not_aligned")
+    cid = log.add_candidate(name="Law", status="unaligned")
     log.add_check(kind="agreement", result="fail", candidate_id=cid)
     log.flush()
     lines = (log.local_dir / "checks.jsonl").read_text().splitlines()

@@ -401,7 +401,7 @@ def model_of(provider: str) -> str:
 def collect(qid: str, label: str, website: str, providers: Sequence[str], samples: int,
             log=None) -> Tuple[List[dict], List[dict]]:
     """Ask each provider for each sample. Returns (proposals, run rows). Each named
-    school becomes a candidates row (status not_aligned) when a run log is active."""
+    school becomes a candidates row (status unaligned) when a run log is active."""
     from wikidata_discover import llm_helpers
     proposals, runs = [], []
     for p in providers:
@@ -417,7 +417,7 @@ def collect(qid: str, label: str, website: str, providers: Sequence[str], sample
                 cand = None
                 if log is not None:
                     cand = log.add_candidate(parent_qid=qid, name=name, unit_type=u.get("unit_type"),
-                                             status="not_aligned", source_url=u.get("reference"),
+                                             status="unaligned", source_url=u.get("reference"),
                                              website=u.get("website"), provider=p,
                                              llm_call_ids=[call_id] if call_id else [])
                 proposals.append({"university_qid": qid, "provider": p, "sample": s, "index": idx,

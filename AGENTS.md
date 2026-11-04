@@ -159,7 +159,7 @@ when it exists), 3 samples each (`--samples`). Report: `results/agreement/<run_i
 - Samples: the three extractors take `sample=` (1 or more). The sample goes into the cache key
   (`|sample=N` after the website, `_extract_extra()` in `llm_helpers.py`) and into the call's
   `request_config`. Without a sample the key is unchanged, so old cache files still match.
-- Each school a provider names in one sample is a `candidates` row with status `not_aligned`
+- Each school a provider names in one sample is a `candidates` row with status `unaligned`
   (no Wikidata matching in this step) and its extract call in `llm_call_ids`.
 - Name variants are grouped with `is_fuzzy_match`: a name joins the first group with a member it
   matches, visited in a fixed order (provider, sample, position), so the same answers give the

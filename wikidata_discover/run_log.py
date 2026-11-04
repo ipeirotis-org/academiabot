@@ -88,9 +88,9 @@ SCHEMAS: Dict[str, List[tuple]] = {
     ],
 }
 
-# not_aligned: proposed by an extraction that did no Wikidata matching (Shuo's
+# unaligned: proposed by an extraction that did no Wikidata matching (Shuo's
 # week 3 agreement runs), so linked, orphan, and missing do not apply yet.
-CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved", "not_aligned")
+CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved", "unaligned")
 CHECK_KINDS = ("agreement", "judge", "page_status", "name_on_page", "verifier")
 CHECK_RESULTS = ("pass", "fail", "unclear")
 
