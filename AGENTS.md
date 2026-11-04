@@ -338,6 +338,13 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   idle timeout, and has no runs row (that row is written at the end); `progress.jsonl` keeps its
   invocation id. Keep the Codespace active during a long run. Pilot `snapshot-pilot-20261020` (6 universities,
   older format without qualifiers in `parents`).
+- `runs/<run_id>/progress.jsonl` is the history of every snapshot invocation of a run. Since
+  2026-11-04, `snapshot` downloads it at the start and appends to it, so a resume in a fresh
+  checkout or on another host keeps the lines of a killed earlier invocation. Each upload uses
+  a generation-match precondition; on a conflict it reads the file again, merges (bucket lines
+  first, then the local lines it lacks), and retries up to 5 times. Before the fix, a resume
+  with an empty local file replaced the bucket file. The `snapshot-us-tier1` file was checked
+  on 2026-11-04: 1,519 lines, both invocations, not affected.
 - `python -m wikidata_discover.legacy_import` (dry run) and `--write` import run `us-tier1`. `--write`
   loads llm_calls, then candidates, and each table skips legacy ids it already has, so a retry
   after a partial failure adds only the missing rows. Rules and limits are in `docs/RUN_LOG_SCHEMA.md`. It reads only
