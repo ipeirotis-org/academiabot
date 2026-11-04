@@ -144,7 +144,7 @@ def test_subunits_for_writes_both_csv_files_and_unaligned_candidates(monkeypatch
     monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
     monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
     log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
-    s = subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=lambda q: STERN, fetch_pages=False)
+    s = subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=wikidata_tree(), fetch_pages=False)
     assert (s["units"], s["no_url"], s["by_type"]) == (2, 1, {"department": 1, "office": 1})
     rows = list(csv.DictReader((tmp_path / "Q770467_anthropic.csv").open()))
     assert [(r["name"], r["in_scope"], r["no_url"]) for r in rows] == [("Finance", "yes", ""), ("Career Center", "no", "yes")]
@@ -382,3 +382,128 @@ def test_an_unparseable_answer_still_falls_back_to_the_next_provider(monkeypatch
     assert [u["name"] for u in units] == ["Finance", "Career Center"]
     assert len(sent) == lh._EXTRACT_MAX_RETRIES and len(asked_openai) == 1
     assert lh.last_subunit_provider == "openai"
+
+
+# ── university_qid is the root of the tree; parent_qid is the immediate parent ──
+
+NYU = {"qid": "Q49210", "label": "New York University", "website": "https://www.nyu.edu",
+       "country": "United States", "parent_qid": "Q1068569", "parent_label": "Association of American Universities",
+       "is_university": True}
+AAU = {"qid": "Q1068569", "label": "Association of American Universities", "parent_qid": None, "is_university": False}
+NYUAD = {"qid": "Q1135432", "label": "NYU Abu Dhabi", "parent_qid": "Q49210", "parent_label": "New York University",
+         "country": "United Arab Emirates", "is_university": False}
+NYUAD_SCIENCE = {"qid": "Q900001", "label": "NYUAD Division of Science", "parent_qid": "Q1135432",
+                 "parent_label": "NYU Abu Dhabi", "is_university": False}
+STERN_FINANCE = {"qid": "Q900002", "label": "Stern Department of Finance", "parent_qid": "Q770467",
+                 "parent_label": "NYU Stern School of Business", "is_university": False}
+
+
+def wikidata_tree(*extra):
+    """A fake fetch_unit over NYU, the AAU above it, Stern, and any extra units."""
+    units = {u["qid"]: u for u in (NYU, AAU, STERN, *extra)}
+    asked = []
+
+    def fetch(q):
+        asked.append(q)
+        return units[q]
+    fetch.asked = asked
+    return fetch
+
+
+def _candidates_for(monkeypatch, tmp_path, qid, fetch, **kw):
+    monkeypatch.setattr(LLMHelper, "extract_subunits", staticmethod(lambda unit: lh.normalize_subunits(ANSWER)))
+    monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
+    monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    s = subunits.subunits_for(qid, log, out_dir=tmp_path, fetch=fetch, fetch_pages=False, **kw)
+    return s, log, log.pending["candidates"]
+
+
+def test_a_school_whose_parent_is_the_university(monkeypatch, tmp_path):
+    s, log, cands = _candidates_for(monkeypatch, tmp_path, "Q770467", wikidata_tree())
+    assert s["university_qid"] == log.university_qid == "Q49210"
+    assert {(c["university_qid"], c["parent_qid"]) for c in cands} == {("Q49210", "Q770467")}
+
+
+def test_a_school_under_a_campus_keeps_the_university(monkeypatch, tmp_path):
+    fetch = wikidata_tree(NYUAD, NYUAD_SCIENCE)
+    s, log, cands = _candidates_for(monkeypatch, tmp_path, "Q900001", fetch)
+    assert s["university_qid"] == "Q49210"                                     # not NYU Abu Dhabi
+    assert {(c["university_qid"], c["parent_qid"]) for c in cands} == {("Q49210", "Q900001")}
+    assert "Q1068569" in fetch.asked                                           # looked above NYU, kept NYU
+
+
+def test_a_campus_that_is_itself_a_university_still_gives_the_top_university(monkeypatch, tmp_path):
+    fetch = wikidata_tree({**NYUAD, "is_university": True}, NYUAD_SCIENCE)
+    s, _, _ = _candidates_for(monkeypatch, tmp_path, "Q900001", fetch)
+    assert s["university_qid"] == "Q49210"
+
+
+def test_a_unit_two_levels_down(monkeypatch, tmp_path):
+    s, _, cands = _candidates_for(monkeypatch, tmp_path, "Q900002", wikidata_tree(STERN_FINANCE))
+    assert s["university_qid"] == "Q49210"
+    assert {(c["university_qid"], c["parent_qid"]) for c in cands} == {("Q49210", "Q900002")}
+
+
+def test_a_deeper_run_passes_the_university_down_without_walking(monkeypatch, tmp_path):
+    fetch = wikidata_tree(STERN_FINANCE)
+    s, _, cands = _candidates_for(monkeypatch, tmp_path, "Q900002", fetch, university_qid="Q49210")
+    assert fetch.asked == ["Q900002"]                                          # no walk up
+    assert {(c["university_qid"], c["parent_qid"]) for c in cands} == {("Q49210", "Q900002")}
+
+
+def test_the_university_itself_is_its_own_root_and_a_loop_or_no_university_gives_none():
+    assert subunits.find_university(NYU, wikidata_tree()) == "Q49210"
+    loop_a = {"qid": "Q1", "parent_qid": "Q2", "is_university": False}
+    loop_b = {"qid": "Q2", "parent_qid": "Q1", "is_university": False}
+    assert subunits.find_university(loop_a, wikidata_tree(loop_a, loop_b)) is None
+
+
+def test_the_unit_query_reads_whether_the_unit_is_a_university():
+    assert subunits.unit_from_bindings("Q49210", [{"label": "NYU", "isUniversity": "true"}])["is_university"] is True
+    assert subunits.unit_from_bindings("Q770467", [{"label": "Stern", "isUniversity": "false"}])["is_university"] is False
+    assert subunits.unit_from_bindings("Q184478", [{"label": "UC", "isUniversity": "true", "isSystem": "true"}])["is_system"] is True
+
+
+UC = {"qid": "Q184478", "label": "University of California", "parent_qid": None, "is_university": True, "is_system": True}
+BERKELEY = {"qid": "Q168756", "label": "University of California, Berkeley", "parent_qid": "Q184478",
+            "is_university": True, "is_system": False}
+HAAS = {"qid": "Q900003", "label": "Haas School of Business", "parent_qid": "Q168756", "is_university": False}
+CUNY = {"qid": "Q762266", "label": "City University of New York", "parent_qid": None, "is_university": True, "is_system": True}
+BARUCH = {"qid": "Q900004", "label": "Baruch College", "parent_qid": "Q762266", "is_university": False}
+
+
+def test_a_university_system_is_never_the_root_of_its_universities():
+    tree = wikidata_tree(UC, BERKELEY, HAAS)
+    assert subunits.find_university(BERKELEY, tree) == "Q168756"            # not the UC system
+    assert subunits.find_university(HAAS, tree) == "Q168756"
+
+
+def test_a_run_on_a_system_itself_keeps_the_system_as_root():
+    tree = wikidata_tree(CUNY, BARUCH)
+    assert subunits.find_university(CUNY, tree) == "Q762266"
+    assert subunits.find_university(BARUCH, tree) == "Q762266"
+
+
+def test_a_joint_unit_under_two_universities_gets_no_university():
+    ecnu = {"qid": "Q2034790", "label": "East China Normal University", "parent_qid": None, "is_university": True}
+    shanghai = {"qid": "Q13652966", "label": "NYU Shanghai", "parent_qid": "Q2034790",
+                "parent_qids": ["Q2034790", "Q49210"], "is_university": True}
+    school = {"qid": "Q900005", "label": "NYU Shanghai Business", "parent_qid": "Q13652966", "is_university": False}
+    tree = wikidata_tree(ecnu, shanghai, school)
+    assert subunits.find_university(shanghai, tree) is None                 # never guessed
+    assert subunits.find_university(school, tree) is None
+
+
+def test_a_joint_unit_with_one_university_branch_gets_that_university():
+    hospital = {"qid": "Q900006", "label": "A Hospital", "parent_qid": None, "is_university": False}
+    lab = {"qid": "Q900007", "label": "Joint Lab", "parent_qid": "Q49210",
+           "parent_qids": ["Q49210", "Q900006"], "is_university": False}
+    assert subunits.find_university(lab, wikidata_tree(hospital, lab)) == "Q49210"
+
+
+def test_parent_qids_keeps_every_parent_of_the_chosen_property():
+    rows = [{"label": "NYU Shanghai", "parent": "http://www.wikidata.org/entity/Q49210", "prop": "P749"},
+            {"label": "NYU Shanghai", "parent": "http://www.wikidata.org/entity/Q2034790", "prop": "P749"},
+            {"label": "NYU Shanghai", "parent": "http://www.wikidata.org/entity/Q1", "prop": "P361"}]
+    assert subunits.unit_from_bindings("Q13652966", rows)["parent_qids"] == ["Q2034790", "Q49210"]

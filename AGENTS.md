@@ -426,6 +426,17 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   writes the two CSV files with the header only, and its summary (in the runs row) has
   `outcome` "no sub-units" (else "ok"). Only an answer that does not parse falls back. The
   school-level `discover` is unchanged: an empty list there still counts as a failure.
+- `subunits_for` attributes every run log row to the root university (`university_qid`) and
+  gives each candidates row its immediate parent (`parent_qid`). A deeper run (week 5) passes
+  the root as `university_qid=` and reads it back from the summary; without it,
+  `find_university` walks up Wikidata (P749 before P361, at most 6 levels). It keeps the
+  highest university that is not a university system (Q20857129): campuses such as NYU Abu
+  Dhabi (typed as a university, parent NYU) are walked past, and systems such as the
+  University of California are never the root of UC Berkeley. A run on a system itself
+  (CUNY) keeps the system. A joint unit whose parents lead to two universities (NYU
+  Shanghai: NYU and East China Normal University, both P749) gets no university_qid and a
+  warning, never a guess. Checked 2026-11-04: every week 4 candidates and llm_calls row
+  already had the right university_qid (all NYU schools, or the university itself).
 
 | Table | One row per | Must contain |
 |---|---|---|

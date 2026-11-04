@@ -15,6 +15,7 @@ Each sub-unit also adds a candidates row with status "unaligned": it is not yet 
 with Wikidata (alignment is week 6). Offices are kept, with in_scope "no".
 """
 import csv
+import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,12 +23,16 @@ from typing import Any, Dict, List, Optional
 from wikidata_discover import config, fetcher, llm_helpers, run_log
 from wikidata_discover.sparql_helpers import execute_sparql_bindings
 
+logger = logging.getLogger(__name__)
+
 OUT_DIR = config.RESULTS_DIR / "subunits"
 COLUMNS = ["name", "unit_type", "in_scope", "website", "source_url", "no_url", "evidence_outcome", "name_on_page", "country",
            "country_source", "country_evidence_outcome", "parent_qid", "parent_label", "provider"]
 
 UNIT_QUERY = """
-SELECT ?label ?website ?countryLabel ?parent ?parentLabel ?prop WHERE {
+SELECT ?label ?website ?countryLabel ?parent ?parentLabel ?prop ?isUniversity ?isSystem WHERE {
+  BIND(EXISTS { wd:%(q)s wdt:P31/wdt:P279* wd:Q3918 } AS ?isUniversity)
+  BIND(EXISTS { wd:%(q)s wdt:P31/wdt:P279* wd:Q20857129 } AS ?isSystem)
   OPTIONAL { wd:%(q)s rdfs:label ?label . FILTER(LANG(?label) = "en") }
   OPTIONAL { wd:%(q)s wdt:P856 ?website }
   OPTIONAL { wd:%(q)s wdt:P17 ?country }
@@ -38,8 +43,10 @@ SELECT ?label ?website ?countryLabel ?parent ?parentLabel ?prop WHERE {
 
 
 def unit_from_bindings(qid: str, bindings: List[Dict[str, str]]) -> Dict[str, Any]:
-    """The unit's label, website, country, and parent (P749 before P361) from the query
-    rows. Pure."""
+    """The unit's label, website, country, parent (P749 before P361; parent_qids has every
+    parent with that property, two for a joint unit), whether it is a
+    university (P31/P279* Q3918), and whether it is a university system (P31/P279*
+    Q20857129, which includes state university systems) from the query rows. Pure."""
     def first(key, rows=bindings):
         return next((r[key] for r in rows if r.get(key)), None)
     parents = sorted((r for r in bindings if r.get("parent")), key=lambda r: (r.get("prop") != "P749", r["parent"]))
@@ -47,7 +54,11 @@ def unit_from_bindings(qid: str, bindings: List[Dict[str, str]]) -> Dict[str, An
     return {"qid": qid, "label": first("label") or qid, "website": first("website"),
             "country": first("countryLabel"),
             "parent_qid": parent.get("parent", "").rsplit("/", 1)[-1] or None,
-            "parent_label": parent.get("parentLabel")}
+            "parent_qids": list(dict.fromkeys(r["parent"].rsplit("/", 1)[-1] for r in parents
+                                              if r.get("prop") == parent.get("prop"))),
+            "parent_label": parent.get("parentLabel"),
+            "is_university": first("isUniversity") in ("true", "1", True),
+            "is_system": first("isSystem") in ("true", "1", True)}
 
 
 def flatten(bindings: List[Dict[str, Any]]) -> List[Dict[str, str]]:
@@ -57,6 +68,54 @@ def flatten(bindings: List[Dict[str, Any]]) -> List[Dict[str, str]]:
 
 def fetch_unit(qid: str) -> Dict[str, Any]:
     return unit_from_bindings(qid, flatten(execute_sparql_bindings(UNIT_QUERY % {"q": qid})))
+
+
+MAX_LEVELS_UP = 6
+
+
+def find_university(unit: Dict[str, Any], fetch=fetch_unit, max_levels: int = MAX_LEVELS_UP) -> Optional[str]:
+    """The root university of a unit: walk up the parents and keep the highest one that is
+    a university and not a university system. Wikidata types campuses (NYU Abu Dhabi) as
+    universities under their university, so the walk goes past them; it also types systems
+    (University of California, University of Texas System, CUNY) as universities, so the
+    walk stops at a system and never makes it the root of UC Berkeley or UT Austin. The
+    walk also stops at the first parent that is not a university once one was found (an
+    association), at a loop, or after max_levels. When only a system was found (a run on
+    CUNY itself), the root is that system.
+
+    A joint unit has two parents (NYU Shanghai: NYU and East China Normal University). The
+    walk follows each; when they end at different universities the answer is None, as it
+    is when no university is found. The run log then leaves university_qid empty instead
+    of guessing."""
+    roots = _walk_up(unit, fetch, max_levels, {unit["qid"]},
+                     best=unit["qid"] if unit.get("is_university") and not unit.get("is_system") else None,
+                     nearest=unit["qid"] if unit.get("is_university") else None)
+    roots.discard(None)
+    return roots.pop() if len(roots) == 1 else None
+
+
+def _parents_of(u: Dict[str, Any]) -> List[str]:
+    return u.get("parent_qids") or ([u["parent_qid"]] if u.get("parent_qid") else [])
+
+
+def _walk_up(current, fetch, left, seen, best, nearest) -> set:
+    """The roots that each parent branch above `current` ends at (see find_university)."""
+    parents = [p for p in _parents_of(current) if p not in seen]
+    if current.get("is_system") or left <= 0 or not parents:
+        return {best or nearest}
+    out = set()
+    for pq in parents:
+        parent = fetch(pq)
+        if parent.get("is_university"):
+            if parent.get("is_system"):
+                out.add(best or nearest or pq)
+            else:
+                out |= _walk_up(parent, fetch, left - 1, seen | {pq}, pq, nearest or pq)
+        elif best is not None or nearest is not None:
+            out.add(best or nearest)
+        else:
+            out |= _walk_up(parent, fetch, left - 1, seen | {pq}, best, nearest)
+    return out
 
 
 def country_url(u: Dict[str, Any]) -> str:
@@ -135,15 +194,24 @@ def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
 
 def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path] = None,
                  fetch=fetch_unit, fetch_pages: bool = True, fetch_page=fetcher.fetch,
-                 pages: Optional[CitedPages] = None) -> Dict[str, Any]:
+                 pages: Optional[CitedPages] = None, university_qid: Optional[str] = None) -> Dict[str, Any]:
     """Ask for one unit's sub-units, fetch and save each cited page once, write the two
     CSV files, and add a candidates row per sub-unit with its evidence id. `pages` is the
     run's CitedPages, so a page another QID of the run already fetched is reused; without
-    it, this call has its own. Returns a short summary."""
+    it, this call has its own.
+
+    The run log attributes every row to the root university, and each candidates row has
+    the immediate parent (qid) as parent_qid. A deeper run passes the university it started
+    from as university_qid; without it, find_university walks up Wikidata. Returns a short
+    summary, with university_qid for the next level."""
     out_dir = out_dir or OUT_DIR
     unit = fetch(qid)
+    if university_qid is None:
+        university_qid = find_university(unit, fetch)
+        if university_qid is None:
+            logger.warning("subunits: no university found above %s; university_qid stays empty", qid)
     if log is not None:
-        log.set_university(unit.get("parent_qid") or qid)
+        log.set_university(university_qid)
     units = llm_helpers.LLMHelper.extract_subunits(unit)
     provider = llm_helpers.last_subunit_provider or "unknown"
     if fetch_pages and pages is None:
@@ -166,6 +234,6 @@ def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path
     outcomes: Dict[str, int] = {}
     for e in evidence.values():
         outcomes[e["outcome"]] = outcomes.get(e["outcome"], 0) + 1
-    return {"qid": qid, "label": unit["label"], "provider": provider,
+    return {"qid": qid, "label": unit["label"], "university_qid": university_qid, "provider": provider,
             "outcome": "ok" if units else "no sub-units", "units": len(units), "by_type": by_type,
             "no_url": sum(1 for u in units if u.get("no_url")), "pages": outcomes, "csv": str(full)}
