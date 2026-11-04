@@ -159,7 +159,10 @@ Cleanup. All tests pass. Boxes ticked in this file.
 alignment accuracy on QIDs (right QID, or rightly "new"). When parents are given, also edge F1
 (right parent) and ancestor F1 (right university). Matching is one to one and within the same
 parent: one proposed name can match only one true department, a repeated name counts once, and
-two departments with the same name under different schools are different rows.
+two departments with the same name under different schools are different rows. A proposed
+department left over after that, whose name matches a leftover true department under another
+school, counts as found for name recall but has the wrong parent: it is wrong for edge F1, and
+it gets 1 of its 2 ancestors (the university) right for ancestor F1 (Shuo's choice, 2026-10-16).
 
 ### Shuo, week 3 (Oct 16 to 22)
 
