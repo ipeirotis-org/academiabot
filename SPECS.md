@@ -182,6 +182,14 @@ verifier would give). The ground truth is otherwise used only to score the estim
 each provider's invented and non-academic proposals separately. In week 5, add a third way that
 works without ground truth: count only proposals whose page check passes.
 
+Decisions made while building it (2026-10-23): each school a provider names in one sample is a
+`candidates` row with status `not_aligned`, because this step does no Wikidata matching. An
+agreement check passes when 2 or more providers named the school. A second group that matches an
+already matched true school is a duplicate and counts as wrong (a repeated name counts once, as in
+week 2). Wrong groups are split into duplicate, non-academic, campus, and invented. S1 uses
+Chapman for pairs of providers and model M_t for three providers and for the samples of one
+provider. The 6 small universities were drawn with seed 2026 from a saved sitelink snapshot.
+
 ### Shuo, week 4 (Oct 23 to 29)
 
 **The LLM judge, tested.** Each provider takes a turn as judge of the merged list. Each judge

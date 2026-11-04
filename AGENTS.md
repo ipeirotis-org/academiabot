@@ -150,6 +150,44 @@ Stern, Courant and Steinhardt is `wikidata_discover/eval/dept_ground_truth.csv` 
 `tests/fixtures/dept_truth_sample.csv` is a copy, and a test fails if the two differ.
 Tests: `tests/test_dept_scorer.py`.
 
+## Agreement runs (Shuo, week 3)
+
+`python -m wikidata_discover.eval.agreement` asks every provider with a key to list the schools
+of every university in `eval/ground_truth.py` (the 12 in `GROUND_TRUTH`, plus `SMALL_GROUND_TRUTH`
+when it exists), 3 samples each (`--samples`). Report: `results/agreement/<run_id>/` (not in git).
+
+- Samples: the three extractors take `sample=` (1 or more). The sample goes into the cache key
+  (`|sample=N` after the website, `_extract_extra()` in `llm_helpers.py`) and into the call's
+  `request_config`. Without a sample the key is unchanged, so old cache files still match.
+- Each school a provider names in one sample is a `candidates` row with status `not_aligned`
+  (no Wikidata matching in this step) and its extract call in `llm_call_ids`.
+- Name variants are grouped with `is_fuzzy_match`: a name joins the first group with a member it
+  matches, visited in a fixed order (provider, sample, position), so the same answers give the
+  same groups. Each group gets one `checks` row: kind `agreement`, result `pass` when 2 or more
+  providers named it (else `fail`), score = runs that named it / runs that answered, the first
+  member's `candidate_id`, and every member's id in `detail`.
+- Scoring: groups match true schools one to one (maximum matching). A second group that matches
+  an already matched school is a `duplicate` and counts as wrong, as a repeated name does in
+  week 2. Other wrong groups are `non_academic` (library, office, hospital, admissions, ... in
+  the name or the LLM's unit_type), `campus`, or `invented` (everything else; "not in the ground
+  truth", which a person must confirm).
+- S1: Chapman for each pair of providers, M_t (independent lists: solve
+  prod(1 - n_j/N) = 1 - r/N) for all providers together and for the samples of one provider.
+  Each counted two ways: `all` (every group) and `matched` (only groups that match a true
+  school). No overlap at all gives no M_t estimate (blank).
+- `--compare DIR_A DIR_B` checks that two runs gave identical report files (`ids.csv` and
+  `cache_files.csv` hold new ids or paths each run and are left out).
+- `--draw-small --seed 2026` draws the 6 small universities: sort us-tier1 by (sitelinks, QID
+  number), take the bottom third (506), `random.Random(seed).sample(bottom, 6)`. Sitelinks come
+  from the saved snapshot `eval/us_tier1_sitelinks.csv` (2026-10-23), because live counts drift.
+- `single_provider_review.csv` is a random sample (seed 2026) of 20 one-provider schools, with
+  blank `real` and `notes` columns for Shuo's verdicts.
+- The `checks` table must exist in BigQuery (`python -m wikidata_discover.run_log setup` creates
+  missing tables only). Without it, the first flush fails and the rest of the run log goes to
+  the local fallback.
+
+Tests: `tests/test_agreement.py`.
+
 ## LLM integration details
 
 - `extract_divisions_openai/anthropic/gemini()`: one per provider, same output shape. Only the OpenAI call
@@ -159,7 +197,8 @@ Tests: `tests/test_dept_scorer.py`.
 - `extract_divisions_ensemble()`: OpenAI + Anthropic generate, Gemini judges. Used by the eval harness only
 - `judge_union()`: one provider reviews the union of all candidates and keeps only real units
 - `choose_match()`: single-token classification (QID / ORPHAN:QID / NONE)
-- Responses are cached in `results/cache/`, keyed by (university, provider, model, prompt hash).
+- Responses are cached in `results/cache/`, keyed by (university, provider, model, prompt hash,
+  website, and the sample number when there is one).
   Match decisions are also keyed by which providers are configured, and a cached decision
   made by a fallback provider is asked again once the preferred provider answers
 - Models configured in `config.py`: `LLM_MODEL` (OpenAI), `ANTHROPIC_MODEL`, `GEMINI_MODEL`; all overridable in `.env`
@@ -303,12 +342,12 @@ it's Y", "dive into", or "robust".
 - **New team members:** The agent handles onboarding via the cloud-bootstrap "Add Team Member" flow
 - **Permission escalation:** Ask the agent to escalate; it will propose roles and ask you to approve via `gcloud`
 
-## Run log (first four tables built in Anya's week 2)
+## Run log (first four tables built in Anya's week 2, `checks` in Shuo's week 3)
 
 Every run must be reproducible. The first four tables below are in dataset
 `academiabot` of project `wikidata-academia`, with large text in Cloud Storage and the GCS path
 kept in the row. The other three come later and are specified here so both tracks build to the
-same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, week 7).
+same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3; now in `run_log.py`), `reviews` (Shuo, week 7).
 
 How it works today (`wikidata_discover/run_log.py`; every column is explained in
 `docs/RUN_LOG_SCHEMA.md`, and a test fails when a column is missing there):

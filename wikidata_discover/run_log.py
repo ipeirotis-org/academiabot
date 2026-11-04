@@ -1,7 +1,7 @@
 """Run log: a record of every run in BigQuery, with large text in Cloud Storage.
 
-Four tables in dataset `academiabot` of project `wikidata-academia` (see "Run log" in
-AGENTS.md): runs, llm_calls, evidence, candidates. Full prompts and raw responses go
+Five tables in dataset `academiabot` of project `wikidata-academia` (see "Run log" in
+AGENTS.md): runs, llm_calls, evidence, candidates, checks. Full prompts and raw responses go
 to gs://academiabot/runs/<run_id>/llm_calls/<llm_call_id>/ and the row keeps the path.
 
 When BigQuery or the bucket cannot be reached, the rows and texts are written as JSON
@@ -30,7 +30,7 @@ from wikidata_discover import config
 
 logger = logging.getLogger(__name__)
 
-TABLES = ("runs", "llm_calls", "evidence", "candidates")
+TABLES = ("runs", "llm_calls", "evidence", "candidates", "checks")
 
 # Column name, BigQuery type, mode. JSON-shaped values (args, config, request_config)
 # are stored as JSON text in STRING columns.
@@ -77,9 +77,22 @@ SCHEMAS: Dict[str, List[tuple]] = {
         ("llm_call_ids", "STRING", "REPEATED"), ("evidence_ids", "STRING", "REPEATED"),
         ("created_at", "TIMESTAMP", "NULLABLE"),
     ],
+    "checks": [
+        ("check_id", "STRING", "REQUIRED"), ("run_id", "STRING", "REQUIRED"),
+        ("invocation_id", "STRING", "REQUIRED"), ("node_id", "STRING", "NULLABLE"),
+        ("candidate_id", "STRING", "NULLABLE"), ("parent_id", "STRING", "NULLABLE"),
+        ("node_version", "STRING", "NULLABLE"), ("kind", "STRING", "NULLABLE"),
+        ("result", "STRING", "NULLABLE"), ("score", "FLOAT", "NULLABLE"),
+        ("detail", "STRING", "NULLABLE"), ("llm_call_ids", "STRING", "REPEATED"),
+        ("evidence_ids", "STRING", "REPEATED"), ("checked_at", "TIMESTAMP", "NULLABLE"),
+    ],
 }
 
-CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved")
+# not_aligned: proposed by an extraction that did no Wikidata matching (Shuo's
+# week 3 agreement runs), so linked, orphan, and missing do not apply yet.
+CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved", "not_aligned")
+CHECK_KINDS = ("agreement", "judge", "page_status", "name_on_page", "verifier")
+CHECK_RESULTS = ("pass", "fail", "unclear")
 
 # Written on a cache-hit row whose answer has no saved raw response.
 NO_RAW_RESPONSE_NOTE = ("No raw response exists: this answer was cached before the run log "
@@ -125,7 +138,7 @@ def table_ref(table: str) -> str:
 
 
 def setup_tables(client=None) -> List[str]:
-    """Create the dataset and the four tables if they do not exist. Returns the table ids.
+    """Create the dataset and the tables if they do not exist. Returns the table ids.
     Run once by a person; runs never create tables, so a wrong dataset name fails
     loudly (and falls back to local files) instead of silently making a new dataset."""
     from google.cloud import bigquery
@@ -281,6 +294,22 @@ class RunLog:
                                  "created_at": now_iso(), **fields})
         return cid
 
+    def add_check(self, *, kind: str, result: str, candidate_id: Optional[str] = None,
+                  node_id: Optional[str] = None, **fields) -> str:
+        """Add one checks row: one automated check of one unit. It names the unit by
+        node_id or candidate_id (exactly one). Checks are append-only."""
+        if kind not in CHECK_KINDS:
+            raise ValueError(f"check kind must be one of {CHECK_KINDS}, got {kind!r}")
+        if result not in CHECK_RESULTS:
+            raise ValueError(f"check result must be one of {CHECK_RESULTS}, got {result!r}")
+        if bool(candidate_id) == bool(node_id):
+            raise ValueError("a check names exactly one of node_id or candidate_id")
+        check_id = new_id()
+        self._add("checks", {"check_id": check_id, "kind": kind, "result": result,
+                             "candidate_id": candidate_id, "node_id": node_id,
+                             "checked_at": now_iso(), **fields})
+        return check_id
+
     def add_evidence(self, *, url: str, http_status: Optional[int], content: Optional[bytes],
                      unit_names=()) -> str:
         """Add one evidence row with a saved snapshot. Nothing calls this yet: pages are
@@ -347,7 +376,7 @@ class RunLog:
         self._add("runs", self.run_row)
         self.flush()
         if self.enabled and self.local_written:
-            # All four files exist, even an empty evidence.jsonl, so a reader can tell
+            # Every table's file exists, even an empty evidence.jsonl, so a reader can tell
             # "nothing fetched" from "file lost".
             self.local_dir.mkdir(parents=True, exist_ok=True)
             for t in TABLES:
@@ -378,7 +407,7 @@ def describe(status: dict) -> str:
     bq = "ok" if status["bigquery"] == "ok" else "FAILED"
     bucket = "ok" if status["bucket"] == "ok" else "FAILED"
     text = (f"Run log {status['run_id']}: {rows['llm_calls']} LLM calls, {rows['candidates']} candidates, "
-            f"{rows['evidence']} evidence rows. BigQuery {config.GCP_PROJECT}.{config.RUNLOG_DATASET}: {bq}. "
+            f"{rows['evidence']} evidence rows, {rows['checks']} checks. BigQuery {config.GCP_PROJECT}.{config.RUNLOG_DATASET}: {bq}. "
             f"Bucket {config.RUNLOG_BUCKET}: {bucket}.")
     if status["local_dir"]:
         text += f" Local copy: {status['local_dir']}"
