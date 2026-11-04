@@ -287,6 +287,52 @@ def unique_qids(qids: List[str]) -> Tuple[List[str], int]:
     return out, len(qids) - len(out)
 
 
+PROGRESS_RETRIES = 5   # conflicting writes in a row before an upload gives up
+
+
+def merge_progress(bucket_text: str, local_text: str) -> str:
+    """The bucket's progress lines first, then the local lines the bucket lacks. Pure."""
+    seen, out = set(), []
+    for line in (bucket_text or "").splitlines() + (local_text or "").splitlines():
+        if line.strip() and line not in seen:
+            seen.add(line)
+            out.append(line)
+    return "".join(line + "\n" for line in out)
+
+
+def read_progress(bucket, name: str) -> Tuple[str, int]:
+    """The progress text in the bucket and its generation; ("", 0) when there is none."""
+    from wikidata_discover.run_log import _bucket_timeout
+    blob = bucket.get_blob(name, timeout=_bucket_timeout())
+    if blob is None:
+        return "", 0
+    text = blob.download_as_text(if_generation_match=blob.generation, timeout=_bucket_timeout())
+    return text, blob.generation
+
+
+def upload_progress(bucket, name: str, local_text: str,
+                    generation: Optional[int]) -> Tuple[str, Optional[int]]:
+    """Upload the progress lines only if the bucket file is still at `generation` (0: no
+    file yet; None: read it first). When another invocation wrote it in between, read it
+    again, merge, and retry, so no invocation removes the lines of another. Returns the
+    text uploaded and its new generation."""
+    from google.api_core.exceptions import PreconditionFailed
+    from wikidata_discover.run_log import _bucket_timeout
+    text = local_text
+    for _ in range(PROGRESS_RETRIES):
+        try:
+            if generation is None:
+                remote, generation = read_progress(bucket, name)
+                text = merge_progress(remote, text)
+            blob = bucket.blob(name)
+            blob.upload_from_string(text, content_type="text/plain",
+                                    if_generation_match=generation, timeout=_bucket_timeout())
+            return text, blob.generation
+        except PreconditionFailed:
+            generation = None
+    raise RuntimeError(f"{name}: {PROGRESS_RETRIES} conflicting writes in a row")
+
+
 def run_snapshots(qids: List[str], run_id: Optional[str] = None, argv=None, *, bucket=None,
                   sparql: Callable[[str], List[dict]] = execute_sparql_bindings,
                   results_dir: Optional[Path] = None, report=print) -> dict:
@@ -327,7 +373,31 @@ def run_snapshots(qids: List[str], run_id: Optional[str] = None, argv=None, *, b
     except Exception as e:  # noqa: BLE001 - no bucket listing: nothing is skipped
         report(f"could not list finished snapshots ({type(e).__name__}); nothing is skipped")
         done = set()
+    # The bucket's progress.jsonl is the history of every invocation of this run. Start
+    # from it, so a resume in a fresh checkout or on another host keeps the earlier lines.
     progress = run_dir / "progress.jsonl"
+    progress_name = f"runs/{run_id}/progress.jsonl"
+    progress_gen: Optional[int] = None   # None: read the bucket file again before the upload
+    try:
+        remote, progress_gen = read_progress(log._get_bucket(), progress_name)
+        progress.write_text(merge_progress(remote, progress.read_text() if progress.exists() else ""))
+    except Exception as e:  # noqa: BLE001 - the upload reads and merges it again
+        report(f"could not read progress.jsonl from the bucket ({type(e).__name__}); "
+               "the upload merges with it first")
+
+    def save_progress() -> None:
+        nonlocal progress_gen
+        if not log.gcs_error:
+            try:
+                text, progress_gen = upload_progress(log._get_bucket(), progress_name,
+                                                     progress.read_text(), progress_gen)
+                progress.write_text(text)
+                return
+            except Exception as e:  # noqa: BLE001 - fall back to a local file
+                log.gcs_error = f"{type(e).__name__}: {str(e)[:200]}"
+                report(f"run log: progress.jsonl upload failed, kept locally ({log.gcs_error})")
+        log.save_text("progress.jsonl", progress.read_text())
+
     outcome = "failed"
     try:
         for n, qid in enumerate(qids, 1):
@@ -358,14 +428,14 @@ def run_snapshots(qids: List[str], run_id: Optional[str] = None, argv=None, *, b
             report(f"[{n}/{len(qids)}] {qid} {rec['status']} "
                    f"{rec.get('units', rec.get('error', ''))} ({rec['seconds']} s)")
             if n % 25 == 0:
-                log.save_text("progress.jsonl", progress.read_text())
+                save_progress()
         outcome = "ok" if not summary["failed"] else "partial"
     except KeyboardInterrupt:
         outcome = "interrupted"
         raise
     finally:
         if progress.exists():
-            log.save_text("progress.jsonl", progress.read_text())
+            save_progress()
         summary["outcome"] = outcome
         summary["run_log"] = log.finish(outcome, {k: v for k, v in summary.items() if k != "run_log"})
         report(run_log.describe(summary["run_log"]))

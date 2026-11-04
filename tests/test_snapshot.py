@@ -5,6 +5,7 @@ import re
 import sys
 
 import pytest
+from google.api_core.exceptions import PreconditionFailed
 
 from wikidata_discover import snapshot as snap
 
@@ -139,9 +140,20 @@ def test_max_units_marks_the_snapshot_truncated(wd):
 class FakeBlob:
     def __init__(self, bucket, name):
         self.bucket, self.name = bucket, name
+        self.generation = bucket.gens.get(name)
 
-    def upload_from_string(self, text, content_type=None, timeout=None, **kw):
-        self.bucket.store[self.name] = text
+    def _check(self, if_generation_match):
+        if if_generation_match is not None and self.bucket.gens.get(self.name, 0) != if_generation_match:
+            raise PreconditionFailed(f"{self.name}: generation does not match")
+
+    def upload_from_string(self, text, content_type=None, timeout=None, if_generation_match=None, **kw):
+        self._check(if_generation_match)
+        self.bucket.put(self.name, text)
+        self.generation = self.bucket.gens[self.name]
+
+    def download_as_text(self, if_generation_match=None, timeout=None, **kw):
+        self._check(if_generation_match)
+        return self.bucket.store[self.name]
 
 
 class FakeClient:
@@ -153,14 +165,24 @@ class FakeClient:
 
 
 class FakeBucket:
+    """A bucket in memory. Every write gets a new generation, as in Cloud Storage."""
     name = "fake-bucket"
 
     def __init__(self, store=None):
-        self.store = dict(store or {})
+        self.store, self.gens, self.last_gen = {}, {}, 0
+        for name, text in (store or {}).items():
+            self.put(name, text)
         self.client = FakeClient(self)
+
+    def put(self, name, text):
+        self.last_gen += 1
+        self.store[name], self.gens[name] = text, self.last_gen
 
     def blob(self, name):
         return FakeBlob(self, name)
+
+    def get_blob(self, name, timeout=None):
+        return FakeBlob(self, name) if name in self.store else None
 
 
 def test_run_saves_each_snapshot_under_the_run_folder_and_skips_done_ones(wd, tmp_path):
@@ -243,3 +265,73 @@ def test_a_qid_listed_twice_is_crawled_once_and_counted_once(wd, tmp_path):
 def test_unique_qids_keeps_the_first_occurrence_in_order():
     assert snap.unique_qids(["Q3", "Q1", "Q3", "Q2", "Q1"]) == (["Q3", "Q1", "Q2"], 2)
     assert snap.unique_qids([]) == ([], 0)
+
+
+# ── progress.jsonl: history of every invocation of a run ─────────────────
+
+def _line(qid, inv):
+    return json.dumps({"qid": qid, "status": "ok", "invocation_id": inv}) + "\n"
+
+
+def test_merge_progress_keeps_bucket_lines_first_and_adds_only_new_local_lines():
+    bucket, local = _line("Q1", "a") + _line("Q2", "a"), _line("Q2", "a") + _line("Q3", "b")
+    assert snap.merge_progress(bucket, local) == _line("Q1", "a") + _line("Q2", "a") + _line("Q3", "b")
+    assert snap.merge_progress("", "") == ""
+
+
+def test_a_resume_with_an_empty_local_file_keeps_the_earlier_lines(wd, tmp_path):
+    # A killed earlier invocation left its lines in the bucket; this checkout has none.
+    earlier = _line("Q5", "killed-inv")
+    bucket = FakeBucket({"runs/snap-r/snapshots/Q5.json": "{}", "runs/snap-r/progress.jsonl": earlier})
+    assert not (tmp_path / "runs" / "snap-r" / "progress.jsonl").exists()
+    s = snap.run_snapshots(["Q5", "Q1"], "snap-r", [], bucket=bucket, sparql=wd,
+                           results_dir=tmp_path, report=lambda m: None)
+    assert (s["skipped_done"], s["ok"]) == (1, 1)
+    lines = bucket.store["runs/snap-r/progress.jsonl"].splitlines()
+    assert lines[0] == earlier.strip()
+    assert [json.loads(l)["qid"] for l in lines] == ["Q5", "Q1"]
+    assert json.loads(lines[1])["invocation_id"] == s["run_log"]["invocation_id"]
+    local = (tmp_path / "runs" / "snap-r" / "progress.jsonl").read_text().splitlines()
+    assert local == lines
+
+
+def test_a_write_by_another_invocation_in_between_is_merged_not_overwritten(wd, tmp_path):
+    bucket = FakeBucket()
+    other = _line("Q9", "other-inv")
+
+    def sparql(q):   # another invocation uploads its progress while this one runs
+        if "runs/snap-c/progress.jsonl" not in bucket.store:
+            bucket.put("runs/snap-c/progress.jsonl", other)
+        return wd(q)
+
+    snap.run_snapshots(["Q1"], "snap-c", [], bucket=bucket, sparql=sparql,
+                       results_dir=tmp_path, report=lambda m: None)
+    lines = bucket.store["runs/snap-c/progress.jsonl"].splitlines()
+    assert [json.loads(l)["qid"] for l in lines] == ["Q9", "Q1"]
+
+
+def test_progress_is_merged_at_upload_when_the_first_read_fails(wd, tmp_path):
+    bucket = FakeBucket({"runs/snap-f/progress.jsonl": _line("Q5", "killed-inv")})
+    real, calls = bucket.get_blob, []
+
+    def flaky(name, timeout=None):
+        calls.append(name)
+        if len(calls) == 1:
+            raise TimeoutError("slow bucket")
+        return real(name, timeout)
+
+    bucket.get_blob = flaky
+    snap.run_snapshots(["Q1"], "snap-f", [], bucket=bucket, sparql=wd,
+                       results_dir=tmp_path, report=lambda m: None)
+    lines = bucket.store["runs/snap-f/progress.jsonl"].splitlines()
+    assert [json.loads(l)["qid"] for l in lines] == ["Q5", "Q1"]
+
+
+def test_upload_progress_gives_up_after_repeated_conflicts():
+    class AlwaysNewer(FakeBucket):
+        def blob(self, name):
+            self.put(name, _line("Q9", "other"))   # someone writes just before every upload
+            return FakeBlob(self, name)
+
+    with pytest.raises(RuntimeError, match="conflicting writes"):
+        snap.upload_progress(AlwaysNewer(), "runs/x/progress.jsonl", _line("Q1", "me"), 0)
