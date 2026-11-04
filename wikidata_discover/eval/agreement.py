@@ -393,11 +393,6 @@ def extractor(provider: str):
             "gemini": LLMHelper.extract_divisions_gemini}[provider]
 
 
-def model_of(provider: str) -> str:
-    from wikidata_discover import config
-    return {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
-
-
 def collect(qid: str, label: str, website: str, providers: Sequence[str], samples: int,
             log=None) -> Tuple[List[dict], List[dict]]:
     """Ask each provider for each sample. Returns (proposals, run rows). Each named
@@ -406,7 +401,7 @@ def collect(qid: str, label: str, website: str, providers: Sequence[str], sample
     proposals, runs = [], []
     for p in providers:
         for s in range(1, samples + 1):
-            key = llm_helpers._cache_key(label, p, model_of(p), extra=llm_helpers._extract_extra(website, s))
+            key = llm_helpers.extract_cache_key(p, label, website, s)
             units = extractor(p)(label, website, sample=s) or []
             call_id = llm_helpers.last_extraction_call_id
             names = 0

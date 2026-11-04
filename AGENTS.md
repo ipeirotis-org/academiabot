@@ -159,6 +159,11 @@ when it exists), 3 samples each (`--samples`). Report: `results/agreement/<run_i
 - Samples: the three extractors take `sample=` (1 or more). The sample goes into the cache key
   (`|sample=N` after the website, `_extract_extra()` in `llm_helpers.py`) and into the call's
   `request_config`. Without a sample the key is unchanged, so old cache files still match.
+- Sampled Gemini calls run with thinking off (`thinking_budget=0`, also in the cache key).
+  With thinking on, Gemini spent its 2048 output tokens thinking and most answers were cut off
+  (finish reason MAX_TOKENS): only 9 of 36 answered in the first run on 2026-11-04. Gemini
+  calls without a sample (discover, the eval harness) still have thinking on and the same
+  problem; that fix is outside week 3.
 - Each school a provider names in one sample is a `candidates` row with status `unaligned`
   (no Wikidata matching in this step) and its extract call in `llm_call_ids`.
 - Name variants are grouped with `is_fuzzy_match`: a name joins the first group with a member it

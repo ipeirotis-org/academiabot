@@ -218,6 +218,21 @@ def _extract_extra(website: str, sample: Optional[int]) -> str:
     return f"{website or ''}|sample={sample}"
 
 
+def _extract_key_extra(provider: str, website: str, sample: Optional[int]) -> str:
+    """The `extra` part of an extraction cache key for one provider. Sampled Gemini
+    calls run with thinking off (see extract_divisions_gemini), and their key says so."""
+    extra = _extract_extra(website, sample)
+    if provider == "gemini" and sample is not None:
+        extra += "|thinking_budget=0"
+    return extra
+
+
+def extract_cache_key(provider: str, univ_label: str, website: str, sample: Optional[int] = None) -> str:
+    """The cache key an extract_divisions_<provider>() call uses with the current models."""
+    model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
+    return _cache_key(univ_label, provider, model, extra=_extract_key_extra(provider, website, sample))
+
+
 # Cache files read or written since the last reset. A batch runner uses this to
 # upload exactly the cache entries a run depended on, including old ones it reused.
 cache_paths_touched: set = set()
@@ -579,10 +594,16 @@ class LLMHelper:
         global last_extraction_call_id
         last_extraction_call_id = None
         model = config.GEMINI_MODEL
-        key = _cache_key(univ_label, "gemini", model, extra=_extract_extra(website, sample))
+        # Gemini counts its thinking against max_output_tokens, and with thinking on most
+        # answers were cut off after one or two units (finish reason MAX_TOKENS). Sampled
+        # calls (Shuo's week 3) turn thinking off, and the cache key says so, so they never
+        # read an answer made with thinking on. Calls without a sample are unchanged.
+        thinking_off = sample is not None
+        key = _cache_key(univ_label, "gemini", model, extra=_extract_key_extra("gemini", website, sample))
         prompt_text = f"System: {SYSTEM_EXTRACT}\n\nInput: {univ_label} -- {website}"
         call = _extract_call("gemini", model, key, {"text": prompt_text},
-                             sample, tools=[], temperature=0.7, max_output_tokens=2048)
+                             sample, tools=[], temperature=0.7, max_output_tokens=2048,
+                             **({"thinking_budget": 0} if thinking_off else {}))
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_gemini: cache hit for %s", univ_label)
@@ -611,6 +632,7 @@ class LLMHelper:
                     config=genai_types.GenerateContentConfig(
                         temperature=0.7,
                         max_output_tokens=2048,
+                        **({"thinking_config": genai_types.ThinkingConfig(thinking_budget=0)} if thinking_off else {}),
                         http_options=_gemini_http_options(),
                     ),
                 )

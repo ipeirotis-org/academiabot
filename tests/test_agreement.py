@@ -321,3 +321,49 @@ def test_analyze_all_and_files_are_repeatable(tmp_path):
     groups = (outs[0] / "groups.csv").read_text()
     assert "Q2-g01" in groups and "invented" in groups                  # a school at a college with none
     assert (outs[0] / "single_provider_review.csv").exists()
+
+
+# ── Gemini: thinking off for sampled calls ───────────────────────────────
+
+def fake_gemini(monkeypatch, tmp_path):
+    import wikidata_discover.config as config
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(config, "GOOGLE_API_KEY", "k")
+    seen = []
+
+    class Models:
+        @staticmethod
+        def generate_content(model, contents, config):
+            seen.append(config)
+            text = json.dumps({"units": [{"name": "School of Law", "unit_type": "school", "city": "",
+                                          "state": "", "website": None}], "reference": "https://x.edu"})
+            return type("R", (), {"text": text})()
+    monkeypatch.setattr(lh, "_get_gemini_client", lambda: type("C", (), {"models": Models})())
+    return seen
+
+
+def test_a_sampled_gemini_call_turns_thinking_off(monkeypatch, tmp_path):
+    """With thinking on, Gemini spent its output budget thinking and cut most answers
+    off (finish reason MAX_TOKENS, 9 of 36 answers in the first week 3 run)."""
+    seen = fake_gemini(monkeypatch, tmp_path)
+    LLMHelper.extract_divisions_gemini("NYU", "https://www.nyu.edu", sample=1)
+    assert seen[0].thinking_config.thinking_budget == 0
+    LLMHelper.extract_divisions_gemini("NYU", "https://www.nyu.edu")              # no sample: unchanged
+    assert seen[1].thinking_config is None
+
+
+def test_the_gemini_sample_key_names_thinking_off():
+    """A sampled Gemini key differs from the one the first week 3 run used (thinking
+    on), so the new run never reads those answers; the old files stay where they are."""
+    with_thinking = lh._cache_key("NYU", "gemini", "m", extra=lh._extract_extra("https://www.nyu.edu", 1))
+    assert lh._cache_key("NYU", "gemini", "m", extra=lh._extract_key_extra("gemini", "https://www.nyu.edu", 1)) != with_thinking
+    # other providers and unsampled Gemini calls keep their keys
+    assert lh._extract_key_extra("openai", "w", 1) == lh._extract_extra("w", 1)
+    assert lh._extract_key_extra("gemini", "w", None) == "w"
+
+
+def test_extract_cache_key_is_the_key_each_extractor_uses(monkeypatch, tmp_path):
+    fake_gemini(monkeypatch, tmp_path)
+    LLMHelper.extract_divisions_gemini("NYU", "https://www.nyu.edu", sample=2)
+    assert [p.stem for p in tmp_path.glob("*.json") if not p.name.endswith(".meta.json")] == \
+        [lh.extract_cache_key("gemini", "NYU", "https://www.nyu.edu", 2)]
