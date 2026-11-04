@@ -242,3 +242,43 @@ def test_a_country_source_that_is_an_address_is_not_fetched(monkeypatch, tmp_pat
     assert fetched == ["https://stern.example/depts"]
     assert len(cands["Finance"]["evidence_ids"]) == 1
     assert rows["Finance"]["country_evidence_outcome"] == ""
+
+
+def test_two_qids_citing_one_page_share_one_fetch_and_one_evidence_row(monkeypatch, tmp_path):
+    from wikidata_discover import fetcher
+    answers = {"Q770467": {"units": [{"name": "Finance", "unit_type": "department", "source_url": "https://nyu.example/all"}]},
+               "Q1569124": {"units": [{"name": "Physics", "unit_type": "department", "source_url": "https://nyu.example/all"},
+                                      {"name": "Chemistry", "unit_type": "department", "source_url": "https://nyu.example/all"}]}}
+    current = {}
+    monkeypatch.setattr(LLMHelper, "extract_subunits",
+                        staticmethod(lambda unit: lh.normalize_subunits(answers[current["qid"]])))
+    monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
+    monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
+    fetched = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        return fetcher.FetchResult(url=url, outcome="ok", final_url=url, status=200,
+                                   content=b"<p>Finance, Physics</p>", content_type="text/html")
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    log.gcs_error = "no bucket in tests"
+    pages = subunits.CitedPages(log, fake_fetch)
+    for qid in answers:
+        current["qid"] = qid
+        subunits.subunits_for(qid, log, out_dir=tmp_path, fetch=lambda q: {**STERN, "qid": q}, pages=pages)
+    assert fetched == ["https://nyu.example/all"]                                  # fetched once
+    assert len(log.pending["evidence"]) == 1
+    eid = log.pending["evidence"][0]["evidence_id"]
+    cands = {c["name"]: c for c in log.pending["candidates"]}
+    assert {c["parent_qid"] for c in cands.values()} == {"Q770467", "Q1569124"}
+    assert all(c["evidence_ids"] == [eid] for c in cands.values())
+    rows = {r["name"]: r for r in csv.DictReader((tmp_path / "Q1569124_anthropic.csv").open())}
+    assert (rows["Physics"]["name_on_page"], rows["Chemistry"]["name_on_page"]) == ("yes", "no")   # checked against the saved text
+    assert rows["Physics"]["evidence_outcome"] == "ok"
+    first = {r["name"]: r for r in csv.DictReader((tmp_path / "Q770467_anthropic.csv").open())}
+    assert first["Finance"]["name_on_page"] == "yes"
+
+
+def test_name_on_page_is_skipped_for_a_page_that_is_not_read():
+    assert subunits.name_on_page("Law", {"name_check": "skipped: PDF text is not extracted", "text": ""}) == "skipped"
+    assert subunits.name_on_page("Law", {"name_check": None}) == "" and subunits.name_on_page("Law", None) == ""

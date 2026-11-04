@@ -65,10 +65,11 @@ def subunits_with_run_log(qids, argv, fetch_pages: bool = True) -> None:
                         who=operator_identity(), git_commit=identity, run_config=run_config(key_sources))
     log.attach_source_patch(run_dir, identity)
     outcome, done = "failed", []
+    pages = subunits.CitedPages(log)     # one fetch per cited URL for the whole run
     try:
         for qid in qids:
             try:
-                s = subunits.subunits_for(qid, log, fetch_pages=fetch_pages)
+                s = subunits.subunits_for(qid, log, fetch_pages=fetch_pages, pages=pages)
                 done.append(s)
                 config.console.print(f"{qid} {s['label']}: {s['units']} sub-units from {s['provider']} "
                                      f"{s['by_type']}, {s['no_url']} without a URL, cited pages {s['pages']}. "

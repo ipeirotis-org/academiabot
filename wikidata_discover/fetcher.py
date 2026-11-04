@@ -409,14 +409,20 @@ def names_on_page(names, text: str) -> List[str]:
     return [n for n in names if n and norm(n) in t]
 
 
-def record(log, result: FetchResult, unit_names) -> str:
+def read_result(result: FetchResult) -> Tuple[Optional[str], Optional[str]]:
+    """(text, name_check) of a fetch: both None when no page arrived. Pure."""
+    if result.content is None:
+        return None, None
+    return page_text_or_skip(result.content, result.content_type)
+
+
+def record(log, result: FetchResult, unit_names, read: Optional[Tuple[Optional[str], Optional[str]]] = None) -> str:
     """Save one fetch as an evidence row: the page bytes, its text, and the names of the
     citing units that appear in it when the page arrived; the outcome and the reason always.
-    Returns the evidence id."""
-    text = name_check = None
+    `read` is read_result(result) when the caller already has it. Returns the evidence id."""
+    text, name_check = read if read is not None else read_result(result)
     found: List[str] = []
     if result.content is not None:
-        text, name_check = page_text_or_skip(result.content, result.content_type)
         found = names_on_page(unit_names, text) if name_check == "done" else []
     return log.add_evidence(url=result.url, http_status=result.status, content=result.content,
                             unit_names=found, final_url=result.final_url, outcome=result.outcome,

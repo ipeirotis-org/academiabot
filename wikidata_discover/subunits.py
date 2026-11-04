@@ -6,9 +6,11 @@ that searches the web (Anya, week 4).
 For each unit it writes, under wikidata_discover/results/subunits/:
 - <QID>_<provider>.csv: every sub-unit, with name, unit_type, in_scope, website, one
   source_url, a no_url flag, country, country_source (the page or address that shows it), and the fetch
-  outcome of the source page and of the country page;
+  outcome of the source page and of the country page, and name_on_page (is the sub-unit's
+  name in its source page: yes, no, skipped for a page that is not read, empty without a page);
 - <QID>_<provider>_departments.csv: the department rows only, the input of Shuo's scorer.
 A country source that is a web page is fetched and saved like a source URL; an address is not.
+A page is fetched once per run (CitedPages), even when units of several QIDs cite it.
 Each sub-unit also adds a candidates row with status "unaligned": it is not yet compared
 with Wikidata (alignment is week 6). Offices are kept, with in_scope "no".
 """
@@ -21,7 +23,7 @@ from wikidata_discover import config, fetcher, llm_helpers, run_log
 from wikidata_discover.sparql_helpers import execute_sparql_bindings
 
 OUT_DIR = config.RESULTS_DIR / "subunits"
-COLUMNS = ["name", "unit_type", "in_scope", "website", "source_url", "no_url", "evidence_outcome", "country",
+COLUMNS = ["name", "unit_type", "in_scope", "website", "source_url", "no_url", "evidence_outcome", "name_on_page", "country",
            "country_source", "country_evidence_outcome", "parent_qid", "parent_label", "provider"]
 
 UNIT_QUERY = """
@@ -68,19 +70,43 @@ def cited_urls(u: Dict[str, Any]) -> List[str]:
     return list(dict.fromkeys(x for x in [u.get("source_url") or "", country_url(u)] if x))
 
 
-def fetch_cited(units: List[Dict[str, Any]], log, fetch=fetcher.fetch) -> Dict[str, Dict[str, Any]]:
-    """Fetch every cited page (source URL or country page) once and save it as an evidence
-    row. Returns {url: {"evidence_id", "outcome"}}. Units that cite the same page share one fetch."""
-    citing: Dict[str, List[str]] = {}
-    for u in units:
-        for url in cited_urls(u):
-            citing.setdefault(url, []).append(u["name"])
-    out = {}
-    for url, names in citing.items():
-        result = fetch(url)
-        eid = fetcher.record(log, result, names) if log is not None else None
-        out[url] = {"evidence_id": eid, "outcome": result.outcome}
-    return out
+class CitedPages:
+    """One map from cited URL to its evidence row for a whole run, shared by every QID of the
+    command (and by later levels of a deeper run). A URL is fetched and saved once. A later
+    unit that cites it links to the same evidence row, and its name is checked against the
+    saved page text. The evidence row's unit_names keeps the names found at fetch time:
+    rows are not rewritten, and the run log may already hold the row."""
+
+    def __init__(self, log, fetch=fetcher.fetch):
+        self.log, self.fetch = log, fetch
+        self.pages: Dict[str, Dict[str, Any]] = {}   # url -> evidence_id, outcome, text, name_check
+        self.fetches = 0
+
+    def cite(self, units: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """Fetch and save every page these units cite that this run has not fetched yet.
+        Returns {url: {"evidence_id", "outcome", "text", "name_check"}} for the pages they cite."""
+        citing: Dict[str, List[str]] = {}
+        for u in units:
+            for url in cited_urls(u):
+                citing.setdefault(url, []).append(u["name"])
+        for url, names in citing.items():
+            if url in self.pages:
+                continue
+            result = self.fetch(url)
+            self.fetches += 1
+            read = fetcher.read_result(result)
+            eid = fetcher.record(self.log, result, names, read) if self.log is not None else None
+            self.pages[url] = {"evidence_id": eid, "outcome": result.outcome, "text": read[0], "name_check": read[1]}
+        return {url: self.pages[url] for url in citing}
+
+
+def name_on_page(name: str, page: Optional[Dict[str, Any]]) -> str:
+    """yes or no when the page text was read, skipped when it was not (a PDF), "" without a page. Pure."""
+    if not page or page.get("name_check") is None:
+        return ""
+    if page["name_check"] != "done":
+        return "skipped"
+    return "yes" if fetcher.names_on_page([name], page.get("text") or "") else "no"
 
 
 def csv_rows(units: List[Dict[str, Any]], unit: Dict[str, Any], provider: str,
@@ -91,6 +117,7 @@ def csv_rows(units: List[Dict[str, Any]], unit: Dict[str, Any], provider: str,
              "website": u.get("website") or "", "source_url": u.get("source_url") or "",
              "no_url": "yes" if u.get("no_url") else "",
              "evidence_outcome": evidence.get(u.get("source_url") or "", {}).get("outcome", ""),
+             "name_on_page": name_on_page(u["name"], evidence.get(u.get("source_url") or "")),
              "country": u.get("country") or "",
              "country_source": u.get("country_source") or "",
              "country_evidence_outcome": evidence.get(country_url(u), {}).get("outcome", ""),
@@ -107,17 +134,21 @@ def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
 
 
 def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path] = None,
-                 fetch=fetch_unit, fetch_pages: bool = True, fetch_page=fetcher.fetch) -> Dict[str, Any]:
+                 fetch=fetch_unit, fetch_pages: bool = True, fetch_page=fetcher.fetch,
+                 pages: Optional[CitedPages] = None) -> Dict[str, Any]:
     """Ask for one unit's sub-units, fetch and save each cited page once, write the two
-    CSV files, and add a candidates row per sub-unit with its evidence id. Returns a
-    short summary."""
+    CSV files, and add a candidates row per sub-unit with its evidence id. `pages` is the
+    run's CitedPages, so a page another QID of the run already fetched is reused; without
+    it, this call has its own. Returns a short summary."""
     out_dir = out_dir or OUT_DIR
     unit = fetch(qid)
     if log is not None:
         log.set_university(unit.get("parent_qid") or qid)
     units = llm_helpers.LLMHelper.extract_subunits(unit)
     provider = llm_helpers.last_subunit_provider or "unknown"
-    evidence = fetch_cited(units, log, fetch_page) if fetch_pages else {}
+    if fetch_pages and pages is None:
+        pages = CitedPages(log, fetch_page)
+    evidence = pages.cite(units) if fetch_pages else {}
     rows = csv_rows(units, unit, provider, evidence)
     full = out_dir / f"{qid}_{provider}.csv"
     write_csv(full, rows)

@@ -395,6 +395,14 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   "name not found". The 16 evidence rows from 2026-10-29 were saved as UTF-8 text; all 16 were
   checked on 2026-11-04 and their SHA-256 matches `content_hash` (all were UTF-8 HTML).
   The `name_check` column was added to the BigQuery `evidence` table on 2026-11-04 (`run_log setup`).
+- Since 2026-11-04, one `subunits.CitedPages` map (cited URL -> evidence row and page text)
+  serves a whole run: `cli.subunits_with_run_log` makes one and passes it to every
+  `subunits_for` call. A URL is fetched and saved once per run, even when units of several
+  QIDs cite it; later units link to the same evidence id. Pass the same object to week 5's
+  depth-2 run. A later unit's name is checked against the saved text and goes to the CSV column
+  `name_on_page` (yes, no, skipped, or empty). The evidence row's `unit_names` keeps only
+  the names found at fetch time, because that row may already be in BigQuery and rows are
+  not rewritten. A `checks` row (Shuo, kind `name_on_page`) is the place for it later.
 
 | Table | One row per | Must contain |
 |---|---|---|
