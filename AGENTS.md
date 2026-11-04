@@ -437,6 +437,12 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   Shanghai: NYU and East China Normal University, both P749) gets no university_qid and a
   warning, never a guess. Checked 2026-11-04: every week 4 candidates and llm_calls row
   already had the right university_qid (all NYU schools, or the university itself).
+- Before each Anthropic `pause_turn` continuation, `_subunit_requests` rechecks
+  `enough_time_for_llm_call()` and builds the client again with the timeout from the time
+  left. Without enough time it sends nothing and raises `LLMDeadline`. The `llm_calls` row
+  of that unsent continuation has `not_sent` and `stopped_for_deadline` in `request_config`
+  and the error, and nothing is cached. The error reaches the caller, so the attempt fails
+  (never "no sub-units") and a later run can retry it.
 
 | Table | One row per | Must contain |
 |---|---|---|

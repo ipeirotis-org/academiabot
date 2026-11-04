@@ -1026,7 +1026,8 @@ class LLMHelper:
 
         unit: {"qid", "label", "parent_label", "website", "country"} from Wikidata.
         Sets last_subunit_provider and last_subunit_call_ids. Raises ValueError when no
-        provider gave an answer that parsed."""
+        provider gave an answer that parsed, and LLMDeadline when a pause_turn
+        continuation was stopped for the deadline."""
         global last_subunit_provider, last_subunit_call_ids
         last_subunit_provider, last_subunit_call_ids = None, []
         mode = f"only_{config.ONLY_PROVIDER}" if config.ONLY_PROVIDER else "best_available"
@@ -1255,14 +1256,18 @@ def _subunit_requests(provider: str, model: str, user: str, sent: Optional[list]
     elif provider == "anthropic":
         # Streamed, so a long search never sits silent until the read timeout, and no SDK
         # retry: the attempt loop in _subunits_from retries and records every attempt.
-        client = _get_anthropic_client().with_options(timeout=_subunit_timeout(), max_retries=0)
         messages = [{"role": "user", "content": user}]
-        for _ in range(_MAX_CONTINUATIONS + 1):
+        for n in range(_MAX_CONTINUATIONS + 1):
             t0 = time.time()
             request = {"model": model, "max_tokens": SUBUNIT_MAX_TOKENS, "system": SYSTEM_SUBUNITS,
                        "tools": subunit_tools("anthropic"), "messages": messages}
             if sent is not None:
                 sent.append(request)
+            # A continuation may come minutes after the first request: check the deadline
+            # again, and give this request only the time that is left.
+            if n > 0 and not enough_time_for_llm_call():
+                raise LLMDeadline(f"not sent: too close to the deadline for continuation {n}")
+            client = _get_anthropic_client().with_options(timeout=_subunit_timeout(), max_retries=0)
             with client.messages.stream(**request) as stream:
                 for event in stream:
                     block = getattr(event, "content_block", None)
@@ -1344,6 +1349,16 @@ def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[Opti
             for n, (resp, text) in enumerate(_subunit_requests(provider, model, user, sent)):
                 call_ids.append(_record_response(_continuation_call(call, sent, n, call_ids), resp, text, attempt, t0))
                 t0 = time.time()
+        except LLMDeadline as e:
+            # Stopped for the deadline: recorded as such (never as "no sub-units"), and the
+            # caller sees the deadline, so the attempt fails and is retried later.
+            n = max(len(sent) - 1, 0)        # the request that was not sent
+            part = _continuation_call(call, sent, n, call_ids)
+            part = {**part, "request_config": {**part["request_config"], "not_sent": True,
+                                               "stopped_for_deadline": True}}
+            _record_error(part, e, attempt, t0)
+            logger.warning("extract_subunits %s: stopped for the deadline for %s (%s)", provider, unit.get("label"), e)
+            raise
         except Exception as e:  # noqa: BLE001 - recorded, then the next attempt
             n = max(len(sent) - 1, 0)        # the request that failed
             call_ids.append(_record_error(_continuation_call(call, sent, n, call_ids), e, attempt, t0))

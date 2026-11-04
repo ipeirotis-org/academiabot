@@ -507,3 +507,88 @@ def test_parent_qids_keeps_every_parent_of_the_chosen_property():
             {"label": "NYU Shanghai", "parent": "http://www.wikidata.org/entity/Q2034790", "prop": "P749"},
             {"label": "NYU Shanghai", "parent": "http://www.wikidata.org/entity/Q1", "prop": "P361"}]
     assert subunits.unit_from_bindings("Q13652966", rows)["parent_qids"] == ["Q2034790", "Q49210"]
+
+
+# ── a pause_turn continuation near the deadline ─────────────────────────
+
+class FakeClock:
+    """Seconds left before config.DEADLINE; each streamed request uses `cost` of them."""
+    def __init__(self, left, cost):
+        self.left, self.cost = left, cost
+
+
+def clocked_anthropic(monkeypatch, clock, replies):
+    """A fake Anthropic client on a fake clock. Returns (sent requests, timeouts given)."""
+    sent, timeouts = [], []
+
+    class Client:
+        def with_options(self, timeout=None, **kw):
+            timeouts.append(timeout)
+            return self
+
+        class messages:
+            @staticmethod
+            def stream(**kw):
+                sent.append(json.loads(json.dumps(lh._jsonable(kw))))
+                reply = replies[len(sent) - 1]
+                clock.left -= clock.cost
+
+                class Stream:
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *a):
+                        return False
+
+                    def __iter__(self):
+                        return iter([])
+
+                    def get_final_message(self):
+                        return reply
+                return Stream()
+    monkeypatch.setattr(lh, "_get_anthropic_client", lambda: Client())
+    monkeypatch.setattr(config, "seconds_left", lambda: clock.left)
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    return sent, timeouts
+
+
+def test_no_continuation_is_sent_when_time_runs_out_and_it_is_not_no_subunits(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(run_log, "DISABLED", False)
+    clock = FakeClock(left=100, cost=80)                          # 20 s left after the first request
+    sent, timeouts = clocked_anthropic(monkeypatch, clock, [
+        Resp([Block("text", "Searching."), Block("server_tool_use")], "pause_turn"),
+        Resp([Block("text", json.dumps(ANSWER))], "end_turn")])
+    log = run_log.start("subunits-test", "inv1", results_dir=tmp_path)
+    log.gcs_error = log.bq_error = "no cloud in tests"
+    with pytest.raises(lh.LLMDeadline):
+        LLMHelper.extract_subunits(STERN)
+    assert len(sent) == 1 and len(timeouts) == 1                  # no second request
+    first, stopped = log.pending["llm_calls"]
+    cfg = json.loads(stopped["request_config"])
+    assert (cfg["continuation"], cfg["not_sent"], cfg["stopped_for_deadline"]) == (1, True, True)
+    assert "deadline" in stopped["error"] and cfg["continues_llm_call_id"] == first["llm_call_id"]
+    assert not list((tmp_path / "cache").glob("*.json"))          # nothing cached as an answer
+
+
+def test_a_subunits_run_stopped_for_the_deadline_fails_instead_of_writing_no_subunits(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    clock = FakeClock(left=100, cost=80)
+    clocked_anthropic(monkeypatch, clock, [Resp([Block("server_tool_use")], "pause_turn")])
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    with pytest.raises(lh.LLMDeadline):
+        subunits.subunits_for("Q770467", log, out_dir=tmp_path, fetch=wikidata_tree(), fetch_pages=False)
+    assert not (tmp_path / "Q770467_anthropic.csv").exists() and log.pending["candidates"] == []
+
+
+def test_a_continuation_gets_a_shorter_timeout_from_the_time_left(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    clock = FakeClock(left=500, cost=200)                         # 300 s left for the continuation
+    sent, timeouts = clocked_anthropic(monkeypatch, clock, [
+        Resp([Block("text", "Searching."), Block("server_tool_use")], "pause_turn"),
+        Resp([Block("text", json.dumps(ANSWER))], "end_turn")])
+    units = LLMHelper.extract_subunits(STERN)
+    assert [u["name"] for u in units] == ["Finance", "Career Center"]
+    assert len(sent) == 2 and timeouts == [500, 300]
+    assert timeouts[1] < timeouts[0]
