@@ -367,3 +367,38 @@ def test_extract_cache_key_is_the_key_each_extractor_uses(monkeypatch, tmp_path)
     LLMHelper.extract_divisions_gemini("NYU", "https://www.nyu.edu", sample=2)
     assert [p.stem for p in tmp_path.glob("*.json") if not p.name.endswith(".meta.json")] == \
         [lh.extract_cache_key("gemini", "NYU", "https://www.nyu.edu", 2)]
+
+
+# ── the university's own name inside a school name ───────────────────────
+
+def test_university_names():
+    assert ag.university_names("University of California, Berkeley")[:2] == ["University of California, Berkeley",
+                                                                              "California, Berkeley"]
+    assert {"UC Berkeley", "Berkeley"} <= set(ag.university_names("University of California, Berkeley"))
+    assert "NYU" in ag.university_names("New York University")
+    assert "MIT" in ag.university_names("Massachusetts Institute of Technology")
+
+
+@pytest.mark.parametrize("name,label,stripped", [
+    ("Stanford Law School", "Stanford University", "Law School"),
+    ("Columbia University School of Nursing", "Columbia University", "School of Nursing"),
+    ("Teachers College, Columbia University", "Columbia University", "Teachers College"),
+    ("Robert I. Grossman School of Medicine (Graduate School)", "New York University", "Robert I. Grossman School of Medicine"),
+    ("Columbia University", "Columbia University", "Columbia University"),       # nothing left: keep the name
+    ("Columbian Studies", "Columbia University", "Columbian Studies"),            # only whole words
+])
+def test_strip_university(name, label, stripped):
+    assert ag.strip_university(name, label) == stripped
+
+
+def test_a_school_named_with_its_university_matches_the_truth():
+    props = [P("openai", 1, "Stanford Law School"), P("gemini", 1, "School of Law")]
+    groups = ag.analyze_university("Q41506", props, ["School of Law"], [("openai", 1), ("gemini", 1)],
+                                   "Stanford University")
+    assert len(groups) == 1 and groups[0]["status"] == "correct" and groups[0]["n_providers"] == 2
+
+
+def test_an_academic_name_with_administration_is_not_non_academic():
+    """The old name of UChicago's Crown Family School was the School of Social Service
+    Administration: a real school, not an office."""
+    assert ag.wrong_kind(["School of Social Service Administration"], ["school"]) == "invented"

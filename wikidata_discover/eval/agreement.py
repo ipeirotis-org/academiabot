@@ -51,7 +51,7 @@ TIER1_OBJECT = "universities_us_tier1.json"
 NON_ACADEMIC = re.compile(
     r"\b(librar(y|ies)|athletics?|hospitals?|health system|medical cent(er|re)|museums?|press|"
     r"careers?|student (affairs|life|services|success)|admissions?|registrar|office|alumni|"
-    r"foundation|administration|administrative|services|bookstore|police|housing|dining|"
+    r"foundation|administrative|services|bookstore|police|housing|dining|"
     r"financial aid|human resources|facilities|support)\b", re.I)
 CAMPUS = re.compile(r"\bcampus(es)?\b", re.I)
 
@@ -80,6 +80,49 @@ def group_names(proposals: Sequence[dict], match: Callable[[str, str], bool] = i
         else:
             groups.append([i])
     return groups
+
+
+_SMALL_WORDS = {"of", "the", "at", "and", "in", "for"}
+
+
+def university_names(label: str) -> List[str]:
+    """Ways a school name can include its university: the full name, the name without
+    "University" or "University of" ("Columbia", "California, Berkeley"), the part after
+    a comma and "UC" with it ("Berkeley", "UC Berkeley"), and the initials ("NYU", "MIT").
+    Longest first, so the longest one is removed."""
+    label = re.sub(r"^the\s+", "", label.strip(), flags=re.I)
+    core = re.sub(r"\b(university of|university|the)\b", " ", label, flags=re.I)
+    core = re.sub(r"\s+", " ", core).strip(" ,")
+    out = {label, core}
+    if "," in label:
+        tail = label.rsplit(",", 1)[1].strip()
+        out |= {tail, f"UC {tail}"}
+    words = [w for w in re.findall(r"[A-Za-z]+", label) if w.lower() not in _SMALL_WORDS]
+    if len(words) >= 2:
+        out.add("".join(w[0].upper() for w in words))
+    return sorted((n for n in out if len(n) >= 2), key=len, reverse=True)
+
+
+def strip_university(name: str, label: str) -> str:
+    """The school name without its university's name, possessive, or a note in
+    brackets: "Stanford Law School" -> "Law School", "Columbia University School of
+    Nursing" -> "School of Nursing". The name itself when nothing would be left."""
+    out = re.sub(r"\([^)]*\)", " ", name)
+    for u in university_names(label):
+        out = re.sub(rf"(?<![A-Za-z]){re.escape(u)}(?:'s)?(?![A-Za-z])", " ", out, flags=re.I)
+    out = re.sub(r"\s+", " ", out).strip(" ,-:")
+    return out or name
+
+
+def university_matcher(label: str) -> Callable[[str, str], bool]:
+    """is_fuzzy_match, also tried with the university's name removed from both names,
+    so "Stanford Law School" matches "School of Law" at Stanford."""
+    if not label:
+        return is_fuzzy_match
+
+    def match(a: str, b: str) -> bool:
+        return is_fuzzy_match(a, b) or is_fuzzy_match(strip_university(a, label), strip_university(b, label))
+    return match
 
 
 def group_label(names: Sequence[str]) -> str:
@@ -182,13 +225,15 @@ def mt_estimate(captures: Sequence[set]) -> Optional[float]:
 # ─────────────────────────  ANALYSIS  ─────────────────────────
 
 def analyze_university(qid: str, proposals: List[dict], truth: Sequence[str],
-                       answered_runs: Sequence[Tuple[str, int]]) -> List[dict]:
+                       answered_runs: Sequence[Tuple[str, int]], university: str = "") -> List[dict]:
     """Group the proposals of one university and score each group. Returns one dict
     per group, in a fixed order (first seen first). `answered_runs` lists the
-    (provider, sample) pairs that returned an answer, the denominator of the score."""
-    idx_groups = group_names(proposals)
+    (provider, sample) pairs that returned an answer, the denominator of the score.
+    `university` is its name, which is ignored inside school names when they are compared."""
+    match = university_matcher(university)
+    idx_groups = group_names(proposals, match)
     names = [[proposals[i]["name"] for i in g] for g in idx_groups]
-    matched, duplicates = match_groups_to_truth(names, truth)
+    matched, duplicates = match_groups_to_truth(names, truth, match)
     total_runs = len(answered_runs) or 1
     out = []
     for gi, g in enumerate(idx_groups):
@@ -474,7 +519,7 @@ def analyze_all(universities: List[dict], proposals_by_qid: Dict[str, List[dict]
         for p in props:
             p.setdefault("university_qid", qid)
         answered = [(r["provider"], r["sample"]) for r in runs_by_qid.get(qid, []) if r["answered"]]
-        groups = analyze_university(qid, props, u["schools"], answered)
+        groups = analyze_university(qid, props, u["schools"], answered, u["name"])
         for g in groups:
             g["university_set"] = u["set"]
             for i in g["member_index"]:
@@ -546,12 +591,14 @@ def run(args) -> Path:
     run_id = run_log.new_run_id("agreement")
     out_dir = Path(args.out) if args.out else RESULTS_DIR / "agreement" / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    identity = source_identity(out_dir)
-    log = run_log.start(run_id, command="agreement", args={"argv": sys.argv[1:]},
-                        qids=[u["qid"] for u in universities], who=operator_identity(), git_commit=identity,
-                        run_config={**run_config(key_sources if isinstance(key_sources, dict) else {}),
-                                    "samples": args.samples, "agreement_providers": providers})
-    log = run_log.current()
+    log = None
+    if not args.no_run_log:
+        identity = source_identity(out_dir)
+        run_log.start(run_id, command="agreement", args={"argv": sys.argv[1:]},
+                      qids=[u["qid"] for u in universities], who=operator_identity(), git_commit=identity,
+                      run_config={**run_config(key_sources if isinstance(key_sources, dict) else {}),
+                                  "samples": args.samples, "agreement_providers": providers})
+        log = run_log.current()
     console.print(f"[bold]Agreement run {run_id}: {len(universities)} universities, "
                   f"providers {providers}, {args.samples} samples each[/bold]")
     proposals_by_qid, runs_by_qid, all_runs, outcome = {}, {}, [], "failed"
@@ -564,7 +611,7 @@ def run(args) -> Path:
             all_runs.extend(runs)
             answered = [(r["provider"], r["sample"]) for r in runs if r["answered"]]
             if log is not None:
-                groups = analyze_university(u["qid"], props, u["schools"], answered)
+                groups = analyze_university(u["qid"], props, u["schools"], answered, u["name"])
                 for g in groups:
                     g["university_set"] = u["set"]
                 write_checks(log, groups, props)
@@ -605,6 +652,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--universities", nargs="+", help="QIDs (default: every university with ground truth)")
     parser.add_argument("--samples", type=int, default=DEFAULT_SAMPLES, help="runs per provider (default 3)")
     parser.add_argument("--out", help="output folder (default results/agreement/<run_id>)")
+    parser.add_argument("--no-run-log", action="store_true",
+                        help="write no run log rows (no candidates or checks): for a report from cached answers only")
     parser.add_argument("--review-size", type=int, default=REVIEW_SIZE)
     parser.add_argument("--review-seed", type=int, default=REVIEW_SEED)
     parser.add_argument("--compare", nargs=2, metavar=("DIR_A", "DIR_B"), help="check that two runs gave the same report")

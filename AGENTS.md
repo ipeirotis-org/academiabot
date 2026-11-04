@@ -166,6 +166,8 @@ when it exists), 3 samples each (`--samples`). Report: `results/agreement/<run_i
   problem; that fix is outside week 3.
 - Each school a provider names in one sample is a `candidates` row with status `unaligned`
   (no Wikidata matching in this step) and its extract call in `llm_call_ids`.
+- Name comparison ignores the university's own name inside a school name ("Stanford Law
+  School" matches "School of Law"; `strip_university()`), and notes in brackets.
 - Name variants are grouped with `is_fuzzy_match`: a name joins the first group with a member it
   matches, visited in a fixed order (provider, sample, position), so the same answers give the
   same groups. Each group gets one `checks` row: kind `agreement`, result `pass` when 2 or more
@@ -180,6 +182,8 @@ when it exists), 3 samples each (`--samples`). Report: `results/agreement/<run_i
   prod(1 - n_j/N) = 1 - r/N) for all providers together and for the samples of one provider.
   Each counted two ways: `all` (every group) and `matched` (only groups that match a true
   school). No overlap at all gives no M_t estimate (blank).
+- `--no-run-log` writes the report only, with no run log rows. Use it to rescore cached
+  answers, so BigQuery does not get a second copy of the same candidates and checks.
 - `--compare DIR_A DIR_B` checks that two runs gave identical report files (`ids.csv` and
   `cache_files.csv` hold new ids or paths each run and are left out).
 - `--draw-small --seed 2026` draws the 6 small universities: sort us-tier1 by (sitelinks, QID
