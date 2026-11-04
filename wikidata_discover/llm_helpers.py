@@ -266,11 +266,13 @@ def _usage(resp: Any) -> Tuple[Optional[int], Optional[int]]:
     return None, None
 
 
-def _record_response(call: dict, resp: Any, text: Optional[str], attempt: int, t0: float) -> Optional[str]:
+def _record_response(call: dict, resp: Any, text: Optional[str], attempt: int, t0: float,
+                     error: Optional[str] = None) -> Optional[str]:
     """Record a call that returned. `call` holds provider, model, purpose, prompt,
-    request_config, cache_key, prompt_hash. Done before the answer is parsed."""
+    request_config, cache_key, prompt_hash. Done before the answer is parsed. `error`
+    marks a response that arrived but is a failure (still pause_turn at the cap)."""
     tokens_in, tokens_out = _usage(resp)
-    return _record(**call, raw_response=_raw_dump(resp, text), attempt=attempt,
+    return _record(**call, raw_response=_raw_dump(resp, text), attempt=attempt, error=error,
                    tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=int((time.time() - t0) * 1000))
 
 
@@ -1298,6 +1300,12 @@ def _subunit_requests(provider: str, model: str, user: str, sent: Optional[list]
         raise ValueError(f"unknown provider {provider!r}")
 
 
+class SubunitsIncomplete(ValueError):
+    """The provider's answer is incomplete (still pause_turn after the last continuation).
+    A provider failure like an answer that does not parse: the next provider may answer,
+    and with --provider the step fails."""
+
+
 def _continuation_call(call: dict, sent: list, n: int, call_ids: list) -> dict:
     """The record of request n of one attempt. Request 0 is the original prompt. A
     pause_turn continuation (n >= 1) saves the exact request sent (system, every message
@@ -1347,8 +1355,19 @@ def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[Opti
         call_ids, text, t0, sent = [], None, time.time(), []
         try:
             for n, (resp, text) in enumerate(_subunit_requests(provider, model, user, sent)):
-                call_ids.append(_record_response(_continuation_call(call, sent, n, call_ids), resp, text, attempt, t0))
+                # The last allowed continuation still paused: the answer is incomplete.
+                incomplete = (f"still pause_turn after {n} continuations"
+                              if n >= _MAX_CONTINUATIONS and getattr(resp, "stop_reason", None) == "pause_turn" else None)
+                call_ids.append(_record_response(_continuation_call(call, sent, n, call_ids), resp, text, attempt, t0,
+                                                 error=incomplete))
                 t0 = time.time()
+                if incomplete:
+                    raise SubunitsIncomplete(incomplete)
+        except SubunitsIncomplete as e:
+            # A provider failure: not parsed, not cached, and not retried (a retry would
+            # most likely pause again and cost 4 more requests). The next provider may answer.
+            logger.error("extract_subunits %s: %s for %s; no answer used", provider, e, unit.get("label"))
+            return None, [i for i in call_ids if i]
         except LLMDeadline as e:
             # Stopped for the deadline: recorded as such (never as "no sub-units"), and the
             # caller sees the deadline, so the attempt fails and is retried later.

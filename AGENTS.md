@@ -443,6 +443,12 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   of that unsent continuation has `not_sent` and `stopped_for_deadline` in `request_config`
   and the error, and nothing is cached. The error reaches the caller, so the attempt fails
   (never "no sub-units") and a later run can retry it.
+- When the last allowed continuation (`_MAX_CONTINUATIONS`, 3) still returns `pause_turn`,
+  the answer is incomplete: its `llm_calls` row keeps the raw response, with error "still
+  pause_turn after 3 continuations", and `SubunitsIncomplete` (a ValueError) makes it a
+  provider failure. It is not parsed, not cached, and not retried. The next provider may
+  answer, and with `--provider` the step fails. Checked 2026-11-04: no week 4 `llm_calls` row
+  and none of the 11 sub-unit cache files ended on `pause_turn`.
 
 | Table | One row per | Must contain |
 |---|---|---|

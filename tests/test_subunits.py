@@ -592,3 +592,24 @@ def test_a_continuation_gets_a_shorter_timeout_from_the_time_left(monkeypatch, t
     assert [u["name"] for u in units] == ["Finance", "Career Center"]
     assert len(sent) == 2 and timeouts == [500, 300]
     assert timeouts[1] < timeouts[0]
+
+
+def test_still_pause_turn_after_the_last_continuation_is_a_failure_and_is_not_cached(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(config, "ONLY_PROVIDER", "anthropic")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(run_log, "DISABLED", False)
+    # Every reply pauses, and the text even holds a parseable answer: it must not be used.
+    paused = Resp([Block("text", json.dumps(ANSWER)), Block("server_tool_use")], "pause_turn")
+    sent = fake_anthropic(monkeypatch, [paused] * 20)
+    log = run_log.start("subunits-test", "inv1", results_dir=tmp_path)
+    log.gcs_error = log.bq_error = "no cloud in tests"
+    with pytest.raises(ValueError, match="no usable sub-unit answer"):
+        LLMHelper.extract_subunits(STERN)
+    assert len(sent) == lh._MAX_CONTINUATIONS + 1                        # one attempt, no retry
+    assert not (tmp_path / "cache").exists() or not any((tmp_path / "cache").iterdir())
+    rows = log.pending["llm_calls"]
+    assert len(rows) == lh._MAX_CONTINUATIONS + 1
+    assert rows[-1]["error"] == f"still pause_turn after {lh._MAX_CONTINUATIONS} continuations"
+    assert rows[-1]["response_path"]                                     # the raw response is still kept
+    assert all(r["error"] is None for r in rows[:-1])
