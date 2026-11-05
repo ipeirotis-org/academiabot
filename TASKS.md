@@ -64,7 +64,7 @@ flowchart TD
 
 **Open items. Do these first.**
 
-- [ ] Panos: merge [pull request 22](https://github.com/ipeirotis-org/academiabot/pull/22).
+- [x] Panos: merge [pull request 22](https://github.com/ipeirotis-org/academiabot/pull/22).
   It brings Anya's week 4 to `master`. Pull request 21 went to another branch by mistake.
   One line conflicts: keep both `beautifulsoup4` and `openpyxl` in `requirements.txt`.
 - [ ] Shuo: push the week 3 agreement code and open a pull request. The BigQuery rows name
