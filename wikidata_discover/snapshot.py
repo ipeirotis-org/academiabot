@@ -7,7 +7,7 @@ unit's own P749 and P361 statements, so a second parent outside the tree is kept
 (NYU Shanghai, Q13652966, also has P749 to East China Normal University). For every
 unit: labels, other names (aliases), P31, website (P856), ROR id (P6782).
 
-The queries are the ones in TASKS.md section 11. All of them go through
+The queries are the ones in docs/SPARQL_QUERIES.md. All of them go through
 sparql_helpers (0.3 s between requests, retries, 429 waits).
 
 `snapshot <QID>...` saves each snapshot to the bucket under
@@ -34,7 +34,7 @@ BATCH = 40                        # values per VALUES list, so a GET request sta
 MAX_UNITS = 5000                  # a safety stop; the snapshot then says it is truncated
 
 
-# ── queries (TASKS.md section 11) ────────────────────────────────────────
+# ── queries (docs/SPARQL_QUERIES.md) ────────────────────────────────────────
 
 def children_query(qid: str) -> str:
     """One unit's children over full statements, rank shown. Keep the optimizer hint
