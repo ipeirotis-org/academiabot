@@ -65,6 +65,9 @@ SCHEMAS: Dict[str, List[tuple]] = {
         ("fetched_at", "TIMESTAMP", "NULLABLE"), ("http_status", "INTEGER", "NULLABLE"),
         ("content_hash", "STRING", "NULLABLE"), ("snapshot_path", "STRING", "NULLABLE"),
         ("unit_names", "STRING", "REPEATED"),
+        ("final_url", "STRING", "NULLABLE"), ("outcome", "STRING", "NULLABLE"),
+        ("detail", "STRING", "NULLABLE"), ("content_type", "STRING", "NULLABLE"),
+        ("text_path", "STRING", "NULLABLE"), ("name_check", "STRING", "NULLABLE"),
     ],
     "candidates": [
         ("candidate_id", "STRING", "REQUIRED"), ("run_id", "STRING", "REQUIRED"),
@@ -81,7 +84,7 @@ SCHEMAS: Dict[str, List[tuple]] = {
     ],
 }
 
-CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved")
+CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved", "unaligned")
 
 # Columns added after the tables were first created (week 3). setup_tables() adds them
 # to existing tables, and fills `legacy` with false on rows written before.
@@ -187,6 +190,16 @@ def clean_row(table: str, row: dict) -> dict:
     return out
 
 
+def snapshot_extension(content_type: str) -> str:
+    """File extension for a saved page: .html, .pdf, or .bin when the type is unknown. Pure."""
+    media = (content_type or "").split(";", 1)[0].strip().lower()
+    if media in ("text/html", "application/xhtml+xml"):
+        return ".html"
+    if media == "application/pdf":
+        return ".pdf"
+    return ".bin"
+
+
 class RunLog:
     """Rows and texts for one invocation of a command."""
 
@@ -234,18 +247,29 @@ class RunLog:
         """Store one text under the run folder. Returns gs://... when the bucket took it,
         else the local file path. Called before the text is parsed, so a parse error
         never loses it."""
+        return self._store(rel_path, text, content_type)
+
+    def save_bytes(self, rel_path: str, data: bytes, content_type: str = "application/octet-stream") -> str:
+        """Store bytes exactly as given (a fetched page), like save_text, with the bucket
+        or the local fallback. The stored file has the same SHA-256 as `data`."""
+        return self._store(rel_path, bytes(data), content_type)
+
+    def _store(self, rel_path: str, data, content_type: str) -> str:
         if not self.gcs_error:
             name = f"runs/{self.run_id}/{rel_path}"
             try:
                 self._get_bucket().blob(name).upload_from_string(
-                    text, content_type=content_type, timeout=_bucket_timeout())
+                    data, content_type=content_type, timeout=_bucket_timeout())
                 return f"gs://{self.bucket_name()}/{name}"
             except Exception as e:  # noqa: BLE001 - fall back to a local file
                 self.gcs_error = f"{type(e).__name__}: {str(e)[:200]}"
                 logger.warning("run log: bucket write failed, keeping texts locally from now on (%s)", self.gcs_error)
         path = self.local_dir / "text" / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        if isinstance(data, bytes):
+            path.write_bytes(data)
+        else:
+            path.write_text(data)
         self.local_written = True
         return str(path)
 
@@ -308,7 +332,7 @@ class RunLog:
         return call_id
 
     def add_candidate(self, **fields) -> str:
-        """Add one candidates row. status must be linked, orphan, missing, or unresolved."""
+        """Add one candidates row. status must be linked, orphan, missing, unresolved, or unaligned."""
         if fields.get("status") not in CANDIDATE_STATUSES:
             raise ValueError(f"candidate status must be one of {CANDIDATE_STATUSES}, got {fields.get('status')!r}")
         cid = new_id()
@@ -317,17 +341,27 @@ class RunLog:
         return cid
 
     def add_evidence(self, *, url: str, http_status: Optional[int], content: Optional[bytes],
-                     unit_names=()) -> str:
-        """Add one evidence row with a saved snapshot. Nothing calls this yet: pages are
-        fetched from Anya's week 4 on."""
+                     unit_names=(), final_url: Optional[str] = None, outcome: str = "ok",
+                     detail: str = "", content_type: str = "", text: Optional[str] = None,
+                     name_check: Optional[str] = None) -> str:
+        """Add one evidence row for one fetch: the page bytes exactly as received (so the
+        snapshot's SHA-256 is content_hash) and its text when it arrived, or the outcome
+        and the reason when it did not (a refused URL is "refused"). name_check says
+        whether unit_names was looked for in the text ("done") or not ("skipped: ...")."""
         eid = new_id()
-        snapshot = None
+        snapshot = text_path = None
         if content is not None:
-            snapshot = self.save_text(f"evidence/{eid}.html", content.decode("utf-8", "replace"), "text/html")
+            snapshot = self.save_bytes(f"evidence/{eid}{snapshot_extension(content_type)}", content,
+                                       content_type or "application/octet-stream")
+        if text is not None:
+            text_path = self.save_text(f"evidence/{eid}.txt", text)
         self._add("evidence", {"evidence_id": eid, "url": url, "fetched_at": now_iso(),
                                "http_status": http_status,
                                "content_hash": hashlib.sha256(content).hexdigest() if content is not None else None,
-                               "snapshot_path": snapshot, "unit_names": list(unit_names)})
+                               "snapshot_path": snapshot, "unit_names": list(unit_names),
+                               "final_url": final_url, "outcome": outcome, "detail": detail or None,
+                               "content_type": content_type or None, "text_path": text_path,
+                               "name_check": name_check})
         return eid
 
     # ── writing ──────────────────────────────────────────────────────────
