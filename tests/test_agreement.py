@@ -411,3 +411,30 @@ def test_an_academic_name_with_administration_is_not_non_academic():
     """The old name of UChicago's Crown Family School was the School of Social Service
     Administration: a real school, not an office."""
     assert ag.wrong_kind(["School of Social Service Administration"], ["school"]) == "invented"
+
+
+def test_small_ground_truth_covers_the_drawn_universities_and_its_sources():
+    import csv
+    from pathlib import Path
+
+    from wikidata_discover.eval.ground_truth import SMALL_GROUND_TRUTH
+
+    assert set(SMALL_GROUND_TRUTH) == set(ag.SMALL_UNIVERSITIES)
+    path = Path(ag.__file__).parent / "small_ground_truth_sources.csv"
+    with open(path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    by_qid = {}
+    for row in rows:
+        assert row["source_url"].startswith("http")
+        by_qid.setdefault(row["university_qid"], []).append(row["school"])
+    assert {q: sorted(s) for q, s in by_qid.items()} == {
+        q: sorted(v["schools"]) for q, v in SMALL_GROUND_TRUTH.items()
+    }
+
+
+def test_universities_to_run_includes_the_small_set():
+    sets = {}
+    for u in ag.universities_to_run(None):
+        sets.setdefault(u["set"], []).append(u["qid"])
+    assert sorted(sets["small"]) == sorted(ag.SMALL_UNIVERSITIES)
+    assert len(sets["eval"]) == 12
