@@ -153,8 +153,9 @@ Tests: `tests/test_dept_scorer.py`.
 ## Agreement runs (Shuo, week 3)
 
 `python -m wikidata_discover.eval.agreement` asks every provider with a key to list the schools
-of every university in `eval/ground_truth.py` (the 12 in `GROUND_TRUTH`, plus `SMALL_GROUND_TRUTH`
-when it exists), 3 samples each (`--samples`). Report: `results/agreement/<run_id>/` (not in git).
+of every university in `eval/ground_truth.py` (the 12 in `GROUND_TRUTH`, plus the 6 in
+`SMALL_GROUND_TRUTH`, 30 schools that Shuo checked on 2026-11-09, with one source URL per
+school in `eval/small_ground_truth_sources.csv`), 3 samples each (`--samples`). Report: `results/agreement/<run_id>/` (not in git).
 
 - Samples: the three extractors take `sample=` (1 or more). The sample goes into the cache key
   (`|sample=N` after the website, `_extract_extra()` in `llm_helpers.py`) and into the call's
@@ -193,6 +194,9 @@ when it exists), 3 samples each (`--samples`). Report: `results/agreement/<run_i
   at least one top-level academic unit. A person decided which have none (`SKIPPED_NO_UNITS`:
   #1, #6, #8), so the 6 kept QIDs are fixed in `SMALL_UNIVERSITIES` (#2 to #5, #7, #9). The
   sample therefore shows small universities that have schools, not all small universities.
+- Final run with the run log: `agreement-20261109T204358Z-32c21a` (18 universities, 162 calls,
+  1,863 candidates, 299 checks). A change to a ground truth changes only the scoring: rescore
+  with `--no-run-log`, which replays the cache and makes no new calls.
 - `single_provider_review.csv` is a random sample (seed 2026) of 20 one-provider schools, with
   blank `real` and `notes` columns for Shuo's verdicts.
 - The `checks` table must exist in BigQuery (`python -m wikidata_discover.run_log setup` creates
