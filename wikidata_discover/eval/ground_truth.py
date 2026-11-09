@@ -295,8 +295,7 @@ SMALL_GROUND_TRUTH = {
             "School of Arts and Sciences",
             "Rowland School of Business",
             "School of Communication",
-            "School of Dance",
-            "School of Theatre, Film and Animation",
+            "Conservatory of Performing Arts",
             "School of Education",
         ]
     },
