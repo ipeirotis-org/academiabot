@@ -5,13 +5,22 @@ version here.
 
 How to use it:
 
-1. The student names a track and a week.
-2. Read that week here, and the matching week in `TASKS.md` (its "You check it by" steps are
-   the acceptance test).
-3. Read the parts of `AGENTS.md` it points to ("Run log", "Hierarchy file", "Running
+1. The student names a track and a week. `TASKS.md` section 4 has the dates.
+2. Read that week here, and the matching week in `TASKS.md`.
+3. The acceptance test is the "You check it by" steps of that week in `TASKS.md`, plus the
+   **Tests** list of that week here. Write each item of the Tests list as a pytest test.
+   Make them all pass, and show them passing.
+4. Read the parts of `AGENTS.md` it points to ("Run log", "Hierarchy file", "Running
    collection in the cloud").
 
-Section numbers in this file ("section 11") refer to `TASKS.md`. When this file and `AGENTS.md` disagree, stop and ask. When a week changes, change it here and in `TASKS.md` in the same pull request.
+Until 2026-11-04, `TASKS.md` held a long version of each week. On that date it was cut to a
+short version for the students. Every rule it held is here now: in the build text of each
+week, in its Tests list, and in the method of each research question. The schedule moved on
+the same date; the week numbers stayed the same.
+
+Section numbers in this file ("section 8") refer to `TASKS.md`. The SPARQL queries are in
+`docs/SPARQL_QUERIES.md`. When this file and `AGENTS.md` disagree, stop and ask. When a week
+changes, change it here and in `TASKS.md` in the same pull request.
 
 
 
@@ -25,13 +34,19 @@ run), `llm_calls` (every prompt and raw response), `evidence` (every web page fe
 text goes to Cloud Storage; the row keeps the path. Local JSON files when GCP is unreachable.
 Also: `config.py` reads API keys from Secret Manager when `.env` has none.
 
+**Checked by (done):** two NYU runs both in BigQuery; a school name found in one raw
+response in Cloud Storage; a run with `.env` deleted still works; with the cloud writer
+made to fail (a bucket that does not exist), the run, calls, evidence, and candidates are
+all in `wikidata_discover/results/runs/`.
+
 ### Anya, week 3 (Oct 16 to 22)
 
 **What Wikidata already has, and what is missing.** A `snapshot <QID>` command that saves a
 university's whole subtree as Wikidata has it today: every unit below it through P749, P361,
 P527, P355, P199, crawled one unit at a time over full statements (every rank except
-deprecated, with each statement's rank and qualifiers kept, using the per-unit query in section
-11), plus every unit's own upward P749 and P361 statements (the parents query in section 11),
+deprecated, with each statement's rank and qualifiers kept, using the per-unit query in
+`docs/SPARQL_QUERIES.md`), plus every unit's own upward P749 and P361 statements (the parents
+query there),
 so a second parent outside the university's tree is kept too (NYU Shanghai also has P749 to
 East China Normal University), with labels, other names, P31, website (P856), ROR id (P6782),
 and parents. A one-time import of the `us-tier1` results into `candidates`, marked as legacy:
@@ -40,6 +55,12 @@ prompt was kept), the evidence ids stay empty, and each row points to the origin
 bucket, so nothing looks more traceable than it is. A gap report over the 1,519 universities:
 per university, units on Wikidata, units the LLM proposed, how many linked, orphan, missing,
 and how many units the old crowd table (`docs/BACKGROUND.md`) has, where it has the university.
+
+**Checked by (done):** for NYU, every unit of the "every unit below a university" query in
+`docs/SPARQL_QUERIES.md` is in the snapshot, and one extra unit that only the full-statement
+crawl sees was checked by hand; for 5 units, other names, P31, website, ROR id, and parents
+match each unit's Wikidata page; 20 random "missing" schools from the gap report were
+searched by hand (also as "university name + school name"), which gave the week 6 baseline.
 
 ### Anya, week 4 (Oct 23 to 29)
 
@@ -58,7 +79,14 @@ redirect, and stops after 5 redirects, 5 MB, or 20 seconds. It connects to the e
 checked, so a name that resolves to a public address when checked and a private one a moment
 later (DNS rebinding) cannot slip through. A refused URL is recorded as refused.
 
-### Anya, week 5 (Oct 30 to Nov 5)
+**Checked by (done):** the three NYU schools of Shuo's ground truth scored with Shuo's
+scorer; 5 saved pages each contain the unit's name; a dead URL is saved with its status and
+the run does not crash; NYU Abu Dhabi and NYU Shanghai come out with their own countries and
+a page for each; `http://localhost/`, `http://169.254.169.254/`, and a public URL that
+redirects to one of them are all refused, with nothing fetched; a hostname whose DNS answer
+changes from public to private after the check is contacted only at the public address.
+
+### Anya, week 5 (Nov 6 to 12)
 
 **The hierarchy file.** `discover --depth 2` writes one hierarchy file per university (format
 in AGENTS.md): one node per unit with a stable id, parents and whether each link exists on
@@ -71,7 +99,15 @@ website or a search, and its country), since the snapshot holds only what Wikida
 come from a register that keeps a unit's id when it is renamed, moved, or later matched to a
 QID. The same nodes go into a `nodes` table in BigQuery. Every level is written to the run log.
 
-### Anya, week 6 (Nov 6 to 12)
+**Tests:**
+
+- Remove one school from the LLM's answer by hand. It is still in the file (from the
+  snapshot), and its departments are looked up.
+- Rename one unit and give another a QID, then run again. Both keep their node ids.
+- A second run on the same input gives every unit the same node id.
+- Every node has a source URL or a flag.
+
+### Anya, week 6 (Nov 13 to 19)
 
 **No duplicates.** Before calling a unit "new", search harder: full-text search, not only label
 prefix (the prefix search missed "Boston University Wheelock College..."); the name with the
@@ -83,21 +119,54 @@ person and never merge it ourselves. Every node records the candidates looked at
 for the choice. Behind a flag, a second way to decide: ask yes or no for each candidate
 separately. It is the baseline for research question A1.
 
-### Anya, week 7 (Nov 13 to 19)
+**Research question A1, method.** The 150 units come from every status, so that both rates
+have a denominator:
+
+1. Draw 150 units from `us-tier1` at random: 100 that it called missing, and 50 that it
+   called linked or orphan. Record the seed. These are the two strata.
+2. The student labels each by hand: the right QID, or "none". When Wikidata has two items
+   for the unit (like Kent State Geauga), the label lists all of them.
+3. A link to any one of the duplicates counts as right. Score separately whether the
+   pipeline flagged the duplicate.
+4. False-new rate: of the units a method calls new, the share that have a QID. False-link
+   rate: of the units a method gives a QID, the share given the wrong one. Measure both
+   before and after this week, for each kind of search, and for both ways to decide (choose
+   from the list; yes or no per candidate) on the same 150 units. Record which search found
+   each item.
+5. Report each rate per stratum and overall. The overall rate is weighted: give each labeled
+   unit a weight equal to the size of its stratum in `us-tier1` divided by the number
+   sampled from it; add up the weights in the numerator and, separately, in the denominator;
+   divide the first sum by the second. Never average the two stratum rates, because a method
+   can move units between "new" and "linked".
+
+**Tests:** a unit found only by full-text search is linked, not new; two of our nodes for
+one unit under two names are merged; two Wikidata items for one unit are flagged and not
+merged; every node records its candidates and the reason; the yes-or-no mode runs behind its
+flag and leaves the default unchanged.
+
+### Anya, week 7 (Nov 20 to 26, Thanksgiving)
 
 **The messy cases.** Code that follows `docs/MODELING_RULES.md`: joint departments get two
 parents (with the rank and qualifiers the rules set for each link), same-name departments stay
 separate, renamed units are handled the way the rules say, campuses and offices are handled the
 way the rules say. One test per rule.
 
-### Anya, week 8 (Nov 20 to 26)
+### Anya, week 8 (Nov 27 to Dec 3)
 
 **Twelve universities.** An `--extract` flag that picks the extraction setup (one provider, or
 two generators and a judge). Set it to the setup Shuo chose at the end of week 6, then run
 depth 2 on all 12 ground-truth universities, written to the run log, with a summary table per
-university. Light week, Thanksgiving.
+university. A replay mode reruns one university from what was stored with the run and asks
+nothing again: the Wikidata snapshot and the saved pages; the stored response of every
+alignment search (prefix, full-text, website, parent); and the run's own copy of the id
+register and the cross-register decisions, read-only. A normal rerun can differ, because
+Wikidata or a page changed; that is correct.
 
-### Anya, week 9 (Nov 27 to Dec 3)
+**Tests:** a replay sends no request to Wikidata, the web, or an LLM, and gives numbers
+identical to the original run; a replay never writes to the id register or to
+`cross_register.json`.
+
+### Anya, week 9 (Dec 4 to 10)
 
 **A correct export.** The QuickStatements exporter reads the hierarchy file and the `reviews`
 table. It links with P749 (not P361), puts a reference on every statement from the evidence for
@@ -139,16 +208,36 @@ existing department under a new school: the department file adds its P749. And w
 existing joint unit whose second P749 lacks its qualifiers: the file adds them, and a wrong
 rank shows up in the manifest as a hand edit.
 
-### Anya, week 10 (Dec 4 to 10)
+**Tests** (preview only: never run a file in QuickStatements):
+
+- One row with an accept and a second reviewer's reject is refused under the default rule.
+- With the rule set to two accepts, one row with two accepts from the same reviewer (blind
+  and second pass) is refused.
+- One new unit outside the U.S. gets its own country in P17.
+- One new joint unit gets two P749 statements, with their qualifiers.
+- Linked units appear in the manifest as "already linked".
+- Remove one verdict: the export refuses that row.
+- The manifest has one line per statement, with its node and version.
+- One existing department under a new school: after `ingest-qids`, the department file adds
+  its P749.
+- One existing joint unit whose second P749 lacks its qualifiers: the file adds them. A
+  wrong rank appears in the manifest as a hand edit.
+- Without `review_protocol.json`, or with an invalid one, the export refuses to run.
+
+### Anya, week 10 (Dec 11 to 17, together with week 11)
 
 First, fixes the upload needs. Then **page first**, for research question A2: an
 `--extract page-first` mode that finds the unit's own page listing its sub-units (on the unit's
 website, else by search), saves it, and extracts units from the saved text only, each citing
-that page.
+that page. A2 is measured on the 6 ground-truth schools, for both modes: precision, recall,
+the share of units whose page supports them (Shuo's week 6 verifier), and cost.
 
-### Anya, week 11 (Dec 11 to 17)
+**Tests:** in page-first mode, every unit cites the one saved page, and its name is in the
+text of that page.
 
-Cleanup. All tests pass. Boxes ticked in this file.
+### Anya, week 11 (Dec 11 to 17, together with week 10)
+
+Cleanup. All tests pass. Boxes ticked in `TASKS.md`.
 
 ## Shuo's track: check the hierarchy
 
@@ -164,7 +253,13 @@ department left over after that, whose name matches a leftover true department u
 school, counts as found for name recall but has the wrong parent: it is wrong for edge F1, and
 it gets 1 of its 2 ancestors (the university) right for ancestor F1 (Shuo's choice, 2026-10-16).
 
-### Shuo, week 3 (Oct 16 to 22)
+**Checked by (done; `tests/test_dept_scorer.py`):** the ground truth plus 2 made-up names
+gives recall 100% and precision N/(N+2); one real name removed gives recall (N-1)/N; one
+changed QID lowers alignment accuracy by exactly 1/N; one real department proposed twice
+counts once and lowers precision; two same-name departments under two schools, one proposed
+under the wrong school, give one right and one wrong.
+
+### Shuo, week 3 (Oct 16 to 22; finish by Nov 12)
 
 **Parallel extraction: do independent LLMs agree?** Each provider lists the schools of the 12
 eval universities and of the 6 small universities below (as soon as their ground truth is in)
@@ -182,6 +277,10 @@ verifier would give). The ground truth is otherwise used only to score the estim
 each provider's invented and non-academic proposals separately. In week 5, add a third way that
 works without ground truth: count only proposals whose page check passes.
 
+The 6 small universities are drawn at random from the bottom third of `us-tier1` by the
+number of Wikidata sitelinks (Wikipedia articles about the university), with the seed
+recorded. The student builds their school-level ground truth.
+
 Decisions made while building it (2026-10-23): each school a provider names in one sample is a
 `candidates` row with status `unaligned`, because this step does no Wikidata matching. An
 agreement check passes when 2 or more providers named the school. A second group that matches an
@@ -192,7 +291,15 @@ provider. The small universities were drawn with seed 2026 from a saved sitelink
 order, the first 6 with at least one top-level academic unit are kept (3 without units skipped,
 2026-11-04).
 
-### Shuo, week 4 (Oct 23 to 29)
+Status on 2026-11-10: done. The final run `agreement-20261109T204358Z-32c21a` covered all 18
+universities (162 calls, 1,863 `candidates` rows, 299 `checks` rows). Three earlier runs on the
+12 evaluation universities (2026-11-04) also wrote 685 `checks` and 4,347 `candidates` rows,
+with older grouping rules. Use the final run.
+
+**Tests:** a rerun gives identical numbers from the cache; the cache folder has 3 files per
+provider and university, not 1.
+
+### Shuo, week 4 (Nov 6 to 12)
 
 **The LLM judge, tested.** Each provider takes a turn as judge of the merged list. Each judge
 runs four times: twice with the list in one order and twice in another (each call its own cache
@@ -205,7 +312,7 @@ own, through Anya's week 4 step with `--provider` (not the first-answer fallback
 one list), 3 runs each with sample numbers, so every possible generator has its own list to
 score and to judge.
 
-### Shuo, week 5 (Oct 30 to Nov 5)
+### Shuo, week 5 (Nov 13 to 19)
 
 **Does the page exist and name the unit?** Over Anya's `evidence` table: dead links, pages that
 say "not found" with status 200, pages off the university's domain, and whether the unit's name
@@ -217,7 +324,16 @@ count. Report search-off and search-on separately; the setup choice in week 6 us
 Also on 300 random school URLs from `us-tier1` (almost all OpenAI, reported separately). Each
 result is a row in `checks`.
 
-### Shuo, week 6 (Nov 6 to 12)
+The 100 claim-and-page pairs that the student labels are drawn at random from all saved
+pages, a third per provider, dead and odd pages included, and the draw is recorded so that
+it can be repeated. The midpoint report gives, per provider, the share of cited URLs that
+exist and support the unit, with confidence intervals, from the week 3 lists, where all
+three providers answered the same questions.
+
+nyu.edu answers status 405 to the fetcher on some pages (4 of the 16 pages saved in week 4),
+because the site refuses the fetcher's User-Agent (AGENTS.md). Such a page is not dead.
+
+### Shuo, week 6 (Nov 20 to 26, Thanksgiving)
 
 **LLM verifier.** Given a claim and the saved page, answer supported, not supported, or
 unclear, and quote the sentence that decides it. Long pages are split into fixed, overlapping
@@ -229,7 +345,23 @@ becomes unclear. Run it with one provider's model and, for cost, with one small 
 (MiniCheck). MiniCheck answers only supported or not, with a probability, and gives no quote,
 so it is scored as a yes-or-no checker.
 
-### Shuo, week 7 (Nov 13 to 19)
+Scoring against the student's 100 labels: accuracy and the three-way confusion matrix, per
+provider. Give the overall number two ways, and say which is which: provider-balanced (as
+sampled), and weighted by each provider's share of all saved pages. Compare MiniCheck with
+the labels collapsed to two (supported, against everything else), and collapse the LLM
+verifier the same way, so that the two compare on equal terms.
+
+Before the student chooses the extraction setup for departments, rerun the week 4 judge test
+on the search-on lists from week 5, because a judge chosen on lists from memory can behave
+differently on the lists it will really see. The choice uses search-on numbers only, and
+scores each provider as a generator on its own department lists for the six ground-truth
+schools. The choice goes to Anya by Nov 26.
+
+**Tests:** one test page longer than the model can read at once, with the supporting
+sentence near the end, gives supported; a quote that is not in the saved page word for word
+gives unclear; a page that was read in full and never names the unit gives not supported.
+
+### Shuo, week 7 (Nov 27 to Dec 3)
 
 **One confidence per unit, and a review sheet.** Combine the checks into one confidence per
 node of a hierarchy file, using only checks recorded against the node's current version. The
@@ -256,7 +388,7 @@ overwriting another reviewer's, and records the run and the node version it was 
 AGENTS.md), plus which pass it was and a hash of the whole row as shown, so a verdict always
 says exactly what the reviewer saw.
 
-### Shuo, week 8 (Nov 20 to 26)
+### Shuo, week 8 (Dec 4 to 10, together with week 9)
 
 **A Prolific task, ready to launch.** One parent link per item: the unit's name, one of its
 parents, and the saved page as a picture (not copyable text). Answer accept, reject, or fix.
@@ -268,9 +400,8 @@ answer, one does not. Each worker is assigned to one version at random and only 
 one; a worker who took either version is excluded from the other (Prolific's exclusion list),
 so no blind answer comes from someone who has seen the verifier's answers. The instructions ask
 workers directly not to use AI tools. A script that computes agreement with your verdicts.
-Light week, Thanksgiving.
 
-### Shuo, week 9 (Nov 27 to Dec 3)
+### Shuo, week 9 (Dec 4 to 10, together with week 8)
 
 **Prolific pilot, and the quality estimate.** Draw a random sample of about 150 parent links
 from Anya's 12-university run: one item per unit and parent, so the two links of a joint unit
@@ -291,7 +422,15 @@ version is used only to measure anchoring. Sampled items with no saved page (no 
 refused) stay in the sample: workers do not see them, the verifier counts them as not
 supported, your labels decide whether they are true, and the report gives their share.
 
-### Shuo, week 10 (Dec 4 to 10)
+The student's blind labels have three parts: true (a real unit of that parent, by any
+source; "cannot tell" when nothing decides it), supported (the saved page shows it; no when
+there is no page), and alignment (the QID, or "new", is right). Report the "cannot tell"
+items separately, and compute precision both ways: with them counted as true, and as not
+true. Workers are scored against "supported" only, because the page is all they see. Only
+verdicts given without the verifier's answer enter the S2 estimate, because otherwise the
+verifier's errors come back as human agreement.
+
+### Shuo, week 10 (Dec 11 to 17, together with week 11)
 
 **Pre-upload check.** A command that reads an export file and its manifest, and checks them
 against the hierarchy file, the `reviews` table, `review_protocol.json` (refusing to run if
@@ -306,6 +445,13 @@ qualifier, or reference. It also refuses it if any statement lacks a reference, 
 line, or has no accepting verdict on the node's current version, or if an in-scope node is
 missing from both the file and the manifest's list of nodes left out.
 
-### Shuo, week 11 (Dec 11 to 17)
+**Tests:** the check refuses when one verdict is removed, and accepts again when it is
+restored; it refuses when an accepting verdict has `url_checked` no for one page; when the
+protocol's minimum is above the university's accepted share; when one statement's manifest
+line is deleted; when one P17 value in the export file is edited by hand; when a node is
+deleted from both the file and the manifest; and when `review_protocol.json` is missing or
+invalid.
 
-Cleanup. All tests pass. Boxes ticked in this file.
+### Shuo, week 11 (Dec 11 to 17, together with week 10)
+
+Cleanup. All tests pass. Boxes ticked in `TASKS.md`.

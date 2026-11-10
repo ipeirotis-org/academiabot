@@ -22,6 +22,8 @@ academiabot/
 │   ├── to_qs_wikidata.py        # Export missing entities as QuickStatements
 │   ├── batch.py                 # Resumable batch over many QIDs; uploads every artifact to the bucket
 │   ├── run_log.py               # Run log: BigQuery rows, texts in the bucket, local JSON fallback
+│   ├── snapshot.py              # snapshot <QID>: a university's whole subtree as Wikidata has it today
+│   ├── legacy_import.py         # One-time import of run us-tier1 into llm_calls and candidates (legacy)
 │   ├── cloud/collect_function.py # Cloud Function (gen 2) entry point: one time slice of a run, on a schedule
 │   ├── requirements.txt
 │   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness;
@@ -33,7 +35,8 @@ academiabot/
 ├── deploy/                      # deploy_collect_function.sh: Cloud Function + paused half-hourly Scheduler job
 ├── SPECS.md                     # Full build spec for each week of TASKS.md (students read the short version)
 ├── docs/                        # BACKGROUND.md (origins, decisions), LITERATURE.md (research behind the plan),
-│                                #   RUN_LOG_SCHEMA.md (the 4 run-log tables, for readers);
+│                                #   RUN_LOG_SCHEMA.md (the 4 run-log tables, for readers),
+│                                #   SPARQL_QUERIES.md (the queries the snapshot runs, for pasting);
 │                                #   later MODELING_RULES.md, REVIEW_GUIDE.md, REVIEW_PROTOCOL.md
 ├── tests/                       # pytest unit tests; tests/fixtures/ holds made-up CSVs
 └── misc_scripts/                # Legacy hierarchy scripts (deprecated, not imported)
@@ -198,7 +201,13 @@ school in `eval/small_ground_truth_sources.csv`), 3 samples each (`--samples`). 
   1,863 candidates, 299 checks). A change to a ground truth changes only the scoring: rescore
   with `--no-run-log`, which replays the cache and makes no new calls.
 - `single_provider_review.csv` is a random sample (seed 2026) of 20 one-provider schools, with
-  blank `real` and `notes` columns for Shuo's verdicts.
+  blank `real` and `notes` columns for Shuo's verdicts. Shuo's verdicts (2026-11-10) are in
+  `eval/single_provider_review_verdicts.csv` (4 real, 16 not) and, for the 18 eval schools that
+  2 or more providers named outside the ground truth, `eval/not_in_ground_truth_verdicts.csv`.
+  From them, `GROUND_TRUTH` grew from 171 to 180 schools: 9 added, and 2 renamed to the
+  current name (Berkeley's College of Computing, Data Science, and Society; Howard's Chadwick
+  A. Boseman College of Fine Arts). Affiliates (Barnard, Teachers College), seminaries, and
+  labs (SLAC, Hoover, JPL) stay out, and so does UChicago's The College (Shuo's call).
 - The `checks` table must exist in BigQuery (`python -m wikidata_discover.run_log setup` creates
   missing tables only). Without it, the first flush fails and the rest of the run log goes to
   the local fallback.
@@ -211,6 +220,9 @@ Tests: `tests/test_agreement.py`.
   enables a web search tool; the other two answer from model knowledge, so their cited URLs are unverified
 - `extract_divisions_best_available()`: first-success fallback (OpenAI, then Anthropic, then Gemini). This is
   what `discover` calls. It does not run all providers and does not call the judge
+- `--provider openai|anthropic|gemini` (sets `config.ONLY_PROVIDER`) runs one provider alone, for extraction
+  and matching, with no fallback. The runs row records `only_provider`. Without it, the cache keys are the
+  same as before; with it, a match decision is cached under that provider alone
 - `extract_divisions_ensemble()`: OpenAI + Anthropic generate, Gemini judges. Used by the eval harness only
 - `judge_union()`: one provider reviews the union of all candidates and keeps only real units
 - `choose_match()`: single-token classification (QID / ORPHAN:QID / NONE)
@@ -220,7 +232,8 @@ Tests: `tests/test_agreement.py`.
   made by a fallback provider is asked again once the preferred provider answers
 - Models configured in `config.py`: `LLM_MODEL` (OpenAI), `ANTHROPIC_MODEL`, `GEMINI_MODEL`; all overridable in `.env`
 - Eval on 12 universities: best config is Anthropic judge over OpenAI + Gemini, about 0.95 precision and recall
-  (see `eval/results_summary.csv`)
+  (see `eval/results_summary.csv`). Those numbers predate the 2026-11-10 ground truth changes
+  (171 to 180 schools), so a rerun of `run_eval` will differ
 
 ## Working norms (read first)
 
@@ -233,8 +246,15 @@ are part of the weekly tasks. So:
 - Work on exactly the track and week in `TASKS.md` that the student names. Do not start the next one.
 - Build to the full specification for that week in `SPECS.md`. `TASKS.md` has the short version for
   the student. If you change a week, change it in both files in the same pull request.
-- The "You check it by" steps for that week in `TASKS.md` are the acceptance test. Make them pass and
-  show them passing.
+- The acceptance test is the "You check it by" steps for that week in `TASKS.md`, plus the **Tests**
+  list for that week in `SPECS.md`. Write each Tests item as a pytest test. Make them all pass and
+  show them passing. Since 2026-11-04 `TASKS.md` keeps at most 5 build items and 5 checks per week;
+  put any new edge case in `SPECS.md`, not in `TASKS.md`.
+- Open each pull request against `master`. Pull request 21 (Anya's week 4) was opened against
+  `anya-week-3` after that branch was already merged, so its work missed `master` until pull
+  request 22.
+- Push the branch at the end of every session, finished or not. On 2026-11-04 the code behind 685
+  `checks` rows (Shuo's week 3, commits `3122988` and `ff51783`) was in a Codespace only.
 - Before writing code, give a short plan (five lines or fewer) and wait for a go-ahead.
 - Explain what you did in plain language. Assume the reader can run a command and open a CSV but will not read a diff.
 - Run `python -m pytest tests -q` before saying anything is done. Add a test for every behavior you add.
@@ -397,6 +417,140 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   fallback). Runs never create tables. `python -m wikidata_discover.run_log setup` creates the
   dataset and tables once; it was run on 2026-10-14. A new column needs a schema change there too.
 - Tests never touch the real run log: `tests/conftest.py` sets `run_log.DISABLED`.
+- `snapshot <QID>...` (or `--all` for `gs://academiabot/universities_us_tier1.json`) writes one
+  runs row per invocation and saves each snapshot to `gs://academiabot/runs/<run_id>/snapshots/`,
+  `results/runs/<run_id>/snapshots/`, and `results/snapshots/<QID>.json` (latest copy). With a
+  fixed `--run-id`, a restart skips universities already in the bucket. It builds its bucket and
+  BigQuery clients at the start, so a long run survives the session-end hook that deletes the
+  key file. Start a long run with `setsid nohup ... &` so it does not belong to the Claude shell.
+  Full run `snapshot-us-tier1` finished 2026-10-21 05:45 UTC: 1,519 of 1,519 ok, none truncated,
+  20,997 units, 592 universities with no units. It took two invocations. The first
+  (`c44afd9efc21`, 1,062 universities) stopped at 01:57 UTC, probably at the Codespace's 30 minute
+  idle timeout, and has no runs row (that row is written at the end); `progress.jsonl` keeps its
+  invocation id. Keep the Codespace active during a long run. Pilot `snapshot-pilot-20261020` (6 universities,
+  older format without qualifiers in `parents`).
+- `runs/<run_id>/progress.jsonl` is the history of every snapshot invocation of a run. Since
+  2026-11-04, `snapshot` downloads it at the start and appends to it, so a resume in a fresh
+  checkout or on another host keeps the lines of a killed earlier invocation. Each upload uses
+  a generation-match precondition; on a conflict it reads the file again, merges (bucket lines
+  first, then the local lines it lacks), and retries up to 5 times. Before the fix, a resume
+  with an empty local file replaced the bucket file. The `snapshot-us-tier1` file was checked
+  on 2026-11-04: 1,519 lines, both invocations, not affected.
+- `python -m wikidata_discover.legacy_import` (dry run) and `--write` import run `us-tier1`. `--write`
+  loads llm_calls, then candidates, and each table skips legacy ids it already has, so a retry
+  after a partial failure adds only the missing rows. Rules and limits are in `docs/RUN_LOG_SCHEMA.md`. It reads only
+  the bucket, never `results/cache`. Dry run 2026-10-21: 9,190 candidates (2,327 linked, 450
+  orphan, 6,413 missing), 8,169 llm_calls, 1 university not imported (Q16998232, failed run).
+  `--write` ran 2026-10-21 (run `import-legacy-20261021T122118Z-a5c0a3`): the same counts are in
+  BigQuery; 446 of 450 orphans got a label (4 QIDs have no English label). The us-tier1 answers
+  had no reference field, so `source_url` is empty in every legacy row; `website` has the URL.
+- Until 2026-10-21, `legacy_import` and `gap_report` saved the dirty-worktree patch only locally
+  and left `source_patch_path` empty; both now upload it with `RunLog.attach_source_patch()`, as
+  snapshot and discover do. The two real runs from before the fix (`import-legacy-20261021T122118Z-a5c0a3`
+  and `gap-report-20261021T122252Z-f29e6e`, both `7164e67-dirty-1b794ffecf29`) had their patch
+  uploaded afterwards to `runs/<run_id>/source-7164e67-dirty-1b794ffecf29.patch`. Their runs rows
+  still have `source_patch_path` empty, on purpose: rows are not rewritten.
+- `python -m wikidata_discover.gap_report --candidates bigquery` writes `results/gap_report.csv`
+  (one row per university; `gap` = LLM proposed minus Wikidata direct units). Wikidata counts
+  include every unit the snapshot follows (P749, P361, P527, P355, P199), not only schools, so a
+  large negative gap (Stanford, -1,219) is not a list of missing schools. Final run 2026-10-21:
+  `gap-report-20261021T122252Z-f29e6e`.
+- `python -m wikidata_discover.scripts.check4_sample` redoes the week 3 check 4 draw (seed
+  20261021) into `results/check4_missing_sample.csv`; inputs are named in its docstring.
+- `subunits <QID>... [--provider X] [--max-searches N] [--no-fetch]` (week 4,
+  `wikidata_discover/subunits.py`, prompt and calls in `llm_helpers.py`): the direct sub-units of a
+  university or school, with type (school, department, program, center, campus, office, other),
+  `in_scope` (offices "no", centers and other "check"), one source URL, and a country with its
+  source. Writes `results/subunits/<QID>_<provider>.csv` and `_departments.csv`; candidates rows get
+  status `unaligned`. Without `--provider` it tries Anthropic first. Anthropic uses the basic
+  `web_search_20250305` tool, streamed: `web_search_20260209` ran 46 code-execution steps for 3
+  searches on Stern (552k input tokens, 808 s). OpenAI needs `tool_choice` forcing the search, or
+  gpt-4o answers from memory, and `max_output_tokens`, or the JSON is cut off.
+- Every value in a sub-unit request is in its cache key (`_subunits_from`). Adding a field to the
+  request dict changes the key for every provider, so the next run calls the LLM again.
+- `fetcher.py` fetches cited pages under the URL rules above (one test or more per rule in
+  `tests/test_fetcher.py`); `subunits` saves each cited URL once in `evidence` and links it to
+  the citing candidates. A `country_source` that is a URL counts as a cited URL (an address is
+  not fetched); the CSV column `country_evidence_outcome` gives its fetch outcome. New `evidence` columns (2026-10-29, added in BigQuery to that table only):
+  final_url, outcome, detail, content_type, text_path. nyu.edu answers 405 to the fetcher's
+  User-Agent on some pages; the fetcher does not pose as a browser. The 20 s budget covers each DNS lookup
+  (`lookup_within`: a worker thread, waited on for the time left; a late answer is never used)
+  and every socket read and write (`_DeadlineSocket`, `_DeadlineSSLSocket`), so slow DNS or
+  headers sent a byte at a time cannot pass it.
+- Since 2026-11-04, `add_evidence` saves the page bytes exactly as received (`RunLog.save_bytes`,
+  bucket or local fallback), named `.html`, `.pdf`, or `.bin` and stored with the server's
+  Content-Type, so the snapshot's SHA-256 equals `content_hash`. The `.txt` text decodes HTML
+  with its declared charset (header, then `<meta>`; ISO-8859-1 is read as windows-1252, as in
+  the HTML standard). PDFs and other types are not read: the text is empty and the new
+  evidence column `name_check` says `skipped: ...`, so an empty `unit_names` there never means
+  "name not found". The 16 evidence rows from 2026-10-29 were saved as UTF-8 text; all 16 were
+  checked on 2026-11-04 and their SHA-256 matches `content_hash` (all were UTF-8 HTML).
+  The `name_check` column was added to the BigQuery `evidence` table on 2026-11-04 (`run_log setup`).
+- Since 2026-11-04, one `subunits.CitedPages` map (cited URL -> evidence row and page text)
+  serves a whole run: `cli.subunits_with_run_log` makes one and passes it to every
+  `subunits_for` call. A URL is fetched and saved once per run, even when units of several
+  QIDs cite it; later units link to the same evidence id. Pass the same object to week 5's
+  depth-2 run. A later unit's name is checked against the saved text and goes to the CSV column
+  `name_on_page` (yes, no, skipped, or empty). The evidence row's `unit_names` keeps only
+  the names found at fetch time, because that row may already be in BigQuery and rows are
+  not rewritten. A `checks` row (Shuo, kind `name_on_page`) is the place for it later.
+- An Anthropic `pause_turn` continuation is its own `llm_calls` row. Since 2026-11-04 its
+  `prompt_path` holds the exact request sent: `system`, the full `messages` (the user prompt
+  plus every earlier assistant turn, tool results included), and `request` (model,
+  max_tokens, tools). Its `request_config` has `continuation` (1, 2, ...) and
+  `continues_llm_call_id` (the call before it). A failed continuation logs the request
+  that failed. Checked 2026-11-04: no week 4 `llm_calls` row is a continuation (all fresh
+  Anthropic responses stopped with `end_turn`), so no saved prompt is wrong.
+- `--max-searches` accepts only a whole number of 1 or more (`cli.positive_int`); argparse
+  stops with an error before any AI call. `normalize_subunits` drops a repeated name only when
+  its source URL or website also matches an earlier unit (or neither has any URL); two units
+  with the same name and different pages are both kept. Checked 2026-11-04: no week 4 answer
+  had a repeated name, so no run lost a unit to the old name-only rule.
+- A unit name counts as on the page only as a run of whole words (`fetcher.name_in_text`,
+  used by `names_on_page` and the CSV column `name_on_page`): "Art" is not found in
+  "Department", "School of Art" is found in "the School of Art and Design". Case, spacing,
+  and "&" against "and" are ignored as before. Rechecked 2026-11-04 on the saved text of
+  all 16 week 4 evidence rows (166 unit-to-page links): no result changed.
+- Since 2026-11-04 (review of pull request 22): a body that ends before its Content-Length is
+  outcome `error` ("connection closed after N of M bytes") and saves no page, because
+  `read1()` returns an empty chunk there and raises nothing. A declared charset that Python
+  knows but cannot decode text with (base64, hex, rot13, zlib, idna) is read as UTF-8 in
+  `decode_page`, so one odd page never stops a run. Tests in `tests/test_fetcher.py`.
+- In the sub-unit step, an answer that parsed with an empty list (`{"units": []}`) is valid:
+  `_subunits_from` returns `[]` for it and `None` only when no answer parsed. `extract_subunits`
+  stops at the first parsed answer, so an empty one asks no other provider; `subunits_for`
+  writes the two CSV files with the header only, and its summary (in the runs row) has
+  `outcome` "no sub-units" (else "ok"). Only an answer that does not parse falls back. The
+  school-level `discover` is unchanged: an empty list there still counts as a failure.
+- `subunits_for` attributes every run log row to the root university (`university_qid`) and
+  gives each candidates row its immediate parent (`parent_qid`). A deeper run (week 5) passes
+  the root as `university_qid=` and reads it back from the summary; without it,
+  `find_university` walks up Wikidata (P749 before P361, at most 6 levels). It keeps the
+  highest university that is not a university system (Q20857129): campuses such as NYU Abu
+  Dhabi (typed as a university, parent NYU) are walked past, and systems such as the
+  University of California are never the root of UC Berkeley. A run on a system itself
+  (CUNY) keeps the system. A joint unit whose parents lead to two universities (NYU
+  Shanghai: NYU and East China Normal University, both P749) gets no university_qid and a
+  warning, never a guess. Checked 2026-11-04: every week 4 candidates and llm_calls row
+  already had the right university_qid (all NYU schools, or the university itself).
+- Before each Anthropic `pause_turn` continuation, `_subunit_requests` rechecks
+  `enough_time_for_llm_call()` and builds the client again with the timeout from the time
+  left. Without enough time it sends nothing and raises `LLMDeadline`. The `llm_calls` row
+  of that unsent continuation has `not_sent` and `stopped_for_deadline` in `request_config`
+  and the error, and nothing is cached. The error reaches the caller, so the attempt fails
+  (never "no sub-units") and a later run can retry it.
+- When the last allowed continuation (`_MAX_CONTINUATIONS`, 3) still returns `pause_turn`,
+  the answer is incomplete: its `llm_calls` row keeps the raw response, with error "still
+  pause_turn after 3 continuations", and `SubunitsIncomplete` (a ValueError) makes it a
+  provider failure. It is not parsed, not cached, and not retried. The next provider may
+  answer, and with `--provider` the step fails. Checked 2026-11-04: no week 4 `llm_calls` row
+  and none of the 11 sub-unit cache files ended on `pause_turn`.
+- `normalize_subunits` raises `SubunitsIncomplete` when a nonempty "units" list has no valid
+  member (no object, or no name): like an unparseable answer it is retried, never cached,
+  and then the next provider is asked. A real `{"units": []}` is still a valid empty answer.
+  Two same-name rows are one unit when their URL sets {source_url, website} overlap
+  (empty values ignored), or when neither row has any URL. Checked 2026-11-04: none of the
+  71 cache answer files holds an empty unit list.
 
 | Table | One row per | Must contain |
 |---|---|---|
@@ -614,7 +768,7 @@ flowchart LR
 - The Wikidata action API (`wbsearchentities`) can return 429 to a cloud session's shared IP
   while the SPARQL endpoint still answers. For a read-only lookup from a session, the SPARQL
   `wikibase:mwapi` service with `wikibase:api "Search"` (full-text) or `"EntitySearch"` (prefix)
-  works; see the last query in TASKS.md section 11.
+  works; see the last query in `docs/SPARQL_QUERIES.md`.
 
 ## BigQuery access
 
