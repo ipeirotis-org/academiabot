@@ -573,7 +573,8 @@ def write_report(out_dir: Path, tables: Dict[str, List[dict]], runs: List[dict])
     write_csv(out_dir / "single_provider_review.csv", review,
               ["university_qid", "group_id", "name", "variants", "providers", "runs", "real", "notes"])
     write_csv(out_dir / "cache_files.csv", runs,
-              ["university_qid", "provider", "sample", "cache_key", "cache_file", "cache_file_exists", "schools"])
+              ["university_qid", "provider", "sample", "cache_key", "cache_file", "cache_file_exists",
+               "missing_from_cache", "schools"])
     write_csv(out_dir / "ids.csv", proposals,
               ["university_qid", "provider", "sample", "index", "name", "candidate_id", "llm_call_id"])
 

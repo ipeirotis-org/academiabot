@@ -474,6 +474,12 @@ def test_cache_only_collect_never_asks_a_provider_on_a_cache_miss(monkeypatch, t
     assert asked == [("openai", 2)]                                      # only the cached sample
     assert [r["missing_from_cache"] for r in runs] == [True, False, True]
     assert [r["answered"] for r in runs] == [False, True, False]
+    ag.write_report(tmp_path / "report", ag.analyze_all(
+        [{"qid": "Q1", "set": "eval", "name": "U", "website": "", "schools": []}],
+        {"Q1": props}, {"Q1": runs}, ["openai"], 3), runs)
+    import csv
+    with open(tmp_path / "report" / "cache_files.csv", newline="") as f:
+        assert [r["missing_from_cache"] for r in csv.DictReader(f)] == ["True", "False", "True"]
 
     asked.clear()
     ag.collect("Q1", "U", "https://u.edu", ["openai"], 3)                # a normal run asks all 3
