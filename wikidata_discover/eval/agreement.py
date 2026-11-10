@@ -604,11 +604,17 @@ def run(args) -> Path:
     from wikidata_discover.cli import run_config
     console = config.console
 
-    key_sources = config.load_missing_keys() or {}
-    have = {"openai": config.OPENAI_API_KEY, "anthropic": config.ANTHROPIC_API_KEY, "gemini": config.GOOGLE_API_KEY}
-    providers = [p for p in (args.providers or PROVIDERS) if have[p]]
-    if not providers:
-        raise SystemExit("No provider has an API key.")
+    if args.no_run_log:
+        # Cache only: no call is made, so no key is needed, and every requested provider
+        # is kept. Dropping a provider without a key would change the scores.
+        key_sources, providers = {}, list(args.providers or PROVIDERS)
+    else:
+        key_sources = config.load_missing_keys() or {}
+        have = {"openai": config.OPENAI_API_KEY, "anthropic": config.ANTHROPIC_API_KEY,
+                "gemini": config.GOOGLE_API_KEY}
+        providers = [p for p in (args.providers or PROVIDERS) if have[p]]
+        if not providers:
+            raise SystemExit("No provider has an API key.")
     universities = universities_to_run(args.universities)
 
     run_id = run_log.new_run_id("agreement")

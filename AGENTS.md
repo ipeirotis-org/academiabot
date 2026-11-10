@@ -189,7 +189,8 @@ school in `eval/small_ground_truth_sources.csv`), 3 samples each (`--samples`). 
 - `--no-run-log` writes the report only, with no run log rows. Use it to rescore cached
   answers, so BigQuery does not get a second copy of the same candidates and checks. It makes
   no LLM calls: a sample with no cache file is not asked, and its row in `cache_files.csv` has
-  `missing_from_cache` true (review of pull request 24). A run with the run log uploads the
+  `missing_from_cache` true (review of pull request 24). It loads no keys and keeps every
+  requested provider, because the cache is read before any key is needed. A run with the run log uploads the
   dirty-worktree patch with `attach_source_patch()`, as `discover` does.
 - `--compare DIR_A DIR_B` checks that two runs gave identical report files (`ids.csv` and
   `cache_files.csv` hold new ids or paths each run and are left out).

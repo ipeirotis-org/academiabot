@@ -509,3 +509,27 @@ def test_run_uploads_the_dirty_source_patch(monkeypatch, tmp_path):
                               review_seed=2026)
     ag.run(args)
     assert attached == [(tmp_path / "out", "abc1234-dirty-ff")]
+
+
+def test_a_cache_only_rescore_needs_no_keys_and_keeps_every_provider(monkeypatch, tmp_path):
+    """With --no-run-log no call is made, so a missing key must not drop a provider
+    (that would change the scores) or stop the run."""
+    import argparse
+    import wikidata_discover.config as config
+
+    def no_secrets():
+        raise AssertionError("a cache-only rescore must not load keys")
+    monkeypatch.setattr(config, "load_missing_keys", no_secrets)
+    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.setattr(config, name, None)
+    seen = []
+
+    def fake_collect(qid, label, website, providers, samples, log=None, cache_only=False):
+        seen.append((list(providers), cache_only, log))
+        return [], []
+    monkeypatch.setattr(ag, "collect", fake_collect)
+    args = argparse.Namespace(providers=None, universities=["Q4929506"], samples=1,
+                              out=str(tmp_path / "out"), no_run_log=True, review_size=20,
+                              review_seed=2026)
+    ag.run(args)
+    assert seen == [(list(ag.PROVIDERS), True, None)]
