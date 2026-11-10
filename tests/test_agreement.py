@@ -452,3 +452,60 @@ def test_eval_ground_truth_has_the_2026_11_10_verdicts():
     assert "Barnard College" not in GROUND_TRUTH["Q49088"]["schools"]
     for schools in (v["schools"] for v in GROUND_TRUTH.values()):
         assert len(schools) == len(set(schools))
+
+
+# ── review of pull request 24 ───────────────────────────────────────────
+
+def test_cache_only_collect_never_asks_a_provider_on_a_cache_miss(monkeypatch, tmp_path):
+    """A --no-run-log rescore must not spend credit or make a call that no run log records."""
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path)
+    asked = []
+
+    def fake_extractor(provider):
+        def extract(label, website, sample):
+            asked.append((provider, sample))
+            return [{"name": "School of Law"}]
+        return extract
+    monkeypatch.setattr(ag, "extractor", fake_extractor)
+    cached = lh.extract_cache_key("openai", "U", "https://u.edu", 2)
+    (tmp_path / f"{cached}.json").write_text("[]")
+
+    props, runs = ag.collect("Q1", "U", "https://u.edu", ["openai"], 3, cache_only=True)
+    assert asked == [("openai", 2)]                                      # only the cached sample
+    assert [r["missing_from_cache"] for r in runs] == [True, False, True]
+    assert [r["answered"] for r in runs] == [False, True, False]
+
+    asked.clear()
+    ag.collect("Q1", "U", "https://u.edu", ["openai"], 3)                # a normal run asks all 3
+    assert asked == [("openai", 1), ("openai", 2), ("openai", 3)]
+
+
+def test_run_uploads_the_dirty_source_patch(monkeypatch, tmp_path):
+    """Like discover and snapshot, an agreement run with a run log uploads the patch of
+    an uncommitted worktree, so the recorded dirty commit can be rebuilt."""
+    import argparse
+    import wikidata_discover.batch as batch
+    import wikidata_discover.config as config
+
+    attached = []
+
+    class FakeLog:
+        def attach_source_patch(self, run_dir, identity):
+            attached.append((Path(run_dir), identity))
+
+        def set_university(self, qid): pass
+        def flush(self): pass
+        def finish(self, outcome, summary): return {}
+
+    monkeypatch.setattr(config, "load_missing_keys", lambda: {})
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "k")
+    monkeypatch.setattr(batch, "source_identity", lambda run_dir: "abc1234-dirty-ff")
+    monkeypatch.setattr(run_log, "start", lambda *a, **k: None)
+    monkeypatch.setattr(run_log, "current", lambda: FakeLog())
+    monkeypatch.setattr(run_log, "describe", lambda status: "")
+    monkeypatch.setattr(ag, "collect", lambda *a, **k: ([], []))
+    args = argparse.Namespace(providers=["openai"], universities=["Q4929506"], samples=1,
+                              out=str(tmp_path / "out"), no_run_log=False, review_size=20,
+                              review_seed=2026)
+    ag.run(args)
+    assert attached == [(tmp_path / "out", "abc1234-dirty-ff")]

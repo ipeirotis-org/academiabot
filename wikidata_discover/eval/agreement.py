@@ -459,15 +459,19 @@ def extractor(provider: str):
 
 
 def collect(qid: str, label: str, website: str, providers: Sequence[str], samples: int,
-            log=None) -> Tuple[List[dict], List[dict]]:
+            log=None, cache_only: bool = False) -> Tuple[List[dict], List[dict]]:
     """Ask each provider for each sample. Returns (proposals, run rows). Each named
-    school becomes a candidates row (status unaligned) when a run log is active."""
+    school becomes a candidates row (status unaligned) when a run log is active.
+    With cache_only, a sample with no cache file is not asked: its run row says
+    missing_from_cache, so a rescore never spends credit or makes an unlogged call."""
     from wikidata_discover import llm_helpers
     proposals, runs = [], []
     for p in providers:
         for s in range(1, samples + 1):
             key = llm_helpers.extract_cache_key(p, label, website, s)
-            units = extractor(p)(label, website, sample=s) or []
+            cache_file = llm_helpers._CACHE_DIR / f"{key}.json"
+            missing = cache_only and not cache_file.exists()
+            units = [] if missing else (extractor(p)(label, website, sample=s) or [])
             call_id = llm_helpers.last_extraction_call_id
             names = 0
             for idx, u in enumerate(units):
@@ -485,10 +489,9 @@ def collect(qid: str, label: str, website: str, providers: Sequence[str], sample
                                   "source_url": u.get("reference") or "", "website": u.get("website") or "",
                                   "candidate_id": cand, "llm_call_id": call_id, "cache_key": key})
                 names += 1
-            cache_file = llm_helpers._CACHE_DIR / f"{key}.json"
             runs.append({"university_qid": qid, "provider": p, "sample": s, "cache_key": key,
                          "cache_file": str(cache_file), "cache_file_exists": cache_file.exists(),
-                         "schools": names, "answered": names > 0})
+                         "missing_from_cache": missing, "schools": names, "answered": names > 0})
     return proposals, runs
 
 
@@ -619,6 +622,8 @@ def run(args) -> Path:
                       run_config={**run_config(key_sources if isinstance(key_sources, dict) else {}),
                                   "samples": args.samples, "agreement_providers": providers})
         log = run_log.current()
+        if log is not None:
+            log.attach_source_patch(out_dir, identity)
     console.print(f"[bold]Agreement run {run_id}: {len(universities)} universities, "
                   f"providers {providers}, {args.samples} samples each[/bold]")
     proposals_by_qid, runs_by_qid, all_runs, outcome = {}, {}, [], "failed"
@@ -626,7 +631,8 @@ def run(args) -> Path:
         for u in universities:
             if log is not None:
                 log.set_university(u["qid"])
-            props, runs = collect(u["qid"], u["name"], u["website"], providers, args.samples, log)
+            props, runs = collect(u["qid"], u["name"], u["website"], providers, args.samples, log,
+                                  cache_only=args.no_run_log)
             proposals_by_qid[u["qid"]], runs_by_qid[u["qid"]] = props, runs
             all_runs.extend(runs)
             answered = [(r["provider"], r["sample"]) for r in runs if r["answered"]]
@@ -637,8 +643,10 @@ def run(args) -> Path:
                 write_checks(log, groups, props)
                 log.flush()
             failed = [run_label(r["provider"], r["sample"]) for r in runs if not r["answered"]]
+            uncached = [run_label(r["provider"], r["sample"]) for r in runs if r["missing_from_cache"]]
             console.print(f"  {u['qid']} {u['name']}: {len(props)} schools named"
-                          + (f"; no answer from {failed}" if failed else ""))
+                          + (f"; no answer from {failed}" if failed else "")
+                          + (f"; not in the cache, so not asked (--no-run-log): {uncached}" if uncached else ""))
         tables = analyze_all(universities, proposals_by_qid, runs_by_qid, providers, args.samples,
                              args.review_size, args.review_seed)
         write_report(out_dir, tables, all_runs)
@@ -673,7 +681,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--samples", type=int, default=DEFAULT_SAMPLES, help="runs per provider (default 3)")
     parser.add_argument("--out", help="output folder (default results/agreement/<run_id>)")
     parser.add_argument("--no-run-log", action="store_true",
-                        help="write no run log rows (no candidates or checks): for a report from cached answers only")
+                        help="write no run log rows (no candidates or checks) and make no LLM calls: "
+                             "a sample with no cache file is reported as missing, not asked")
     parser.add_argument("--review-size", type=int, default=REVIEW_SIZE)
     parser.add_argument("--review-seed", type=int, default=REVIEW_SEED)
     parser.add_argument("--compare", nargs=2, metavar=("DIR_A", "DIR_B"), help="check that two runs gave the same report")

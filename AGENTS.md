@@ -187,7 +187,10 @@ school in `eval/small_ground_truth_sources.csv`), 3 samples each (`--samples`). 
   Each counted two ways: `all` (every group) and `matched` (only groups that match a true
   school). No overlap at all gives no M_t estimate (blank).
 - `--no-run-log` writes the report only, with no run log rows. Use it to rescore cached
-  answers, so BigQuery does not get a second copy of the same candidates and checks.
+  answers, so BigQuery does not get a second copy of the same candidates and checks. It makes
+  no LLM calls: a sample with no cache file is not asked, and its row in `cache_files.csv` has
+  `missing_from_cache` true (review of pull request 24). A run with the run log uploads the
+  dirty-worktree patch with `attach_source_patch()`, as `discover` does.
 - `--compare DIR_A DIR_B` checks that two runs gave identical report files (`ids.csv` and
   `cache_files.csv` hold new ids or paths each run and are left out).
 - `--draw-small --seed 2026` prints the draw order of the small universities: sort us-tier1 by
