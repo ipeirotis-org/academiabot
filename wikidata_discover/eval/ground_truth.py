@@ -24,6 +24,9 @@ GROUND_TRUTH = {
             "Tisch School of the Arts",
             "NYU Abu Dhabi",
             "NYU Shanghai",
+            "Graduate School of Arts and Science",
+            "Liberal Studies",
+            "Grossman Long Island School of Medicine",
         ]
     },
     "Q49088": {
@@ -79,7 +82,7 @@ GROUND_TRUTH = {
         "website": "https://www.berkeley.edu",
         "schools": [
             "College of Chemistry",
-            "Division of Computing, Data Science, and Society",
+            "College of Computing, Data Science, and Society",
             "Graduate School of Education",
             "College of Engineering",
             "College of Environmental Design",
@@ -133,7 +136,7 @@ GROUND_TRUTH = {
             "School of Divinity",
             "School of Education",
             "College of Engineering and Architecture",
-            "College of Fine Arts",
+            "Chadwick A. Boseman College of Fine Arts",
             "Graduate School",
             "School of Law",
             "College of Medicine",
@@ -176,6 +179,7 @@ GROUND_TRUTH = {
             "School of Law",
             "School of Nursing",
             "School of Social Work",
+            "School of Undergraduate Studies",
         ]
     },
     "Q762266": {
@@ -242,6 +246,11 @@ GROUND_TRUTH = {
             "School of Law",
             "Sinclair School of Nursing",
             "Trulaske College of Business",
+            "School of Health Professions",
+            "School of Medicine",
+            "Graduate School",
+            "Harry S Truman School of Government and Public Affairs",
+            "School of Social Work",
         ]
     },
 }

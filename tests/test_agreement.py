@@ -438,3 +438,17 @@ def test_universities_to_run_includes_the_small_set():
         sets.setdefault(u["set"], []).append(u["qid"])
     assert sorted(sets["small"]) == sorted(ag.SMALL_UNIVERSITIES)
     assert len(sets["eval"]) == 12
+
+
+def test_eval_ground_truth_has_the_2026_11_10_verdicts():
+    from wikidata_discover.eval.ground_truth import GROUND_TRUTH
+
+    assert sum(len(v["schools"]) for v in GROUND_TRUTH.values()) == 180
+    nyu = GROUND_TRUTH["Q49210"]["schools"]
+    assert "Grossman Long Island School of Medicine" in nyu and "Liberal Studies" in nyu
+    assert "School of Undergraduate Studies" in GROUND_TRUTH["Q49213"]["schools"]
+    assert "College of Computing, Data Science, and Society" in GROUND_TRUTH["Q168756"]["schools"]
+    assert "Chadwick A. Boseman College of Fine Arts" in GROUND_TRUTH["Q1068752"]["schools"]
+    assert "Barnard College" not in GROUND_TRUTH["Q49088"]["schools"]
+    for schools in (v["schools"] for v in GROUND_TRUTH.values()):
+        assert len(schools) == len(set(schools))
