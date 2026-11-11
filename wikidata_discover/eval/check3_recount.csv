@@ -1,0 +1,15 @@
+university_qid,university,school,names_in_raw_lists,hand_providers,hand_runs,code_group,code_providers,code_runs,same,scored_as
+Q161562,California Institute of Technology,Division of Biology and Biological Engineering,Division of Biology and Biological Engineering,3,9,Division of Biology and Biological Engineering,3,9,yes,Division of Biology and Biological Engineering
+Q161562,California Institute of Technology,Division of Chemistry and Chemical Engineering,Division of Chemistry and Chemical Engineering,3,9,Division of Chemistry and Chemical Engineering,3,9,yes,Division of Chemistry and Chemical Engineering
+Q161562,California Institute of Technology,Division of Engineering and Applied Science,Division of Engineering and Applied Science,3,9,Division of Engineering and Applied Science,3,9,yes,Division of Engineering and Applied Science
+Q161562,California Institute of Technology,Division of Geological and Planetary Sciences,Division of Geological and Planetary Sciences,3,9,Division of Geological and Planetary Sciences,3,9,yes,Division of Geological and Planetary Sciences
+Q161562,California Institute of Technology,"Division of Physics, Mathematics and Astronomy","Division of Physics, Mathematics and Astronomy",3,9,"Division of Physics, Mathematics and Astronomy",3,9,yes,"Division of Physics, Mathematics and Astronomy"
+Q161562,California Institute of Technology,Division of the Humanities and Social Sciences,Division of Humanities and Social Sciences; Division of the Humanities and Social Sciences,3,9,Division of Humanities and Social Sciences,3,9,yes,Division of the Humanities and Social Sciences
+Q161562,California Institute of Technology,Jet Propulsion Laboratory,Jet Propulsion Laboratory,2,3,Jet Propulsion Laboratory,2,3,yes,invented
+Q7208107,Point Park University,Conservatory of Performing Arts,Conservatory of Performing Arts,2,6,Conservatory of Performing Arts,2,6,yes,Conservatory of Performing Arts
+Q7208107,Point Park University,Rowland School of Business,Rowland School of Business; School of Business,3,9,Rowland School of Business,3,9,yes,Rowland School of Business
+Q7208107,Point Park University,School of Arts and Sciences,School of Arts and Sciences,3,9,School of Arts and Sciences,3,9,yes,School of Arts and Sciences
+Q7208107,Point Park University,School of Communication,School of Communication,3,9,School of Communication,3,9,yes,School of Communication
+Q7208107,Point Park University,School of Dance,School of Dance,1,3,School of Dance,1,3,yes,invented
+Q7208107,Point Park University,School of Education,School of Education,3,9,School of Education,3,9,yes,School of Education
+Q7208107,Point Park University,"School of Theatre, Film and Animation","School of Theatre, Film and Animation",1,3,"School of Theatre, Film and Animation",1,3,yes,invented

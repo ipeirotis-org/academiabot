@@ -475,8 +475,9 @@ departments (`wikidata_discover/eval/dept_ground_truth.csv`).
 ### Shuo, week 3 (finish Nov 6 to 12): parallel extraction
 
 **Status on 2026-11-10.** The final run covers all 18 universities (run
-`agreement-20261109T204358Z-32c21a`, 299 `checks` rows). Checks 1 and 2 pass. Check 3, the
-hand recount, is still open. Your two own tasks are done.
+`agreement-20261109T204358Z-32c21a`, 299 `checks` rows). All 3 checks pass. For check 3,
+the agent recounted Caltech and Point Park from the raw lists (2026-11-11); every count
+matched. Your two own tasks are done.
 
 **Goal.** Find out whether independent LLMs agree, and whether agreement means a school is
 real.
