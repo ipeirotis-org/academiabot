@@ -1,7 +1,7 @@
 # Run log schema
 
 The run log records every `discover` and batch run in BigQuery, dataset
-`wikidata-academia.academiabot`. It has 4 tables. Large texts (prompts, raw LLM responses,
+`wikidata-academia.academiabot`. It has 5 tables. Large texts (prompts, raw LLM responses,
 page snapshots) are in the bucket `gs://academiabot/runs/<run_id>/`, and each row keeps the
 path. The code is `wikidata_discover/run_log.py`. Anya built it in week 2 (2026-10-14).
 Week 3 added the columns `legacy` and `source_file` to `llm_calls` and `candidates`. Rows
@@ -98,7 +98,7 @@ with the result of the check against Wikidata.
 | parent_candidate_id | STRING | Parent's candidate_id when the parent has no QID. Empty today |
 | name | STRING | Name the LLM gave |
 | unit_type | STRING | Type the LLM gave, as free text (for example "College") |
-| status | STRING | `linked` (on Wikidata and linked to the university), `orphan` (on Wikidata, not linked), `missing` (not found on Wikidata), `unresolved` (could not be checked), `unaligned` (a sub-unit from the week 4 `subunits` step, not yet compared with Wikidata) |
+| status | STRING | `linked` (on Wikidata and linked to the university), `orphan` (on Wikidata, not linked), `missing` (not found on Wikidata), `unresolved` (could not be checked), `unaligned` (not yet compared with Wikidata: a school from the week 3 agreement runs, or a sub-unit from the week 4 `subunits` step) |
 | matched_qid, matched_label | STRING | The Wikidata item it was matched to, and that item's label |
 | match_method | STRING | `fuzzy` (name comparison), `llm` (an LLM picked the item), `none` (no match), `legacy_unknown` (legacy row: the old run did not save how it matched) |
 | match_choices | STRING, JSON | Every Wikidata item the match step considered. `source` is `linked_child` (already linked to the university) or `search` (found by name search) |
@@ -111,12 +111,35 @@ with the result of the check against Wikidata.
 | legacy | BOOLEAN | True for a row imported from a run before the run log (run `us-tier1`). Such a row has no saved prompt, response, or page |
 | source_file | STRING | For a legacy row: the original CSV or cache file in the bucket that the row came from. Empty otherwise |
 
+## checks
+
+One row is one automated check of one unit. Shuo built it in week 3. Today the only kind is
+`agreement`: how many providers and runs named the same school. Checks are append-only.
+
+| Column | Type | Meaning |
+|---|---|---|
+| check_id | STRING, required | Id of this check |
+| run_id, invocation_id | STRING, required | The run and invocation that made the check |
+| node_id | STRING | The unit in the hierarchy file. Empty until Anya's week 5 |
+| candidate_id | STRING | The candidates row checked. For an agreement check, one row of the group; `detail` lists all of them |
+| parent_id | STRING | The parent link checked. Empty for a check on the whole unit |
+| node_version | STRING | The node version the check looked at. Empty until week 5 |
+| kind | STRING | `agreement`, `judge`, `page_status`, `name_on_page`, or `verifier` |
+| result | STRING | `pass`, `fail`, or `unclear`. An agreement check passes when 2 or more providers named the unit |
+| score | FLOAT | For an agreement check, the share of runs that named the unit (7 of 9 runs gives 0.78) |
+| detail | STRING, JSON | For an agreement check: the university, the name variants, the providers and runs that named the unit, and every `candidate_id` in the group |
+| llm_call_ids | STRING, list | Every call the check used. For an agreement check, the extract call of each provider and sample it counted |
+| evidence_ids | STRING, list | Saved pages the check used |
+| checked_at | TIMESTAMP | Time of the check (UTC) |
+
 ## How the tables link
 
 - `run_id` and `invocation_id` connect every row to one `runs` row: who ran it, with
   which code, command, and settings.
 - `candidates.llm_call_ids` lists `llm_calls.llm_call_id` values. They give the prompt
   and raw response behind each unit and each match decision.
+- `checks.candidate_id` and the `candidate_ids` in `checks.detail` point to `candidates`
+  rows. `checks.llm_call_ids` lists the calls the check counted.
 - `candidates.evidence_ids` will list `evidence.evidence_id` values from week 4.
 - `llm_calls.cached_from_llm_call_id` points a cache hit to the call that first made the
   answer, which can be in an earlier run.

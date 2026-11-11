@@ -281,9 +281,20 @@ The 6 small universities are drawn at random from the bottom third of `us-tier1`
 number of Wikidata sitelinks (Wikipedia articles about the university), with the seed
 recorded. The student builds their school-level ground truth.
 
-Status on 2026-11-04: three agreement runs on the 12 evaluation universities wrote 685
-`checks` rows (kind `agreement`) and 4,347 `candidates` rows (status `unaligned`). They ran
-from commits `3122988` and `ff51783`, which are not on GitHub. Push them first.
+Decisions made while building it (2026-10-23): each school a provider names in one sample is a
+`candidates` row with status `unaligned`, because this step does no Wikidata matching. An
+agreement check passes when 2 or more providers named the school. A second group that matches an
+already matched true school is a duplicate and counts as wrong (a repeated name counts once, as in
+week 2). Wrong groups are split into duplicate, non-academic, campus, and invented. S1 uses
+Chapman for pairs of providers and model M_t for three providers and for the samples of one
+provider. The small universities were drawn with seed 2026 from a saved sitelink snapshot; walking that
+order, the first 6 with at least one top-level academic unit are kept (3 without units skipped,
+2026-11-04).
+
+Status on 2026-11-10: done. The final run `agreement-20261109T204358Z-32c21a` covered all 18
+universities (162 calls, 1,863 `candidates` rows, 299 `checks` rows). Three earlier runs on the
+12 evaluation universities (2026-11-04) also wrote 685 `checks` and 4,347 `candidates` rows,
+with older grouping rules. Use the final run.
 
 **Tests:** a rerun gives identical numbers from the cache; the cache folder has 3 files per
 provider and university, not 1.

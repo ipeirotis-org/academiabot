@@ -206,6 +206,33 @@ def _cache_key(univ_label: str, provider: str, model: str, purpose: str = "extra
     return hashlib.sha256(f"{provider}|{purpose}|{prompt_hash}|{univ_label}|{model}|{extra}".encode()).hexdigest()
 
 
+def _extract_extra(website: str, sample: Optional[int]) -> str:
+    """The `extra` part of an extraction cache key. Without a sample number it is the
+    website alone, so the keys of answers cached before samples existed do not
+    change. Repeated samples of one request (Shuo's week 3) add `|sample=N`, so each
+    sample is its own call with its own cache file, and a rerun replays it."""
+    if sample is None:
+        return website or ""
+    if isinstance(sample, bool) or not isinstance(sample, int) or sample < 1:
+        raise ValueError(f"sample must be a whole number of 1 or more, not {sample!r}")
+    return f"{website or ''}|sample={sample}"
+
+
+def _extract_key_extra(provider: str, website: str, sample: Optional[int]) -> str:
+    """The `extra` part of an extraction cache key for one provider. Sampled Gemini
+    calls run with thinking off (see extract_divisions_gemini), and their key says so."""
+    extra = _extract_extra(website, sample)
+    if provider == "gemini" and sample is not None:
+        extra += "|thinking_budget=0"
+    return extra
+
+
+def extract_cache_key(provider: str, univ_label: str, website: str, sample: Optional[int] = None) -> str:
+    """The cache key an extract_divisions_<provider>() call uses with the current models."""
+    model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
+    return _cache_key(univ_label, provider, model, extra=_extract_key_extra(provider, website, sample))
+
+
 # Cache files read or written since the last reset. A batch runner uses this to
 # upload exactly the cache entries a run depended on, including old ones it reused.
 cache_paths_touched: set = set()
@@ -317,11 +344,12 @@ def _load_cache_meta(key: str) -> Optional[dict]:
     return meta if isinstance(meta, dict) else None
 
 
-def _extract_call(provider: str, model: str, key: str, prompt: dict, **request) -> dict:
+def _extract_call(provider: str, model: str, key: str, prompt: dict, sample: Optional[int] = None,
+                  **request) -> dict:
     """The fixed fields of one extraction call's llm_calls row."""
     return {"provider": provider, "model": model, "purpose": "extract", "prompt": prompt,
             "cache_key": key, "prompt_hash": EXTRACT_PROMPT_HASH,
-            "request_config": {"extraction_mode": _extraction_mode, "sample": None, **request}}
+            "request_config": {"extraction_mode": _extraction_mode, "sample": sample, **request}}
 
 
 def chosen(items: List[Any]) -> List[Any]:
@@ -407,18 +435,19 @@ class LLMHelper:
             return []
 
     @staticmethod
-    def extract_divisions_openai(univ_label: str, website: str) -> List[Dict[str, Any]]:
+    def extract_divisions_openai(univ_label: str, website: str,
+                                 sample: Optional[int] = None) -> List[Dict[str, Any]]:
         """Extract divisions using OpenAI API."""
         global last_extraction_call_id
         last_extraction_call_id = None
         model = config.LLM_MODEL
-        key = _cache_key(univ_label, "openai", model, extra=website or "")
+        key = _cache_key(univ_label, "openai", model, extra=_extract_extra(website, sample))
         messages = [
             {"role": "system", "content": SYSTEM_EXTRACT},
             {"role": "user", "content": f"{univ_label} -- {website}"}
         ]
         call = _extract_call("openai", model, key, {"input": messages, "schema": UNIVERSITY_UNITS_SCHEMA},
-                             tools=["web_search_preview"], store=False)
+                             sample, tools=["web_search_preview"], store=False)
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_openai: cache hit for %s", univ_label)
@@ -486,15 +515,16 @@ class LLMHelper:
         return []
 
     @staticmethod
-    def extract_divisions_anthropic(univ_label: str, website: str) -> List[Dict[str, Any]]:
+    def extract_divisions_anthropic(univ_label: str, website: str,
+                                    sample: Optional[int] = None) -> List[Dict[str, Any]]:
         """Extract divisions using Anthropic Claude API."""
         global last_extraction_call_id
         last_extraction_call_id = None
         model = config.ANTHROPIC_MODEL
-        key = _cache_key(univ_label, "anthropic", model, extra=website or "")
+        key = _cache_key(univ_label, "anthropic", model, extra=_extract_extra(website, sample))
         messages = [{"role": "user", "content": f"{univ_label} -- {website}"}]
         call = _extract_call("anthropic", model, key, {"system": SYSTEM_EXTRACT, "messages": messages},
-                             tools=[], max_tokens=2048)
+                             sample, tools=[], max_tokens=2048)
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_anthropic: cache hit for %s", univ_label)
@@ -565,15 +595,22 @@ class LLMHelper:
         return []
 
     @staticmethod
-    def extract_divisions_gemini(univ_label: str, website: str) -> List[Dict[str, Any]]:
+    def extract_divisions_gemini(univ_label: str, website: str,
+                                 sample: Optional[int] = None) -> List[Dict[str, Any]]:
         """Extract divisions using Google Gemini API."""
         global last_extraction_call_id
         last_extraction_call_id = None
         model = config.GEMINI_MODEL
-        key = _cache_key(univ_label, "gemini", model, extra=website or "")
+        # Gemini counts its thinking against max_output_tokens, and with thinking on most
+        # answers were cut off after one or two units (finish reason MAX_TOKENS). Sampled
+        # calls (Shuo's week 3) turn thinking off, and the cache key says so, so they never
+        # read an answer made with thinking on. Calls without a sample are unchanged.
+        thinking_off = sample is not None
+        key = _cache_key(univ_label, "gemini", model, extra=_extract_key_extra("gemini", website, sample))
         prompt_text = f"System: {SYSTEM_EXTRACT}\n\nInput: {univ_label} -- {website}"
         call = _extract_call("gemini", model, key, {"text": prompt_text},
-                             tools=[], temperature=0.7, max_output_tokens=2048)
+                             sample, tools=[], temperature=0.7, max_output_tokens=2048,
+                             **({"thinking_budget": 0} if thinking_off else {}))
         cached = _load_cache(key)
         if cached is not None:
             logger.info("extract_divisions_gemini: cache hit for %s", univ_label)
@@ -602,6 +639,7 @@ class LLMHelper:
                     config=genai_types.GenerateContentConfig(
                         temperature=0.7,
                         max_output_tokens=2048,
+                        **({"thinking_config": genai_types.ThinkingConfig(thinking_budget=0)} if thinking_off else {}),
                         http_options=_gemini_http_options(),
                     ),
                 )

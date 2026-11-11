@@ -24,6 +24,9 @@ GROUND_TRUTH = {
             "Tisch School of the Arts",
             "NYU Abu Dhabi",
             "NYU Shanghai",
+            "Graduate School of Arts and Science",
+            "Liberal Studies",
+            "Grossman Long Island School of Medicine",
         ]
     },
     "Q49088": {
@@ -79,7 +82,7 @@ GROUND_TRUTH = {
         "website": "https://www.berkeley.edu",
         "schools": [
             "College of Chemistry",
-            "Division of Computing, Data Science, and Society",
+            "College of Computing, Data Science, and Society",
             "Graduate School of Education",
             "College of Engineering",
             "College of Environmental Design",
@@ -133,7 +136,7 @@ GROUND_TRUTH = {
             "School of Divinity",
             "School of Education",
             "College of Engineering and Architecture",
-            "College of Fine Arts",
+            "Chadwick A. Boseman College of Fine Arts",
             "Graduate School",
             "School of Law",
             "College of Medicine",
@@ -176,6 +179,7 @@ GROUND_TRUTH = {
             "School of Law",
             "School of Nursing",
             "School of Social Work",
+            "School of Undergraduate Studies",
         ]
     },
     "Q762266": {
@@ -242,6 +246,85 @@ GROUND_TRUTH = {
             "School of Law",
             "Sinclair School of Nursing",
             "Trulaske College of Business",
+            "School of Health Professions",
+            "School of Medicine",
+            "Graduate School",
+            "Harry S Truman School of Government and Public Affairs",
+            "School of Social Work",
+        ]
+    },
+}
+
+
+# Six small universities for Shuo's week 3 agreement runs. The draw (seed 2026) is in
+# agreement.draw_small() and agreement.SMALL_UNIVERSITIES. Shuo checked every school against
+# the university's own website on 2026-11-09; the source URL of each row is in
+# eval/small_ground_truth_sources.csv (a test checks that the two agree).
+SMALL_GROUND_TRUTH = {
+    "Q4929506": {
+        "name": "Blue Mountain Christian University",
+        "website": "https://www.bmc.edu",
+        "schools": [
+            "School of Business",
+            "School of Education",
+            "School of Kinesiology",
+            "School of Nursing",
+            "Department of Social and Behavioral Sciences",
+            "Department of Biblical Studies",
+            "Department of Language and Literature",
+            "Department of Fine Arts",
+            "Department of Mathematics and Natural Sciences",
+        ]
+    },
+    "Q7114753": {
+        "name": "Owensboro Community and Technical College",
+        "website": "https://owensboro.kctcs.edu",
+        "schools": [
+            "Arts and Science",
+            "Professional and Technical Studies",
+        ]
+    },
+    "Q7896431": {
+        "name": "University of Texas Health Science Center at Houston",
+        "website": "https://www.uth.edu",
+        "schools": [
+            "School of Dentistry",
+            "MD Anderson UTHealth Houston Graduate School of Biomedical Sciences",
+            "School of Public Health",
+            "McGovern Medical School",
+            "Cizik School of Nursing",
+            "McWilliams School of Biomedical Informatics",
+            "School of Behavioral Health Sciences",
+        ]
+    },
+    "Q7208107": {
+        "name": "Point Park University",
+        "website": "https://www.pointpark.edu",
+        "schools": [
+            "School of Arts and Sciences",
+            "Rowland School of Business",
+            "School of Communication",
+            "Conservatory of Performing Arts",
+            "School of Education",
+        ]
+    },
+    "Q7122600": {
+        "name": "Pacific Oaks College",
+        "website": "https://www.pacificoaks.edu",
+        "schools": [
+            "Department of Human Development",
+            "Department of Community Psychology & Leadership",
+            "Department of Education",
+            "Department of Marriage & Family Therapy",
+            "Department of Social Work",
+        ]
+    },
+    "Q7429134": {
+        "name": "Saybrook University",
+        "website": "https://www.saybrook.edu",
+        "schools": [
+            "College of Social Sciences",
+            "College of Integrative Medicine and Health Sciences",
         ]
     },
 }
