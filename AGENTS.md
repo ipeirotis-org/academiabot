@@ -180,7 +180,9 @@ school in `eval/small_ground_truth_sources.csv`), 3 samples each (`--samples`). 
   matches, visited in a fixed order (provider, sample, position), so the same answers give the
   same groups. Each group gets one `checks` row: kind `agreement`, result `pass` when 2 or more
   providers named it (else `fail`), score = runs that named it / runs that answered, the first
-  member's `candidate_id`, and every member's id in `detail`.
+  member's `candidate_id`, and every member's id in `detail`. Its `llm_call_ids` hold the call of every
+  answered run, also the runs that did not name the school, because the score counts them (since
+  2026-11-17, review of pull request 25; the 299 rows of the final week 3 run list only the naming calls).
 - Scoring: groups match true schools one to one (maximum matching). A second group that matches
   an already matched school is a `duplicate` and counts as wrong, as a repeated name does in
   week 2. Other wrong groups are `non_academic` (library, office, hospital, admissions, ... in

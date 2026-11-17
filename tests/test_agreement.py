@@ -88,6 +88,20 @@ def test_checks_rows_follow_the_schema(tmp_path):
     assert set(row) == {n for n, _, _ in run_log.SCHEMAS["checks"]}
 
 
+def test_an_agreement_check_lists_every_answered_call_of_its_score(tmp_path):
+    # Named in 1 of 3 answered runs: the check holds all 3 calls, not the failed run.
+    log = run_log.RunLog("r", "i", enabled=False, results_dir=tmp_path)
+    cid = log.add_candidate(name="School of Law", status="unaligned", provider="openai")
+    props = [{"candidate_id": cid, "llm_call_id": "c1"}]
+    groups = [{"member_index": [0], "n_providers": 1, "score": 0.3333, "university_qid": "Q1", "group_id": "Q1-g01",
+               "name": "School of Law", "variants": ["School of Law"], "providers": ["openai"],
+               "runs": ["openai#1"], "n_runs": 1}]
+    runs = [{"answered": True, "llm_call_id": "c1"}, {"answered": True, "llm_call_id": "c2"},
+            {"answered": True, "llm_call_id": "c3"}, {"answered": False, "llm_call_id": "c4"}]
+    ag.write_checks(log, groups, props, runs)
+    assert log.pending["checks"][0]["llm_call_ids"] == ["c1", "c2", "c3"]
+
+
 @pytest.mark.parametrize("kw", [
     {"kind": "vote", "result": "pass", "candidate_id": "c"},
     {"kind": "agreement", "result": "maybe", "candidate_id": "c"},

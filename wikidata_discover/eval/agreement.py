@@ -496,19 +496,23 @@ def collect(qid: str, label: str, website: str, providers: Sequence[str], sample
                 names += 1
             runs.append({"university_qid": qid, "provider": p, "sample": s, "cache_key": key,
                          "cache_file": str(cache_file), "cache_file_exists": cache_file.exists(),
-                         "missing_from_cache": missing, "schools": names, "answered": names > 0})
+                         "missing_from_cache": missing, "schools": names, "answered": names > 0,
+                         "llm_call_id": call_id})
     return proposals, runs
 
 
-def write_checks(log, groups: List[dict], proposals: List[dict]) -> None:
+def write_checks(log, groups: List[dict], proposals: List[dict], runs: Sequence[dict] = ()) -> None:
     """One agreement check per group. It passes when 2 or more providers named the
-    school. It names the group's first candidates row; detail lists all of them."""
+    school. It names the group's first candidates row; detail lists all of them.
+    llm_call_ids holds the call of every answered run in `runs`, also the runs that
+    did not name the school, because the score's denominator counts them."""
+    answered_calls = {r.get("llm_call_id") for r in runs if r.get("answered") and r.get("llm_call_id")}
     for g in groups:
         members = [proposals[i] for i in g["member_index"]]
         cands = [m["candidate_id"] for m in members if m["candidate_id"]]
         if not cands:
             continue
-        calls = sorted({m["llm_call_id"] for m in members if m["llm_call_id"]})
+        calls = sorted({m["llm_call_id"] for m in members if m["llm_call_id"]} | answered_calls)
         log.add_check(kind="agreement", result="pass" if g["n_providers"] >= 2 else "fail",
                       candidate_id=cands[0], score=g["score"], llm_call_ids=calls,
                       detail={"university_qid": g["university_qid"], "group_id": g["group_id"],
@@ -652,7 +656,7 @@ def run(args) -> Path:
                 groups = analyze_university(u["qid"], props, u["schools"], answered, u["name"])
                 for g in groups:
                     g["university_set"] = u["set"]
-                write_checks(log, groups, props)
+                write_checks(log, groups, props, runs)
                 log.flush()
             failed = [run_label(r["provider"], r["sample"]) for r in runs if not r["answered"]]
             uncached = [run_label(r["provider"], r["sample"]) for r in runs if r["missing_from_cache"]]
