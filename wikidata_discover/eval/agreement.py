@@ -267,6 +267,37 @@ def analyze_university(qid: str, proposals: List[dict], truth: Sequence[str],
     return out
 
 
+def matched_count(kept: List[dict]) -> int:
+    """How many true schools the kept groups cover: a maximum one-to-one matching of
+    the kept groups to true schools, per university. It is computed again for each
+    kept subset, so a judge that drops the correct group and keeps its duplicate
+    still covers the school once. A group's options are `truth_options`; without
+    them, a correct group counts as its own school. Pure."""
+    total = 0
+    by_u: Dict[str, List[dict]] = {}
+    for g in kept:
+        by_u.setdefault(g.get("university_qid", ""), []).append(g)
+    for gs in by_u.values():
+        edges = []
+        for i, g in enumerate(gs):
+            opts = g.get("truth_options")
+            if opts is None:
+                opts = [g.get("truth_name") or ("group", i)] if g["status"] == "correct" else []
+            edges.append(list(opts))
+        owner: Dict[str, int] = {}
+
+        def augment(i: int, seen: set) -> bool:
+            for t in edges[i]:
+                if t not in seen:
+                    seen.add(t)
+                    if t not in owner or augment(owner[t], seen):
+                        owner[t] = i
+                        return True
+            return False
+        total += sum(1 for i in range(len(edges)) if augment(i, set()))
+    return total
+
+
 def precision_by_agreement(groups: List[dict], n_providers: int, n_samples: int) -> List[dict]:
     """Precision of the groups at each agreement level: named by exactly k providers,
     by at least k providers, and by exactly k runs."""
@@ -276,7 +307,7 @@ def precision_by_agreement(groups: List[dict], n_providers: int, n_samples: int)
 
         def row(level, k, sel):
             n = len(sel)
-            c = sum(1 for g in sel if g["status"] == "correct")
+            c = matched_count(sel)      # matched again within the subset (review of pull request 25)
             return {"university_set": uset, "level": level, "k": k, "schools": n, "correct": c,
                     "wrong": n - c, "precision": round(c / n, 4) if n else ""}
         for k in range(1, n_providers + 1):

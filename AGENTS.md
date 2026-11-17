@@ -187,7 +187,9 @@ school in `eval/small_ground_truth_sources.csv`), 3 samples each (`--samples`). 
   an already matched school is a `duplicate` and counts as wrong, as a repeated name does in
   week 2. Other wrong groups are `non_academic` (library, office, hospital, admissions, ... in
   the name or the LLM's unit_type), `campus`, or `invented` (everything else; "not in the ground
-  truth", which a person must confirm).
+  truth", which a person must confirm). Each row of `precision_by_agreement.csv` matches its own subset of
+  groups to the true schools again (`matched_count`), so a duplicate kept without its first group
+  counts as correct (2026-11-17, review of pull request 25: the 1-provider precision rose from 0.12 to 0.14).
 - S1: Chapman for each pair of providers, M_t (independent lists: solve
   prod(1 - n_j/N) = 1 - r/N) for all providers together and for the samples of one provider.
   Each counted two ways: `all` (every group) and `matched` (only groups that match a true
