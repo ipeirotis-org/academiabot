@@ -259,6 +259,11 @@ Report: `results/judge/<run_id>/` (not in git).
   `dept_scorer.score` (`departments/list_scores.csv`), the lists are merged with
   `dept_names_match`, and the merged list is judged with `DEPT_JUDGE_PROMPT_TEMPLATE`.
   Department verdicts write no `checks` rows: the subunits CSV files carry no candidate ids.
+- A school with no Wikidata item has `school_qid` "none" in `dept_schools.csv`. Its lists come
+  from `subunits --no-item NAME WEBSITE PARENT_QID` (`subunits.no_item_unit`: name and website
+  as given, parent from Wikidata, qid None, so the cache key holds the name and website). Its
+  files are named `noitem-<name>` (`subunits.unit_stem`), and its candidates rows have an empty
+  parent_qid. First use: Point Park's Conservatory of Performing Arts (2026-11-17).
 - `--no-run-log` makes no LLM calls and rescores from the cache. `--compare DIR_A DIR_B`
   compares the report files, including `departments/`.
 - In a Claude Code cloud session the page fetcher cannot resolve host names (no direct DNS),

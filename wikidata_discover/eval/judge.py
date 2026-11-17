@@ -338,12 +338,21 @@ def load_dept_schools(path: Path = DEPT_SCHOOLS) -> List[dict]:
         rows = [{k: (v or "").strip() for k, v in r.items()} for r in csv.DictReader(f)]
     for r in rows:
         r["set"] = "nyu" if r["university"] == "New York University" else "other"
+        r["id"] = school_stem(r)      # the QID, or noitem-<name> for a school with no item
     return rows
 
 
-def dept_list_path(folder: Path, school_qid: str, provider: str, sample: int) -> Path:
+def school_stem(school: dict) -> str:
+    """The file name part of a school: its QID, or for a school with no item ("none")
+    the name that `subunits --no-item` gives its files."""
+    from wikidata_discover.subunits import unit_stem
+    qid = school.get("school_qid") or ""
+    return unit_stem({"qid": qid if qid.lower() not in ("", "none") else None, "label": school.get("school_label")})
+
+
+def dept_list_path(folder: Path, stem: str, provider: str, sample: int) -> Path:
     """The department CSV that `subunits <QID> --provider P --sample N` writes."""
-    return Path(folder) / f"{school_qid}_{provider}_s{sample}_departments.csv"
+    return Path(folder) / f"{stem}_{provider}_s{sample}_departments.csv"
 
 
 def read_dept_lists(folder: Path, school: dict, providers: Sequence[str],
@@ -353,16 +362,16 @@ def read_dept_lists(folder: Path, school: dict, providers: Sequence[str],
     proposals, runs = [], []
     for p in providers:
         for s in range(1, samples + 1):
-            path = dept_list_path(folder, school["school_qid"], p, s)
+            path = dept_list_path(folder, school_stem(school), p, s)
             names = []
             if path.exists():
                 with path.open() as f:
                     names = [(r.get("name") or "").strip() for r in csv.DictReader(f)]
             names = [n for n in names if n]
             for i, n in enumerate(names):
-                proposals.append({"university_qid": school["school_qid"], "provider": p, "sample": s,
+                proposals.append({"university_qid": school["id"], "provider": p, "sample": s,
                                   "index": i, "name": n, "unit_type": "department"})
-            runs.append({"school_qid": school["school_qid"], "provider": p, "sample": s, "file": str(path),
+            runs.append({"school_qid": school["id"], "provider": p, "sample": s, "file": str(path),
                          "file_exists": path.exists(), "departments": len(names), "answered": path.exists()})
     return proposals, runs
 
@@ -376,7 +385,7 @@ def score_dept_lists(truth, school: dict, proposals: List[dict], runs: List[dict
         names = [p["name"] for p in proposals if p["provider"] == r["provider"] and p["sample"] == r["sample"]]
         m = ds.score(truth, ds.ProposedList([ds.ProposedDept(n) for n in names], False, False),
                      parent=school["parent"]).metrics if r["answered"] else {}
-        out.append({"school_qid": school["school_qid"], "parent": school["parent"], "set": school["set"],
+        out.append({"school_qid": school["id"], "parent": school["parent"], "set": school["set"],
                     "provider": r["provider"], "sample": r["sample"], "answered": r["answered"],
                     "departments": r["departments"],
                     **{k: ("" if m.get(k) is None else round(m[k], 4))
@@ -390,7 +399,7 @@ def dept_groups(truth, school: dict, proposals: List[dict], runs: List[dict]) ->
     from wikidata_discover.eval import dept_scorer as ds
     true_names = [t.name for t in truth.rows if t.parent == school["parent"]]
     answered = [(r["provider"], r["sample"]) for r in runs if r["answered"]]
-    groups = agreement.analyze_university(school["school_qid"], proposals, true_names, answered,
+    groups = agreement.analyze_university(school["id"], proposals, true_names, answered,
                                           match=ds.dept_names_match)
     for g in groups:
         g["university_set"] = school["set"]
@@ -422,15 +431,15 @@ def run_departments(args, judges: Sequence[str], out_dir: Path, log) -> Dict[str
         gs = dept_groups(truth, school, props, list_runs)
         groups += gs
         label = f"{school['school_label']}, {school['university']}"
-        l, v, r = judge_university({"qid": school["school_qid"], "name": label, "set": school["set"]}, gs,
+        l, v, r = judge_university({"qid": school["id"], "name": label, "set": school["set"]}, gs,
                                    judges, ask, log, level="department", match=ds.dept_names_match)
         lists, verdicts, runs = lists + l, verdicts + v, runs + r
         if log is not None:
             log.flush()
         absent = [agreement.run_label(x["provider"], x["sample"]) for x in list_runs if not x["file_exists"]]
-        console.print(f"  {school['school_qid']} {school['school_label']}: {len(gs)} departments merged"
+        console.print(f"  {school['id']} {school['school_label']}: {len(gs)} departments merged"
                       + (f"; no list from {absent}" if absent else ""))
-    true_counts = {s["school_qid"]: sum(1 for t in truth.rows if t.parent == s["parent"]) for s in schools}
+    true_counts = {s["id"]: sum(1 for t in truth.rows if t.parent == s["parent"]) for s in schools}
     tables = analyze(groups, verdicts, judges, true_counts)
     d = out_dir / "departments"
     d.mkdir(parents=True, exist_ok=True)
