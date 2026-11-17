@@ -312,6 +312,19 @@ own, through Anya's week 4 step with `--provider` (not the first-answer fallback
 one list), 3 runs each with sample numbers, so every possible generator has its own list to
 score and to judge.
 
+Order A is the list sorted A to Z (case ignored); order B is order A reversed. Each judge call's
+cache key holds the list in its order and the sample number. Each school verdict is a `checks`
+row (kind `judge`) on the candidate of its week 3 agreement check. A returned name is mapped
+back to the list exactly, then ignoring case and punctuation, then as a name variant.
+
+**Tests:** each (order, sample) is its own call and a rerun replays all four from the cache;
+order, sample, provider, and level (school or department) each change the judge cache key; a
+bad answer is retried and never cached; flip rates count same-order and cross-order pairs and
+leave out a run with no answer; self-preference compares own and other schools at the same
+correctness; precision and recall before and after a judge, and the majority of 4 runs; a
+judge that keeps a fake school on the hand-made list is reported; a subunits sample has its own
+cache key, and no sample keeps the old key.
+
 ### Shuo, week 5 (Nov 13 to 19)
 
 **Does the page exist and name the unit?** Over Anya's `evidence` table: dead links, pages that

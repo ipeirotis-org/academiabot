@@ -225,12 +225,15 @@ def mt_estimate(captures: Sequence[set]) -> Optional[float]:
 # ─────────────────────────  ANALYSIS  ─────────────────────────
 
 def analyze_university(qid: str, proposals: List[dict], truth: Sequence[str],
-                       answered_runs: Sequence[Tuple[str, int]], university: str = "") -> List[dict]:
+                       answered_runs: Sequence[Tuple[str, int]], university: str = "",
+                       match: Optional[Callable[[str, str], bool]] = None) -> List[dict]:
     """Group the proposals of one university and score each group. Returns one dict
     per group, in a fixed order (first seen first). `answered_runs` lists the
     (provider, sample) pairs that returned an answer, the denominator of the score.
-    `university` is its name, which is ignored inside school names when they are compared."""
-    match = university_matcher(university)
+    `university` is its name, which is ignored inside school names when they are compared.
+    `match` replaces that name comparison (the department judge of week 4 compares
+    department names)."""
+    match = match or university_matcher(university)
     idx_groups = group_names(proposals, match)
     names = [[proposals[i]["name"] for i in g] for g in idx_groups]
     matched, duplicates = match_groups_to_truth(names, truth, match)
