@@ -78,10 +78,11 @@ def subunits_with_run_log(qids, argv, fetch_pages: bool = True, no_item=None) ->
     log.attach_source_patch(run_dir, identity)
     outcome, done = "failed", []
     pages = subunits.CitedPages(log)     # one fetch per cited URL for the whole run
-    jobs = [(q, None) for q in qids]
-    if no_item:     # (label, website, parent QID) of a unit with no Wikidata item
-        jobs.append((None, subunits.no_item_unit(*no_item)))
     try:
+        jobs = [(q, None) for q in qids]
+        if no_item:     # (label, website, parent QID) of a unit with no Wikidata item; inside the
+            # try, so a failed parent lookup still writes the runs row
+            jobs.append((None, subunits.no_item_unit(*no_item)))
         for qid, unit in jobs:
             try:
                 s = subunits.subunits_for(qid, log, fetch_pages=fetch_pages, pages=pages, unit=unit)

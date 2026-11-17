@@ -181,6 +181,20 @@ def test_precision_recall_before_and_after_a_judge():
     assert maj["schools_kept"] == 1 and maj["share_of_wrong_removed"] == 1.0
 
 
+def test_a_university_with_no_groups_still_counts_in_its_set_recall():
+    # Q1 found 1 of its 1 true school; Q2 (9 true schools) gave no list at all.
+    groups = [{"university_qid": "Q1", "university_set": "nyu", "group_id": "c1", "status": "correct",
+               "n_providers": 3}]
+    counts = {"Q1": 1, "Q2": 9}
+    rows = jd.precision_recall(groups, [], [], counts, {"Q1": "nyu", "Q2": "nyu"})
+    get = lambda uset: next(x for x in rows if x["method"] == "no_filter" and x["university_set"] == uset)
+    assert get("nyu")["recall"] == 0.1 and get("all")["recall"] == 0.1
+    # A set whose only university gave no groups still gets its rows, with recall 0.
+    rows = jd.precision_recall(groups, [], [], counts, {"Q1": "nyu", "Q2": "other"})
+    other = next(x for x in rows if x["method"] == "no_filter" and x["university_set"] == "other")
+    assert (other["schools_kept"], other["recall"]) == (0, 0.0)
+
+
 # ── check 1: a hand-made list with fake schools ──────────────────────────
 
 def test_hand_list_reports_each_fake_school_removed(tmp_path):
