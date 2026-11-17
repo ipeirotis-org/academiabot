@@ -467,15 +467,18 @@ def collect(qid: str, label: str, website: str, providers: Sequence[str], sample
             log=None, cache_only: bool = False) -> Tuple[List[dict], List[dict]]:
     """Ask each provider for each sample. Returns (proposals, run rows). Each named
     school becomes a candidates row (status unaligned) when a run log is active.
-    With cache_only, a sample with no cache file is not asked: its run row says
-    missing_from_cache, so a rescore never spends credit or makes an unlogged call."""
+    With cache_only, a sample with no valid cache file is not asked: its run row says
+    missing_from_cache, so a rescore never spends credit or makes an unlogged call.
+    A run is answered when it named a school or gave a valid empty answer."""
     from wikidata_discover import llm_helpers
     proposals, runs = [], []
     for p in providers:
         for s in range(1, samples + 1):
             key = llm_helpers.extract_cache_key(p, label, website, s)
             cache_file = llm_helpers._CACHE_DIR / f"{key}.json"
-            missing = cache_only and not cache_file.exists()
+            # cache_only: a file that does not hold a valid answer counts as missing,
+            # because the extractor would treat it as a miss and call the provider
+            missing = cache_only and not isinstance(llm_helpers._load_cache(key), list)
             units = [] if missing else (extractor(p)(label, website, sample=s) or [])
             call_id = llm_helpers.last_extraction_call_id
             names = 0
@@ -496,7 +499,9 @@ def collect(qid: str, label: str, website: str, providers: Sequence[str], sample
                 names += 1
             runs.append({"university_qid": qid, "provider": p, "sample": s, "cache_key": key,
                          "cache_file": str(cache_file), "cache_file_exists": cache_file.exists(),
-                         "missing_from_cache": missing, "schools": names, "answered": names > 0,
+                         "missing_from_cache": missing, "schools": names,
+                         # a valid empty answer ({"units": []}) is cached and is an answer too
+                         "answered": names > 0 or (not missing and llm_helpers._load_cache(key) == []),
                          "llm_call_id": call_id})
     return proposals, runs
 

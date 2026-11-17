@@ -531,6 +531,28 @@ def test_run_uploads_the_dirty_source_patch(monkeypatch, tmp_path):
     assert attached == [(tmp_path / "out", "abc1234-dirty-ff")]
 
 
+def test_a_valid_empty_answer_counts_as_answered_and_a_broken_cache_file_as_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path)
+    asked = []
+
+    def fake_extractor(provider):
+        def extract(label, website, sample):
+            asked.append(sample)
+            return lh._load_cache(lh.extract_cache_key(provider, label, website, sample)) or []
+        return extract
+    monkeypatch.setattr(ag, "extractor", fake_extractor)
+    key = lambda s: lh.extract_cache_key("openai", "U", "https://u.edu", s)
+    (tmp_path / f"{key(1)}.json").write_text('[{"name": "School of Law"}]')
+    (tmp_path / f"{key(2)}.json").write_text("[]")                 # a valid answer naming nothing
+    (tmp_path / f"{key(3)}.json").write_text('[{"name": "Scho')     # cut off: not an answer
+    props, runs = ag.collect("Q1", "U", "https://u.edu", ["openai"], 3, cache_only=True)
+    assert asked == [1, 2]                                          # the broken file is never asked
+    assert [r["answered"] for r in runs] == [True, True, False]
+    assert [r["missing_from_cache"] for r in runs] == [False, False, True]
+    groups = ag.analyze_university("Q1", props, [], [(r["provider"], r["sample"]) for r in runs if r["answered"]])
+    assert groups[0]["score"] == 0.5                                # 1 of the 2 answered runs
+
+
 def test_a_cache_only_rescore_needs_no_keys_and_keeps_every_provider(monkeypatch, tmp_path):
     """With --no-run-log no call is made, so a missing key must not drop a provider
     (that would change the scores) or stop the run."""

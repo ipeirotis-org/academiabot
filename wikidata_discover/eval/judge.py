@@ -561,7 +561,7 @@ def merged_groups(universities: List[dict], providers: Sequence[str], samples: i
 
 
 def cached_ask(cache_only: bool, level: str = "school"):
-    """The judge call. With cache_only, a run with no cache file is not asked (None)."""
+    """The judge call. With cache_only, a run with no valid cache file is not asked (None)."""
     from wikidata_discover import llm_helpers
     from wikidata_discover.llm_helpers import LLMHelper
 
@@ -569,8 +569,9 @@ def cached_ask(cache_only: bool, level: str = "school"):
         if cache_only:
             llm_helpers.last_judge_call_id = None
             key = llm_helpers.judge_cache_key(judge, label, names, sample, level, order)
-            if not (llm_helpers._CACHE_DIR / f"{key}.json").exists():
-                return None
+            cached = llm_helpers._load_cache(key)
+            if not (isinstance(cached, dict) and isinstance(cached.get("keep"), list)):
+                return None     # no valid answer: judge_sampled would call the provider
         return LLMHelper.judge_sampled(label, names, judge, sample, order, level)
     return ask
 
