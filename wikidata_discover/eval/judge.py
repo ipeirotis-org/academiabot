@@ -352,11 +352,13 @@ def judge_hand_list(hand: Dict[str, List[Tuple[str, str]]], universities: Dict[s
 
 def hand_summary(rows: List[dict]) -> List[dict]:
     """Per judge: fake schools removed, known wrong schools removed, and real schools
-    kept, over all runs."""
+    kept, over all answered runs. removed_every_fake_every_run needs every scheduled
+    verdict on a fake to drop it, so an unanswered run makes it False."""
     out = []
     for judge in sorted({r["judge"] for r in rows}, key=provider_order):
         mine = [r for r in rows if r["judge"] == judge and r["kept"] != ""]
         fakes = [r for r in mine if r["fake"] == "yes"]
+        all_fakes = [r for r in rows if r["judge"] == judge and r["fake"] == "yes"]
         wrongs = [r for r in mine if r["fake"] == "wrong"]
         reals = [r for r in mine if r["fake"] == "no"]
         out.append({"judge": judge, "fake_verdicts": len(fakes),
@@ -366,7 +368,7 @@ def hand_summary(rows: List[dict]) -> List[dict]:
                     "real_verdicts": len(reals), "real_kept": sum(1 for r in reals if r["kept"] == 1),
                     "fakes_kept_at_least_once": sorted({r["name"] for r in fakes if r["kept"] == 1}),
                     "known_wrong_kept_at_least_once": sorted({r["name"] for r in wrongs if r["kept"] == 1}),
-                    "removed_every_fake_every_run": bool(fakes) and all(r["kept"] == 0 for r in fakes)})
+                    "removed_every_fake_every_run": bool(all_fakes) and all(r["kept"] == 0 for r in all_fakes)})
     return out
 
 
