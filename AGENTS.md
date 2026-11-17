@@ -150,7 +150,11 @@ whose parent is not a school in the answer key is left out of every score
 only some schools, and other schools have departments with the same names (Economics).
 QIDs only break a tie between equally good matches. An empty list scores 0 recall and F1. Shuo's ground truth for
 Stern, Courant and Steinhardt is `wikidata_discover/eval/dept_ground_truth.csv` (24 rows, 2026-10-16);
-`tests/fixtures/dept_truth_sample.csv` is a copy, and a test fails if the two differ.
+`tests/fixtures/dept_truth_sample.csv` is a copy of those 24 rows, and a test fails if they differ.
+Week 4 (2026-11-17) added 15 rows checked by Shuo for 3 schools outside NYU: UT Austin's Cockrell
+School of Engineering (7), Howard's College of Engineering and Architecture (5), and Winthrop's
+College of Business and Technology (3; its Wikidata item Q101028456 has the old name "College of
+Business Administration"). Their school QIDs are in `eval/dept_schools.csv`.
 Tests: `tests/test_dept_scorer.py`.
 
 ## Agreement runs (Shuo, week 3)
@@ -249,8 +253,12 @@ Report: `results/judge/<run_id>/` (not in git).
   provider named against the others', per correctness; scope `one_provider` uses only
   one-provider schools, so agreement does not mix in), `precision_recall.csv` (no filter,
   agreement 2+ and 3, each judge per run, mean, and majority 3 of 4).
-- `--hand-list FILE` (check 1): a CSV `university_qid,name,fake`; each judge runs 4 times on
-  it. `hand_list_summary.csv` says whether each judge removed every fake school in every run.
+- `--hand-list FILE` (check 1): a CSV `university_qid,name,fake`; fake is `yes` (planted),
+  `wrong` (a known wrong school, such as a wrong week 3 group), or `no`. Each judge runs 4 times
+  on it; a fake or wrong school must be dropped. `hand_list_summary.csv` gives fakes removed,
+  known wrong removed, and real kept. Shuo's check 1 (2026-11-17): Caltech's 7 week 3 groups
+  (6 real, JPL wrong) plus 3 fakes. Every judge removed every fake in every run; Gemini kept JPL
+  in both order B runs.
 - `--departments`: the same test on departments. The lists come from
   `subunits <QID> --provider P --sample N` (new `--sample`, `llm_helpers.SUBUNIT_SAMPLE`: the
   sample is in the request and so in the cache key; without it the key is unchanged; the CSV

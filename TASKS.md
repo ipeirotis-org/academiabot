@@ -514,8 +514,8 @@ real.
 
 **Status on 2026-11-17.** The judge test ran on the 18 universities (run
 `judge-20261117T051126Z-9d8317`, 216 calls, 3,588 `checks` rows). The department test ran on
-the 3 NYU schools. It runs again when the 3 new schools are in the department ground truth.
-The command is `python -m wikidata_discover.eval.judge` (AGENTS.md, "Judge runs").
+the 6 department ground-truth schools (run `judge-20261117T060958Z-f1bf60`). Shuo's 15 new
+rows are in `eval/dept_ground_truth.csv`. Check 1 passed on NYU and on Caltech. The command is `python -m wikidata_discover.eval.judge` (AGENTS.md, "Judge runs").
 
 **Goal.** Find out whether an LLM judge helps, and how it is biased.
 

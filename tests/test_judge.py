@@ -186,17 +186,19 @@ def test_precision_recall_before_and_after_a_judge():
 def test_hand_list_reports_each_fake_school_removed(tmp_path):
     path = tmp_path / "hand.csv"
     path.write_text("university_qid,name,fake\nQ1,School of Law,no\nQ1,School of Maritime Studies,yes\n"
-                    "Q1,College of Arts and Science,\n")
+                    "Q1,College of Arts and Science,\nQ1,Jet Propulsion Laboratory,wrong\n")
     hand = jd.read_hand_list(path)
-    assert hand == {"Q1": [("School of Law", False), ("School of Maritime Studies", True),
-                           ("College of Arts and Science", False)]}
-    good = lambda label, names, judge, sample, order: [n for n in names if "Maritime" not in n]
+    assert hand == {"Q1": [("School of Law", "no"), ("School of Maritime Studies", "yes"),
+                           ("College of Arts and Science", "no"), ("Jet Propulsion Laboratory", "wrong")]}
+    good = lambda label, names, judge, sample, order: [n for n in names if "Maritime" not in n and "Jet" not in n]
     lazy = lambda label, names, judge, sample, order: list(names)
     rows = jd.judge_hand_list(hand, {"Q1": {"name": "NYU"}}, ["openai"], good)
     rows += jd.judge_hand_list(hand, {"Q1": {"name": "NYU"}}, ["gemini"], lazy)
     s = {r["judge"]: r for r in jd.hand_summary(rows)}
     assert s["openai"]["removed_every_fake_every_run"] and s["openai"]["fake_removed"] == 4
-    assert s["openai"]["real_kept"] == 8
+    assert s["openai"]["real_kept"] == 8 and s["openai"]["known_wrong_removed"] == 4
+    assert all(r["correct_verdict"] == 1 for r in rows if r["judge"] == "openai")
+    assert s["gemini"]["known_wrong_kept_at_least_once"] == ["Jet Propulsion Laboratory"]
     assert not s["gemini"]["removed_every_fake_every_run"]
     assert s["gemini"]["fakes_kept_at_least_once"] == ["School of Maritime Studies"]
 

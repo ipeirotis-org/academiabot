@@ -146,7 +146,7 @@ def _rate(num: int, den: int):
 
 def _sets_of(rows: List[dict]) -> List[str]:
     present = {r["university_set"] for r in rows}
-    return [s for s in SETS if s in present or s == "all"]
+    return [s for s in SETS[:-1] if s in present] + sorted(present - set(SETS)) + ["all"]
 
 
 def flip_rates(verdicts: List[dict], judges: Sequence[str]) -> List[dict]:
@@ -272,54 +272,62 @@ def analyze(groups: List[dict], verdicts: List[dict], judges: Sequence[str],
 
 # ─────────────────────────  CHECK 1: A HAND-MADE LIST WITH FAKE SCHOOLS  ─────────────────────────
 
-def read_hand_list(path: Path) -> Dict[str, List[Tuple[str, bool]]]:
-    """A CSV with columns university_qid, name, fake (yes or no). Returns
-    {qid: [(name, is_fake), ...]} in file order."""
-    out: Dict[str, List[Tuple[str, bool]]] = {}
+HAND_KINDS = {"yes": "yes", "y": "yes", "true": "yes", "1": "yes", "wrong": "wrong", "known_wrong": "wrong"}
+
+
+def read_hand_list(path: Path) -> Dict[str, List[Tuple[str, str]]]:
+    """A CSV with columns university_qid, name, fake. fake is yes (a planted fake), wrong
+    (a known wrong school, such as a wrong week 3 group), or no or empty (a real school).
+    Returns {qid: [(name, kind), ...]} in file order, kind being yes, wrong, or no."""
+    out: Dict[str, List[Tuple[str, str]]] = {}
     with Path(path).open() as f:
         for r in csv.DictReader(f):
             name = (r.get("name") or "").strip()
             if not name:
                 continue
-            out.setdefault(r["university_qid"].strip(), []).append(
-                (name, (r.get("fake") or "").strip().lower() in ("yes", "y", "true", "1")))
+            kind = HAND_KINDS.get((r.get("fake") or "").strip().lower(), "no")
+            out.setdefault(r["university_qid"].strip(), []).append((name, kind))
     return out
 
 
-def judge_hand_list(hand: Dict[str, List[Tuple[str, bool]]], universities: Dict[str, dict],
+def judge_hand_list(hand: Dict[str, List[Tuple[str, str]]], universities: Dict[str, dict],
                     judges: Sequence[str], ask: Callable[..., Optional[List[str]]]) -> List[dict]:
     """Each judge, 4 runs, on each hand-made list. One row per school, judge, and run:
-    kept or not, and whether the school is fake. A fake school must be dropped."""
+    kept or not, and the school's kind. A fake or known wrong school must be dropped."""
     rows = []
     for qid, items in hand.items():
         label = universities[qid]["name"]
         match = university_matcher(label)
-        fake = {n: f for n, f in items}
+        kind = {n: k for n, k in items}
         for judge in judges:
             for order, sample in RUNS:
-                names = ordered(list(fake), order)
+                names = ordered(list(kind), order)
                 kept = ask(label, names, judge, sample, order)
                 taken, _ = map_kept(kept or [], names, match)
                 for pos, n in enumerate(names, 1):
                     k = (1 if (pos - 1) in taken else 0) if kept is not None else ""
-                    rows.append({"university_qid": qid, "name": n, "fake": "yes" if fake[n] else "no",
+                    rows.append({"university_qid": qid, "name": n, "fake": kind[n],
                                  "judge": judge, "order": order, "sample": sample, "kept": k,
-                                 "correct_verdict": "" if k == "" else int(k == (0 if fake[n] else 1))})
+                                 "correct_verdict": "" if k == "" else int(k == (1 if kind[n] == "no" else 0))})
     return rows
 
 
 def hand_summary(rows: List[dict]) -> List[dict]:
-    """Per judge: fake schools removed and real schools kept, over all runs."""
+    """Per judge: fake schools removed, known wrong schools removed, and real schools
+    kept, over all runs."""
     out = []
     for judge in sorted({r["judge"] for r in rows}, key=provider_order):
         mine = [r for r in rows if r["judge"] == judge and r["kept"] != ""]
         fakes = [r for r in mine if r["fake"] == "yes"]
+        wrongs = [r for r in mine if r["fake"] == "wrong"]
         reals = [r for r in mine if r["fake"] == "no"]
-        fake_kept = sorted({r["name"] for r in fakes if r["kept"] == 1})
         out.append({"judge": judge, "fake_verdicts": len(fakes),
                     "fake_removed": sum(1 for r in fakes if r["kept"] == 0),
+                    "known_wrong_verdicts": len(wrongs),
+                    "known_wrong_removed": sum(1 for r in wrongs if r["kept"] == 0),
                     "real_verdicts": len(reals), "real_kept": sum(1 for r in reals if r["kept"] == 1),
-                    "fakes_kept_at_least_once": fake_kept,
+                    "fakes_kept_at_least_once": sorted({r["name"] for r in fakes if r["kept"] == 1}),
+                    "known_wrong_kept_at_least_once": sorted({r["name"] for r in wrongs if r["kept"] == 1}),
                     "removed_every_fake_every_run": bool(fakes) and all(r["kept"] == 0 for r in fakes)})
     return out
 
@@ -593,6 +601,8 @@ def run(args) -> Path:
         for s in summary:
             console.print(f"  {s['judge']:<10} fake removed {s['fake_removed']}/{s['fake_verdicts']}, "
                           f"real kept {s['real_kept']}/{s['real_verdicts']}"
+                          + (f", known wrong removed {s['known_wrong_removed']}/{s['known_wrong_verdicts']}"
+                             if s["known_wrong_verdicts"] else "")
                           + (f"; kept a fake: {s['fakes_kept_at_least_once']}" if s["fakes_kept_at_least_once"] else ""))
         console.print(f"\nReport: {out_dir}")
         return out_dir
