@@ -255,16 +255,20 @@ def _list_hash(names: List[str]) -> str:
 
 
 def judge_cache_key(provider: str, univ_label: str, candidates: List[str], sample: int,
-                    level: str = "school") -> str:
+                    level: str = "school", order: str = "") -> str:
     """The cache key of one sampled judge call (Shuo's week 4): provider, model, the
     judge prompt, the university, the list in its order, the sample number, and the
-    output budget. Gemini's key also says thinking is off."""
+    output budget. Gemini's key also says thinking is off. A list that reads the same
+    in reverse (one name) is the same in order A and order B, so its key also holds
+    the order; other keys do not, so they stay as they were."""
     if isinstance(sample, bool) or not isinstance(sample, int) or sample < 1:
         raise ValueError(f"sample must be a whole number of 1 or more, not {sample!r}")
     model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
     extra = f"list={_list_hash(candidates)}|sample={sample}|max_tokens={JUDGE_SAMPLED_MAX_TOKENS}"
     if provider == "gemini":
         extra += "|thinking_budget=0"
+    if order and list(candidates) == list(reversed(candidates)):
+        extra += f"|order={order}"
     return _cache_key(univ_label, provider, model, purpose="judge", prompt_hash=JUDGE_LEVELS[level][2], extra=extra)
 
 
@@ -986,7 +990,7 @@ class LLMHelper:
             return []
         model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL,
                  "gemini": config.GEMINI_MODEL}[judge_provider]
-        key = judge_cache_key(judge_provider, univ_label, candidates, sample, level)
+        key = judge_cache_key(judge_provider, univ_label, candidates, sample, level, order)
         template, slot, prompt_hash = JUDGE_LEVELS[level]
         prompt = template.replace(slot, univ_label).replace("UNITS_LIST", "\n".join(f"- {c}" for c in candidates))
         request = {"max_output_tokens": JUDGE_SAMPLED_MAX_TOKENS, "tools": [], "sample": sample,

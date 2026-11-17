@@ -22,6 +22,14 @@ def test_order_sample_and_provider_each_change_the_judge_cache_key():
     assert len(keys) == 12
 
 
+def test_a_one_name_list_gets_a_key_per_order_and_other_keys_stay_as_they_were():
+    one = ["School of Law"]
+    keys = {lh.judge_cache_key("openai", "NYU", one, s, order=o) for o in ("A", "B") for s in (1, 2)}
+    assert len(keys) == 4            # four runs, four calls, even though A and B are the same list
+    for names in (NAMES, NAMES[::-1]):
+        assert lh.judge_cache_key("openai", "NYU", names, 1, order="B") == lh.judge_cache_key("openai", "NYU", names, 1)
+
+
 def test_the_judge_cache_key_differs_from_the_extraction_key():
     assert lh.judge_cache_key("openai", "NYU", NAMES, 1) != lh.extract_cache_key("openai", "NYU", "", 1)
 
@@ -332,3 +340,34 @@ def test_a_school_with_no_item_is_found_by_its_no_item_files(tmp_path):
     school = {"school_qid": "none", "school_label": "Point Park University Conservatory of Performing Arts"}
     assert jd.school_stem(school) == "noitem-point-park-university-conservatory-of-performing-arts"
     assert jd.school_stem({"school_qid": "Q770467", "school_label": "Stern"}) == "Q770467"
+
+
+def test_a_failed_week3_lookup_still_writes_the_runs_row(monkeypatch, tmp_path):
+    from wikidata_discover import batch, cli, config, run_log
+    finished = []
+
+    class Log:
+        def attach_source_patch(self, *a): pass
+        def finish(self, outcome, summary):
+            finished.append(outcome)
+            return {}
+
+    def lookup_fails():
+        raise RuntimeError("BigQuery unreachable")
+
+    monkeypatch.setattr(config, "load_missing_keys", lambda: {})
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "test")
+    monkeypatch.setattr(jd.agreement, "universities_to_run",
+                        lambda q: [{"qid": "Q1", "name": "NYU", "website": "", "set": "eval", "schools": []}])
+    monkeypatch.setattr(jd, "merged_groups", lambda *a: [])
+    monkeypatch.setattr(jd, "week3_agreement_checks", lookup_fails)
+    monkeypatch.setattr(batch, "source_identity", lambda d: "abc")
+    monkeypatch.setattr(batch, "operator_identity", lambda: "tester")
+    monkeypatch.setattr(cli, "run_config", lambda k: {})
+    log = Log()
+    monkeypatch.setattr(run_log, "start", lambda *a, **k: log)
+    monkeypatch.setattr(run_log, "current", lambda: log)
+    monkeypatch.setattr(run_log, "describe", lambda status: "")
+    with pytest.raises(RuntimeError):
+        jd.main(["--judges", "openai", "--out", str(tmp_path / "out")])
+    assert finished == ["failed"]
