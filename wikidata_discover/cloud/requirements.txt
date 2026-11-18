@@ -10,7 +10,7 @@ requests
 tenacity
 rapidfuzz
 anthropic>=0.40.0
-google-genai
+google-genai>=1.0,<3  # 3.x defaults to API v1, where thinking_budget=0 is refused
 google-cloud-bigquery
 google-cloud-storage
 google-cloud-secret-manager

@@ -47,6 +47,15 @@ JUDGE_PROMPT_TEMPLATE = (
     "Do not invent or add units not in the list above."
 )
 
+# The same judge for departments (Shuo's week 4): SCHOOL is "<school>, <university>".
+DEPT_JUDGE_PROMPT_TEMPLATE = (
+    "You are evaluating academic departments of a school. Given the name of SCHOOL and a union of department names "
+    "proposed by multiple automated extraction systems, filter to only those that are real academic departments of SCHOOL.\n\n"
+    "Proposed departments:\nUNITS_LIST\n\n"
+    "Return a JSON object with a 'keep' key containing an array of department names you confirm as real departments. "
+    "Do not invent or add departments not in the list above."
+)
+
 UNIVERSITY_UNITS_SCHEMA = {
     "type": "object",
     "properties": {
@@ -232,6 +241,74 @@ def extract_cache_key(provider: str, univ_label: str, website: str, sample: Opti
     model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
     return _cache_key(univ_label, provider, model, extra=_extract_key_extra(provider, website, sample))
 
+
+JUDGE_PROMPT_HASH = _prompt_hash(JUDGE_PROMPT_TEMPLATE, JUDGE_KEEP_SCHEMA)
+DEPT_JUDGE_PROMPT_HASH = _prompt_hash(DEPT_JUDGE_PROMPT_TEMPLATE, JUDGE_KEEP_SCHEMA)
+JUDGE_LEVELS = {"school": (JUDGE_PROMPT_TEMPLATE, "UNIVERSITY", JUDGE_PROMPT_HASH),
+                "department": (DEPT_JUDGE_PROMPT_TEMPLATE, "SCHOOL", DEPT_JUDGE_PROMPT_HASH)}
+JUDGE_SAMPLED_MAX_TOKENS = 2048
+
+
+def _list_hash(names: List[str]) -> str:
+    """Hash of a list of names in its order: a list in another order has another hash."""
+    return hashlib.sha256(json.dumps(list(names)).encode()).hexdigest()[:16]
+
+
+def judge_cache_key(provider: str, univ_label: str, candidates: List[str], sample: int,
+                    level: str = "school") -> str:
+    """The cache key of one sampled judge call (Shuo's week 4): provider, model, the
+    judge prompt, the university, the list in its order, the sample number, and the
+    output budget. Gemini's key also says thinking is off."""
+    if isinstance(sample, bool) or not isinstance(sample, int) or sample < 1:
+        raise ValueError(f"sample must be a whole number of 1 or more, not {sample!r}")
+    model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
+    extra = f"list={_list_hash(candidates)}|sample={sample}|max_tokens={JUDGE_SAMPLED_MAX_TOKENS}"
+    if provider == "gemini":
+        extra += "|thinking_budget=0"
+    return _cache_key(univ_label, provider, model, purpose="judge", prompt_hash=JUDGE_LEVELS[level][2], extra=extra)
+
+
+def parse_judge_answer(raw_text: Optional[str]) -> List[str]:
+    """The names a judge kept, from its raw text. The JSON may be wrapped in markdown.
+    Raises ValueError when the answer is empty, not JSON, or 'keep' is not a list of
+    strings."""
+    if not raw_text:
+        raise ValueError("Empty response text")
+    match = re.search(r"\{[\s\S]*\}", raw_text)
+    payload = _parse_json_text(match.group(0) if match else raw_text)
+    kept = payload.get("keep") if isinstance(payload, dict) else None
+    if not isinstance(kept, list) or not all(isinstance(k, str) for k in kept):
+        raise ValueError("judge answer: 'keep' is not a list of strings")
+    return kept
+
+
+def _judge_request(provider: str, model: str, prompt: str):
+    """Send one judge prompt. Returns (raw SDK response, answer text)."""
+    if provider == "openai":
+        resp = _get_openai_client().with_options(**_client_options()).responses.create(
+            model=model, input=[{"role": "user", "content": prompt}],
+            text={"format": {"type": "json_schema", "name": "judge_keep", "schema": JUDGE_KEEP_SCHEMA}},
+            max_output_tokens=JUDGE_SAMPLED_MAX_TOKENS, store=False)
+        return resp, (resp.output_text if resp.output else None)
+    if provider == "anthropic":
+        resp = _get_anthropic_client().with_options(**_client_options()).messages.create(
+            model=model, max_tokens=JUDGE_SAMPLED_MAX_TOKENS, messages=[{"role": "user", "content": prompt}])
+        text = "".join(getattr(b, "text", "") or "" for b in (resp.content or []) if getattr(b, "type", "") == "text")
+        return resp, (text or None)
+    if provider == "gemini":
+        from google.genai import types as genai_types
+        resp = _get_gemini_client().models.generate_content(
+            model=model, contents=[genai_types.Content(parts=[genai_types.Part.from_text(text=prompt)])],
+            config=genai_types.GenerateContentConfig(
+                max_output_tokens=JUDGE_SAMPLED_MAX_TOKENS,
+                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+                http_options=_gemini_http_options()))
+        return resp, (resp.text or None)
+    raise ValueError(f"Unknown judge provider: {provider}")
+
+
+# The llm_calls id behind the last judge_sampled() answer (None without a run log).
+last_judge_call_id = None
 
 # Cache files read or written since the last reset. A batch runner uses this to
 # upload exactly the cache entries a run depended on, including old ones it reused.
@@ -896,6 +973,56 @@ class LLMHelper:
             raise
 
     @staticmethod
+    def judge_sampled(univ_label: str, candidates: List[str], judge_provider: str, sample: int,
+                      order: str = "", level: str = "school") -> Optional[List[str]]:
+        """One sampled run of the judge (Shuo's week 4): the same prompt as judge_union,
+        with the list in the order given. The order of the list and the sample number are
+        part of the cache key, so each (order, sample) is its own call and a rerun replays
+        it. Gemini runs with thinking off, as in the sampled extraction. Returns the names
+        the judge kept, or None when no attempt gave a valid answer (nothing is cached)."""
+        global last_judge_call_id
+        last_judge_call_id = None
+        if not candidates:
+            return []
+        model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL,
+                 "gemini": config.GEMINI_MODEL}[judge_provider]
+        key = judge_cache_key(judge_provider, univ_label, candidates, sample, level)
+        template, slot, prompt_hash = JUDGE_LEVELS[level]
+        prompt = template.replace(slot, univ_label).replace("UNITS_LIST", "\n".join(f"- {c}" for c in candidates))
+        request = {"max_output_tokens": JUDGE_SAMPLED_MAX_TOKENS, "tools": [], "sample": sample,
+                   "order": order, "list_hash": _list_hash(candidates), "level": level}
+        if judge_provider == "gemini":
+            request["thinking_budget"] = 0
+        call = {"provider": judge_provider, "model": model, "purpose": "judge",
+                "prompt": {"text": prompt, "candidates": list(candidates)}, "cache_key": key,
+                "prompt_hash": prompt_hash, "request_config": request}
+        cached = _load_cache(key)
+        if isinstance(cached, dict) and isinstance(cached.get("keep"), list):
+            last_judge_call_id = _record_cache_hit(call, key)
+            return list(cached["keep"])
+
+        for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
+            if not enough_time_for_llm_call():
+                logger.warning("judge_sampled: deadline too close, not calling for %s", univ_label)
+                break
+            call_id, t0 = None, time.time()
+            try:
+                resp, raw_text = _judge_request(judge_provider, model, prompt)
+                call_id = _record_response(call, resp, raw_text, attempt, t0)
+                kept = parse_judge_answer(raw_text)
+            except Exception as e:  # noqa: BLE001
+                if call_id is None:
+                    _record_error(call, e, attempt, t0)
+                logger.warning("judge_sampled (%s) attempt %d/%d for %s failed: %s",
+                               judge_provider, attempt, _EXTRACT_MAX_RETRIES, univ_label, e)
+                continue
+            _save_cache(key, {"keep": kept})
+            _save_cache_meta(key, call_id)
+            last_judge_call_id = call_id
+            return kept
+        return None
+
+    @staticmethod
     def choose_match(candidate: str, univ_label: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:
         """Return (qid,label) if LLM says the candidate matches one of the children, else None.
 
@@ -1181,6 +1308,7 @@ def subunit_tools(provider: str) -> list:
             "anthropic": [{"type": ANTHROPIC_SEARCH_TOOL, "name": "web_search", "max_uses": SUBUNIT_MAX_SEARCHES}],
             "gemini": [{"google_search": {}}]}[provider]
 SUBUNIT_MAX_TOKENS = 16000
+SUBUNIT_SAMPLE: Optional[int] = None   # set by subunits --sample N; part of the cache key when set
 SUBUNIT_TIMEOUT_S = 600          # one request; a web search over a whole school takes minutes
 _MAX_CONTINUATIONS = 3           # Anthropic pause_turn resumptions per request
 
@@ -1376,6 +1504,10 @@ def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[Opti
     request = {"tools": subunit_tools(provider), "max_tokens": SUBUNIT_MAX_TOKENS,
                "max_searches": SUBUNIT_MAX_SEARCHES if provider != "gemini" else None,
                "search_forced": provider == "openai"}
+    if SUBUNIT_SAMPLE is not None:
+        # Repeated samples (Shuo's week 4): the sample is part of the request, so it is in
+        # the cache key. Without a sample the key is the same as before.
+        request["sample"] = SUBUNIT_SAMPLE
     # The key holds the whole request: unit, input, tools, and limits, so a run with
     # search never reads an answer made without it.
     key = _cache_key(unit.get("label") or "", provider, model, purpose="subunits", prompt_hash=SUBUNIT_PROMPT_HASH,

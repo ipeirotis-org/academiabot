@@ -218,6 +218,57 @@ school in `eval/small_ground_truth_sources.csv`), 3 samples each (`--samples`). 
 
 Tests: `tests/test_agreement.py`.
 
+## Judge runs (Shuo, week 4)
+
+`python -m wikidata_discover.eval.judge` tests the LLM judge on the week 3 merged school lists.
+Report: `results/judge/<run_id>/` (not in git).
+
+- The merged list of a university is every week 3 group (`agreement.collect` with
+  `cache_only=True`, then `analyze_all`), one name per group (the group label). It needs the
+  162 week 3 extraction answers in `results/cache`; without them it stops, because the list
+  would differ. On 2026-11-16 the cache was rebuilt from the raw responses in the bucket
+  (`llm_calls.response_path`, parsed with the same code); a cache-only replay of week 3 gave
+  identical report files. A copy is in the project files (`week4-judge/week3_cache_restored`).
+- Each judge (OpenAI, Anthropic, Gemini) runs 4 times: order A (names sorted A to Z, case
+  ignored) samples 1 and 2, and order B (A reversed) samples 1 and 2.
+  `LLMHelper.judge_sampled()` uses the `judge_union` prompt; its cache key
+  (`judge_cache_key`) holds provider, model, prompt hash, university, the hash of the list in
+  its order, the sample, and the output budget (2048). Gemini runs with thinking off (also in
+  the key). A bad answer is retried once and never cached; no valid answer gives None (the
+  run counts as not answered, and its verdicts are blank). `judge_union` itself is unchanged.
+- Returned names are mapped back to the list (`map_kept`): exact, then case and punctuation
+  ignored, then a name variant (`university_matcher`). A returned name that fits nothing is in
+  `judge_runs.csv` (`unmapped`).
+- With the run log, each verdict is a `checks` row: kind `judge`, result pass (kept), fail
+  (dropped), or unclear (no answer), on the `candidate_id` of the week 3 agreement check of the
+  same group (`week3_agreement_checks()`, run `agreement-20261109T204358Z-32c21a`; group ids
+  are stable), with the judge call in `llm_call_ids` and judge, order, sample, and position in
+  `detail`.
+- Tables: `flip_rates.csv` (same order: A1-A2 and B1-B2; cross order: the 4 A-B pairs; order
+  effect = cross minus same), `self_preference.csv` (keep rate of schools the judge's own
+  provider named against the others', per correctness; scope `one_provider` uses only
+  one-provider schools, so agreement does not mix in), `precision_recall.csv` (no filter,
+  agreement 2+ and 3, each judge per run, mean, and majority 3 of 4).
+- `--hand-list FILE` (check 1): a CSV `university_qid,name,fake`; each judge runs 4 times on
+  it. `hand_list_summary.csv` says whether each judge removed every fake school in every run.
+- `--departments`: the same test on departments. The lists come from
+  `subunits <QID> --provider P --sample N` (new `--sample`, `llm_helpers.SUBUNIT_SAMPLE`: the
+  sample is in the request and so in the cache key; without it the key is unchanged; the CSV
+  files get `_s<N>`). Schools and their QIDs are in `eval/dept_schools.csv`, which must have a
+  row for every school whose departments are scored. Each list is scored with
+  `dept_scorer.score` (`departments/list_scores.csv`), the lists are merged with
+  `dept_names_match`, and the merged list is judged with `DEPT_JUDGE_PROMPT_TEMPLATE`.
+  Department verdicts write no `checks` rows: the subunits CSV files carry no candidate ids.
+- `--no-run-log` makes no LLM calls and rescores from the cache. `--compare DIR_A DIR_B`
+  compares the report files, including `departments/`.
+- In a Claude Code cloud session the page fetcher cannot resolve host names (no direct DNS),
+  so a `subunits` run there records every cited page as `refused` ("the host name does not
+  resolve"). Use `--no-fetch` there when pages are not needed.
+- `google-genai` is pinned below 3: version 3 calls API v1 by default, which refuses
+  `thinking_budget=0` ("Thinking is not enabled for api version v1").
+
+Tests: `tests/test_judge.py`.
+
 ## LLM integration details
 
 - `extract_divisions_openai/anthropic/gemini()`: one per provider, same output shape. Only the OpenAI call

@@ -21,7 +21,8 @@ def positive_int(value: str) -> int:
 def run_config(key_sources: dict) -> dict:
     """The configuration recorded in the runs row: providers, models, depth, and where
     each key came from (never the key itself)."""
-    return {"providers": llm_helpers.available_providers(),
+    extra = {"subunit_sample": llm_helpers.SUBUNIT_SAMPLE} if llm_helpers.SUBUNIT_SAMPLE is not None else {}
+    return {**extra, "providers": llm_helpers.available_providers(),
             "models": {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL,
                        "gemini": config.GEMINI_MODEL},
             "depth": 1, "only_provider": config.ONLY_PROVIDER, "key_sources": key_sources,
@@ -131,6 +132,8 @@ def run_cli():
     u.add_argument("--max-searches", type=positive_int, default=None,
                    help="Web searches per request (Anthropic and OpenAI). Default: 5")
     u.add_argument("--no-fetch", action="store_true", help="Do not fetch and save the cited pages")
+    u.add_argument("--sample", type=positive_int, default=None,
+                   help="Sample number (1, 2, ...) for repeated runs: each sample is its own call and cache file")
     u.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     # harvest subcommand
@@ -163,6 +166,7 @@ def run_cli():
         config.ONLY_PROVIDER = args.provider
         if args.max_searches is not None:
             llm_helpers.SUBUNIT_MAX_SEARCHES = args.max_searches
+        llm_helpers.SUBUNIT_SAMPLE = args.sample
         subunits_with_run_log(args.unit_qids, sys.argv[1:], fetch_pages=not args.no_fetch)
 
     elif args.command == "harvest":

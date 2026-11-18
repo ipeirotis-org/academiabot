@@ -218,9 +218,10 @@ def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path
         pages = CitedPages(log, fetch_page)
     evidence = pages.cite(units) if fetch_pages else {}
     rows = csv_rows(units, unit, provider, evidence)
-    full = out_dir / f"{qid}_{provider}.csv"
+    stem = f"{qid}_{provider}" + (f"_s{llm_helpers.SUBUNIT_SAMPLE}" if llm_helpers.SUBUNIT_SAMPLE is not None else "")
+    full = out_dir / f"{stem}.csv"
     write_csv(full, rows)
-    write_csv(out_dir / f"{qid}_{provider}_departments.csv", [r for r in rows if r["unit_type"] == "department"])
+    write_csv(out_dir / f"{stem}_departments.csv", [r for r in rows if r["unit_type"] == "department"])
     if log is not None:
         for u in units:
             log.add_candidate(run_id=log.run_id, invocation_id=log.invocation_id, parent_qid=qid,
