@@ -25,6 +25,10 @@ file"). An entry is used by at most one unit per run.
 
 Whenever more than one entry fits, the unit gets a new id and a flag. Ids are never guessed.
 
+Merges (week 6): an unused entry with the same QID as a unit of this run, or the unit's own
+earlier entry when the unit now took another id by QID, is recorded in "merged" as old id ->
+surviving id. A merged entry is never matched again.
+
 Storage: load() returns the register and its bucket generation; save() writes with an
 if_generation_match precondition, so two runs never overwrite each other silently. On a
 conflict the caller reloads and assigns again. When the bucket cannot be read or written,
@@ -223,6 +227,29 @@ def assign_ids(register: dict, units: List[dict], run_id: str) -> Tuple[Dict[str
     for u in units:
         if u["key"] not in ids:          # a unit whose QID fits several entries
             _new(reg, u, ids, used, how)
+
+    # Merges (week 6). An entry this run did not use is the same unit as a unit of this run
+    # when it has the same QID, or when the unit took its id by QID and the entry has the
+    # unit's name under the same parent and no QID (the unit's own id from before it was
+    # aligned). The old id then points to the surviving id, so checks and reviews still resolve.
+    merged = reg.setdefault("merged", {})
+    for u in units:
+        if u.get("is_root"):
+            continue
+        uid, names, parent = ids[u["key"]], _unit_names(u), primary_parent(u)
+        for eid, e in entries.items():
+            if eid in used or eid in merged or eid == uid:
+                continue
+            # With two units of this run on one QID (a joint unit), only the same parent decides.
+            joint = u.get("qid") and sum(1 for v in units if v.get("qid") == u["qid"]) > 1
+            same_qid = (u.get("qid") and e.get("qid") == u["qid"]
+                        and (not joint or parent in (e.get("parents") or [])))
+            own_old = (how.get(u["key"]) == "qid" and not e.get("qid") and parent in (e.get("parents") or [])
+                       and names & set(e.get("names") or []))
+            if same_qid or own_old:
+                merged[eid] = uid
+                flags.setdefault(u["key"], []).append(f"register: {eid} merged into {uid} (same unit)")
+    for u in units:
         _update_entry(reg, ids[u["key"]], u, parent_ids(u), run_id, how.get(u["key"], "new"))
     return ids, flags, reg
 

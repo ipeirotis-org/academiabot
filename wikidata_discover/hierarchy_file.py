@@ -264,6 +264,8 @@ def alignment_of(node: dict) -> Tuple[str, str]:
     if node.get("is_root"):
         return "root", "the university"
     if not node.get("qid"):
+        if node.get("search_status") == "new":
+            return "new", node.get("match_reason") or "no Wikidata item after every search"
         return "uncertain", node.get("match_reason") or NOT_IN_SNAPSHOT
     links = node.get("parent_links") or []
     if any(l["p749"] == "missing" for l in links):
@@ -280,7 +282,7 @@ class Deps:
     """Everything that talks to the network. Tests pass fakes."""
 
     def __init__(self, take_snapshot=None, fetch_unit=None, extract=None, pages=None,
-                 countries=None, is_university=None, study_away=None):
+                 countries=None, is_university=None, study_away=None, aligner=None):
         from wikidata_discover import snapshot as snapmod
         self.take_snapshot = take_snapshot or snapmod.take_snapshot
         self.fetch_unit = fetch_unit or subunits.fetch_unit
@@ -289,6 +291,8 @@ class Deps:
         self.countries = countries or wikidata_countries
         self.is_university = is_university or (lambda q: bool(subunits.fetch_unit(q).get("is_university")))
         self.study_away = load_study_away() if study_away is None else study_away
+        # Week 6: a SearchAligner, or None for week 5 behavior (the snapshot only).
+        self.aligner = aligner
 
 
 def _extract_with_provider(unit: dict) -> Tuple[List[dict], str, List[str]]:
@@ -433,6 +437,8 @@ def build_tree(root_qid: str, depth: int, deps: Deps, expand: Optional[List[str]
     if err1:
         root["children_lookup"] = f"lookup failed: {err1}"
     level1 = build_level(root, units1, prov1, ids1, snap, univ_prefixes, 1, set())
+    if deps.aligner is not None:
+        deps.aligner(level1, root, snap, univ_prefixes, root)
     nodes = [root]
     seen_qids = {n["qid"] for n in level1 if n.get("qid")}
     expand_set = {e.lower() for e in expand or []}
@@ -468,6 +474,8 @@ def build_tree(root_qid: str, depth: int, deps: Deps, expand: Optional[List[str]
             n["children_provider"] = prov
         prefixes = univ_prefixes + [n["name"]] + n.get("aliases", [])
         level2 = build_level(n, kids, prov, ids, snap, prefixes, 2, seen_qids)
+        if deps.aligner is not None:
+            deps.aligner(level2, n, snap, prefixes, root)
         for c in level2:
             if c.get("qid"):
                 seen_qids.add(c["qid"])
@@ -486,9 +494,11 @@ def build_tree(root_qid: str, depth: int, deps: Deps, expand: Optional[List[str]
                              "reason": f"not placed at level 1 or 2 (snapshot depth {u.get('depth')}, "
                                        f"tree parents {', '.join(tree_parents(snap, q)) or 'none'})"})
 
+    nodes, merged = merge_same_qid(nodes)
     _second_parents(nodes, snap, deps)
     _evidence(nodes, deps, root_qid)
-    return {"snapshot": snap, "root": root, "nodes": nodes, "left_out": left_out, "lookups": lookups}
+    return {"snapshot": snap, "root": root, "nodes": nodes, "left_out": left_out, "lookups": lookups,
+            "merged": merged}
 
 
 def _second_parents(nodes: List[dict], snap: dict, deps: Deps) -> None:
@@ -540,6 +550,107 @@ def _evidence(nodes: List[dict], deps: Deps, root_qid: str) -> None:
             n["flags"].append("no country")
 
 
+# ── week 6: search, decide, merge ────────────────────────────────────────
+
+def merge_snapshot(snap: dict, sub: dict) -> int:
+    """Add the subtree of an item that alignment found outside the snapshot (its own
+    snapshot) to the university's snapshot, so its existing children are kept. Returns
+    how many units were added. Changes `snap`."""
+    added = 0
+    for q, u in sub["units"].items():
+        if q not in snap["units"]:
+            snap["units"][q] = {**u, "in_tree": bool(u.get("in_tree")), "depth": None, "added_by_search": sub["university_qid"]}
+            added += 1
+        elif u.get("in_tree") and not snap["units"][q].get("in_tree"):
+            snap["units"][q]["in_tree"] = True
+    have = {l["statement_id"] for l in snap["links"]}
+    snap["links"] += [dict(l) for l in sub["links"] if l["statement_id"] not in have]
+    for l in snap["links"]:
+        l["parent_in_tree"] = bool((snap["units"].get(l["parent"]) or {}).get("in_tree"))
+    return added
+
+
+class SearchAligner:
+    """Week 6 alignment for every unit of a level that the snapshot did not match:
+    all searches, then an LLM decision. An item found outside the snapshot has its own
+    subtree crawled and merged, so its existing departments are kept."""
+
+    def __init__(self, searcher, mode: str = "choose", take_subtree=None, kinds=None,
+                 choose_fn=None, yes_no_fn=None):
+        from wikidata_discover import alignment
+        self.alignment, self.searcher, self.mode = alignment, searcher, mode
+        self.kinds = list(kinds or alignment.SEARCH_KINDS)
+        self.take_subtree = take_subtree
+        self.choose_fn, self.yes_no_fn = choose_fn, yes_no_fn     # fakes in tests
+        self.subtrees_added = []
+
+    def __call__(self, nodes: List[dict], parent: dict, snap: dict, prefixes: List[str], root: dict) -> None:
+        exclude = {root["qid"]} | ({parent["qid"]} | _ancestors(snap, parent["qid"]) if parent.get("qid") else set())
+        for n in nodes:
+            if n.get("qid") or n["in_scope"] == "no":
+                continue
+            unit = {"name": n["name"], "unit_type": n["unit_type"], "parent_name": parent["name"],
+                    "university": root["name"], "website": n.get("website"), "source_url": n.get("source_url"),
+                    "aliases": n.get("aliases") or []}
+            tree_fn = lambda u, n=n: [c["qid"] for c in elsewhere_matches(n["name"], snap, parent.get("qid"), prefixes)]
+            r = self.alignment.align_unit(unit, self.searcher, self.mode, self.kinds, tree_fn, exclude,
+                                          choose_fn=self.choose_fn, yes_no_fn=self.yes_no_fn)
+            n["alignment_candidates"] = r["candidates"]
+            n["wikidata_duplicates"] = r["duplicates"]
+            n["llm_call_ids"] = list(n.get("llm_call_ids") or []) + r["llm_call_ids"]
+            n["match_reason"] = r["reason"]
+            n["search_status"] = r["status"]
+            if r["status"] == "aligned":
+                n["qid"], n["origin"], n["match_method"] = r["qid"], "llm and search", "search"
+                if r["qid"] not in snap["units"] and self.take_subtree is not None:
+                    added = merge_snapshot(snap, self.take_subtree(r["qid"]))
+                    self.subtrees_added.append({"qid": r["qid"], "units_added": added})
+            if r["duplicates"]:
+                n["flags"].append("possible duplicate items on Wikidata: " + ", ".join(r["duplicates"])
+                                  + "; a person decides (never merged by us)")
+
+
+def merge_same_qid(nodes: List[dict]) -> Tuple[List[dict], List[dict]]:
+    """Our own nodes that are one unit under two names: a node that only Wikidata gave and
+    a node the LLM gave that alignment put on the same QID ("New York University Department
+    of Accounting" under NYU, and Stern's "Department of Accounting"). The LLM node survives,
+    under its parent; the Wikidata node's names become aliases, its children move to the
+    survivor, and it is listed as merged. Two LLM nodes on one QID are not merged: both lose
+    the QID and are flagged, because that is more likely a wrong choice than one unit.
+    Returns (nodes, merged). Pure apart from changing the nodes passed in."""
+    groups: Dict[str, List[dict]] = {}
+    for n in nodes:
+        if n.get("qid") and not n.get("is_root"):
+            groups.setdefault(n["qid"], []).append(n)
+    gone: Dict[str, dict] = {}
+    for q, g in groups.items():
+        if len(g) < 2:
+            continue
+        llm = [n for n in g if "llm" in n["origin"]]
+        snaps = [n for n in g if n["origin"] == "snapshot"]
+        if len(llm) >= 2:
+            for n in llm:
+                n["alignment_candidates"] = (n.get("alignment_candidates") or []) + [
+                    {"qid": q, "found_by": ["merge check"], "chosen": False}]
+                n["qid"], n["search_status"] = None, "uncertain"
+                n["match_reason"] = (f"{len(llm)} units of this tree were matched to the same item {q} "
+                                     "(" + "; ".join(x["name"] for x in llm) + "); a person decides")
+                n["flags"].append(f"same QID {q} as another unit of this tree; QID removed until a person decides")
+            continue
+        survivor = llm[0] if llm else max(snaps, key=lambda n: n["level"])
+        for m in g:
+            if m is survivor:
+                continue
+            survivor["aliases"] = list(dict.fromkeys((survivor.get("aliases") or []) + [m["name"]] + (m.get("aliases") or [])))
+            survivor["aliases"] = [a for a in survivor["aliases"] if a != survivor["name"]]
+            m["merged_into_key"], m["merged_into_name"] = survivor["key"], survivor["name"]
+            gone[m["key"]] = m
+    for n in nodes:
+        new = [gone[k]["merged_into_key"] if k in gone else k for k in n["parent_keys"]]
+        n["parent_keys"] = list(dict.fromkeys(k for k in new if k != n["key"])) or n["parent_keys"]
+    return [n for n in nodes if n["key"] not in gone], list(gone.values())
+
+
 # ── ids, file, rows ──────────────────────────────────────────────────────
 
 def register_units(nodes: List[dict]) -> List[dict]:
@@ -573,19 +684,21 @@ def finish_nodes(tree: dict, ids: Dict[str, str], flags: Dict[str, List[str]], r
             "source_url": n.get("source_url"),
             "description": "" if n.get("is_root") else description(n["unit_type"], parents[0]["name"] if parents else ""),
             "alignment_candidates": n.get("alignment_candidates") or [],
-            "wikidata_duplicates": [], "evidence": n.get("evidence") or [],
+            "wikidata_duplicates": n.get("wikidata_duplicates") or [], "evidence": n.get("evidence") or [],
             "evidence_ids": [e["evidence_id"] for e in n.get("evidence") or [] if e.get("evidence_id")],
             "children_lookup": n.get("children_lookup", ""),
             "flags": (n.get("flags") or []) + flags.get(n["key"], []),
             "provider": n.get("provider"), "llm_call_ids": n.get("llm_call_ids") or [],
             "candidate_ids": n.get("candidate_ids") or [], "run_id": run_id, "invocation_id": invocation_id,
             "is_root": bool(n.get("is_root")), "match_reason": n.get("match_reason"),
+            "search_status": n.get("search_status"),
         }
         node["parent_links"] = [{**l, "parent_id": l.pop("parent_key")} for l in parent_links(node, [
             {"key": p["key"], "qid": p["qid"]} for p in parents], snap)]
         node["alignment"], node["alignment_reason"] = alignment_of(node)
         node.pop("is_root")
         node.pop("match_reason")
+        node.pop("search_status")
         node["node_version"] = node_version(node)
         out.append(node)
     return out
@@ -593,7 +706,9 @@ def finish_nodes(tree: dict, ids: Dict[str, str], flags: Dict[str, List[str]], r
 
 def add_candidates(log, tree: dict) -> None:
     """One candidates row per LLM-proposed unit, with its alignment status."""
-    status_of = {"linked": "linked", "orphan": "orphan", "pending": "pending", "uncertain": "uncertain"}
+    # "new" is the candidates table's "missing": not on Wikidata, after every search.
+    status_of = {"linked": "linked", "orphan": "orphan", "pending": "pending", "uncertain": "uncertain",
+                 "new": "missing"}
     by_key = {n["key"]: n for n in tree["nodes"]}
     for n in tree["nodes"]:
         if n["origin"] == "snapshot" or n.get("is_root"):
@@ -601,13 +716,13 @@ def add_candidates(log, tree: dict) -> None:
         parent = by_key.get(n["parent_keys"][0]) if n["parent_keys"] else None
         tmp = {"qid": n.get("qid"), "parent_links": parent_links(
             {"qid": n.get("qid")}, [{"key": parent["key"], "qid": parent.get("qid")}] if parent else [],
-            tree["snapshot"]), "match_reason": n.get("match_reason")}
+            tree["snapshot"]), "match_reason": n.get("match_reason"), "search_status": n.get("search_status")}
         status = status_of[alignment_of(tmp)[0]]
         n["candidate_ids"] = [log.add_candidate(
             parent_qid=(parent or {}).get("qid"),
             parent_candidate_id=((parent or {}).get("candidate_ids") or [None])[0] if parent and not parent.get("qid") else None,
             name=n["name"], unit_type=n["unit_type"], status=status, matched_qid=n.get("qid"),
-            match_method="fuzzy" if n.get("qid") else "none",
+            match_method=("llm" if n.get("match_method") == "search" else "fuzzy") if n.get("qid") else "none",
             match_choices=n.get("alignment_candidates"), source_url=n.get("source_url"),
             website=n.get("website"), provider=n.get("provider"), llm_call_ids=n.get("llm_call_ids"),
             evidence_ids=[e["evidence_id"] for e in n.get("evidence") or [] if e.get("evidence_id")])]
@@ -621,7 +736,7 @@ def summary(nodes: List[dict], tree: dict) -> dict:
             out[str(n.get(key))] = out.get(str(n.get(key)), 0) + 1
         return out
     with_page = sum(1 for n in nodes if any(e.get("fact") == "unit" and e.get("outcome") == "ok" for e in n["evidence"]))
-    return {"nodes": len(nodes), "by_level": count("level"), "by_type": count("unit_type"),
+    return {"nodes": len(nodes), "merged": len(tree.get("merged") or []), "by_level": count("level"), "by_type": count("unit_type"),
             "by_alignment": count("alignment"), "by_origin": count("origin"),
             "with_saved_page": with_page, "with_flags": sum(1 for n in nodes if n["flags"]),
             "left_out": len(tree["left_out"]), "lookups": tree["lookups"]}
@@ -634,7 +749,9 @@ def hierarchy_document(root_qid: str, nodes: List[dict], tree: dict, run_id: str
             "snapshot": {"taken_at": tree["snapshot"].get("taken_at"), "counts": tree["snapshot"].get("counts"),
                          "path": tree.get("snapshot_path")},
             "register": register_info, "summary": summary(nodes, tree), "nodes": nodes,
-            "left_out": tree["left_out"]}
+            "left_out": tree["left_out"],
+            "merged": [{"name": m["name"], "qid": m.get("qid"), "origin": m["origin"],
+                        "merged_into": m["merged_into_name"]} for m in tree.get("merged") or []]}
 
 
 NODE_ROW_FIELDS = ("node_id", "level", "name", "aliases", "unit_type", "type_source", "in_scope", "origin",
@@ -672,6 +789,11 @@ def run_university(root_qid: str, depth: int, log, store: node_register.Register
                 "loaded_generation": gen, "saved_generation": new_gen, "loaded_copy": loaded_path,
                 "cross_register_generation": cross_gen, "cross_register_copy": cross_path}
     doc = hierarchy_document(root_qid, nodes, tree, log.run_id, log.invocation_id, reg_info)
+    if deps.aligner is not None:
+        doc["alignment"] = {"mode": deps.aligner.mode, "search_kinds": deps.aligner.kinds,
+                            "search_requests": deps.aligner.searcher.queries,
+                            "subtrees_added": deps.aligner.subtrees_added}
+        doc["summary"]["alignment"] = doc["alignment"]
     text = json.dumps(doc, indent=2, ensure_ascii=False, default=str)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{root_qid}.json").write_text(text)

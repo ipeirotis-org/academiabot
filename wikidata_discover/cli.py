@@ -62,7 +62,8 @@ def discover_with_run_log(qids, argv) -> None:
         config.console.print(f"[dim]{run_log.describe(status)}[/dim]")
 
 
-def hierarchy_with_run_log(qids, argv, depth: int = 2, expand=None) -> None:
+def hierarchy_with_run_log(qids, argv, depth: int = 2, expand=None, search: bool = True,
+                           decide: str = "choose") -> None:
     """discover --depth 2: one hierarchy file per university (week 5), with the run log."""
     from google.cloud import storage
     from wikidata_discover import hierarchy_file, node_register, subunits
@@ -73,14 +74,19 @@ def hierarchy_with_run_log(qids, argv, depth: int = 2, expand=None) -> None:
     run_dir = RESULTS_DIR / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     identity = source_identity(run_dir)
-    cfg = {**run_config(key_sources, depth), "expand": list(expand or []),
+    cfg = {**run_config(key_sources, depth), "expand": list(expand or []), "search": search, "decide": decide,
            "study_away_file": str(hierarchy_file.STUDY_AWAY_FILE.name)}
     log = run_log.start(run_id, command="discover", args={"argv": argv}, qids=qids,
                         who=operator_identity(), git_commit=identity, run_config=cfg)
     log.attach_source_patch(run_dir, identity)
     store = node_register.RegisterStore(storage.Client(project=config.GCP_PROJECT).bucket(config.RUNLOG_BUCKET),
                                         RESULTS_DIR / "hierarchy")
-    deps = hierarchy_file.Deps(pages=subunits.CitedPages(log))   # one fetch per cited URL for the whole run
+    aligner = None
+    if search:            # week 6: every search, then an LLM decision
+        from wikidata_discover import alignment, snapshot
+        aligner = hierarchy_file.SearchAligner(alignment.Searcher(log=log), decide,
+                                               take_subtree=lambda q: snapshot.take_snapshot(q, max_units=300))
+    deps = hierarchy_file.Deps(pages=subunits.CitedPages(log), aligner=aligner)   # one fetch per cited URL per run
     outcome, done = "failed", []
     try:
         for qid in qids:
@@ -163,6 +169,11 @@ def run_cli():
                    help="1: schools only (default). 2: the hierarchy file, with departments (week 5)")
     d.add_argument("--expand", nargs="+", default=None, metavar="QID_OR_NAME",
                    help="With --depth 2: look up level 2 only below these units (a pilot)")
+    d.add_argument("--decide", choices=("choose", "yes-no"), default="choose",
+                   help="With --depth 2: how an LLM picks the Wikidata item. choose: one item from the list "
+                        "or none (default). yes-no: one yes-or-no question per item (research question A1)")
+    d.add_argument("--no-search", action="store_true",
+                   help="With --depth 2: align against the snapshot only, as in week 5")
     d.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     u = sub.add_parser("subunits", help="Ask an AI for the sub-units of a university or school")
@@ -196,10 +207,11 @@ def run_cli():
         bad = [q for q in args.university_qids if not is_qid(q)]
         if bad:
             raise SystemExit("discover: give Q-IDs such as Q49210. Bad: " + ", ".join(bad))
-        if args.expand and args.depth != 2:
-            raise SystemExit("discover: --expand needs --depth 2. Nothing was run.")
+        if (args.expand or args.no_search or args.decide != "choose") and args.depth != 2:
+            raise SystemExit("discover: --expand, --no-search, and --decide need --depth 2. Nothing was run.")
         if args.depth == 2:
-            hierarchy_with_run_log(args.university_qids, sys.argv[1:], depth=2, expand=args.expand)
+            hierarchy_with_run_log(args.university_qids, sys.argv[1:], depth=2, expand=args.expand,
+                                   search=not args.no_search, decide=args.decide)
         else:
             discover_with_run_log(args.university_qids, sys.argv[1:])
 

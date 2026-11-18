@@ -90,7 +90,7 @@ class World:
         return [dict(u) for u in self.answers.get(who, [])], "anthropic", [f"call-{who}"]
 
     def fetch_unit(self, qid):
-        u = self.snap["units"][qid]
+        u = self.snap["units"].get(qid) or {"label": qid, "P856": []}     # an item outside the snapshot
         return {"qid": qid, "label": u["label"], "website": (u["P856"] or [{}])[0].get("value"),
                 "country": "United States", "parent_label": None if qid == "Q1" else "Test University"}
 

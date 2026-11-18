@@ -1402,3 +1402,171 @@ def _subunits_from(provider: str, unit: Dict[str, Any], mode: str) -> Tuple[Opti
         _save_cache_meta(key, call_ids[-1])
         return units, [i for i in call_ids if i]
     return None, []
+
+
+# ─────────────────────────  ALIGNMENT DECISIONS (Anya, week 6)  ─────────────────────────
+# Is a unit one of the Wikidata items the searches found? Two ways to decide (research
+# question A1): choose one item from the whole list, or none (the default); or one
+# yes-or-no question per item (behind --decide yes-no). Both use structured JSON, and
+# every answer is cached and recorded in the run log with purpose "match".
+
+ALIGN_SYSTEM = (
+    "You decide whether a unit of a university (a school, department, program, center, or campus) "
+    "already has an item on Wikidata. Compare the unit with each Wikidata item: the name and other "
+    "names, the type, the parent organization, the website, and the country. An item counts only if "
+    "it is the same organizational unit, not a related one: not the university itself, not a parent "
+    "or a sub-unit, not a building, a degree, a journal, a person, or a category page. A unit can "
+    "have an old name on Wikidata. Two items can be the same unit (a duplicate on Wikidata)."
+)
+
+ALIGN_CHOOSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "choice": {"type": "string", "description": "The QID of the item that is this unit, or \"none\"."},
+        "also_same_unit": {"type": "array", "items": {"type": "string"},
+                           "description": "Other QIDs in the list that are the same unit (duplicates)."},
+        "reason": {"type": "string"},
+    },
+    "required": ["choice", "also_same_unit", "reason"],
+    "additionalProperties": False,
+}
+
+ALIGN_YES_NO_SCHEMA = {
+    "type": "object",
+    "properties": {"same_unit": {"type": "boolean"}, "reason": {"type": "string"}},
+    "required": ["same_unit", "reason"],
+    "additionalProperties": False,
+}
+
+ALIGN_MAX_TOKENS = 400
+
+
+def describe_unit_for_alignment(unit: Dict[str, Any]) -> str:
+    """The unit as the decision prompt shows it. Pure."""
+    return (f"Unit: {unit.get('name')}\nType: {unit.get('unit_type') or 'unknown'}\n"
+            f"Parent: {unit.get('parent_name') or 'unknown'}\nUniversity: {unit.get('university') or 'unknown'}\n"
+            f"Website: {unit.get('website') or 'unknown'}\nSource page: {unit.get('source_url') or 'unknown'}")
+
+
+def describe_item_for_alignment(c: Dict[str, Any]) -> str:
+    """One Wikidata item as the decision prompt shows it. Pure."""
+    def j(xs):
+        return "; ".join(x for x in xs or [] if x) or "none"
+    return (f"{c['qid']}: {c.get('label') or c['qid']}\n  description: {c.get('description') or 'none'}\n"
+            f"  other names: {j(c.get('aliases'))}\n  instance of: {j(c.get('p31'))}\n"
+            f"  parent organization or part of: {j(c.get('parents'))}\n  website: {j(c.get('websites'))}\n"
+            f"  country: {j(c.get('countries'))}")
+
+
+def align_choose_prompt(unit: Dict[str, Any], candidates: List[Dict[str, Any]]) -> str:
+    items = "\n".join(describe_item_for_alignment(c) for c in candidates)
+    return (f"{describe_unit_for_alignment(unit)}\n\nWikidata items found by search:\n{items}\n\n"
+            "Which item is this unit? Give its QID as choice, or \"none\" if no item is this unit. "
+            "List in also_same_unit any other item in the list that is the same unit too. "
+            "Reply with one JSON object.")
+
+
+def align_yes_no_prompt(unit: Dict[str, Any], candidate: Dict[str, Any]) -> str:
+    return (f"{describe_unit_for_alignment(unit)}\n\nWikidata item:\n{describe_item_for_alignment(candidate)}\n\n"
+            "Is this Wikidata item the same unit? Reply with one JSON object: same_unit true or false, and a reason.")
+
+
+def _align_json(purpose_label: str, prompt: str, schema: dict, logged: dict) -> Tuple[Dict[str, Any], List[str], Optional[str]]:
+    """One alignment decision as JSON, from the cache or the first provider that answers
+    with valid JSON (OpenAI, then Anthropic, then Gemini; or only --provider).
+    Returns (payload, llm_call_ids, provider), with no shared state, so several decisions
+    can run at the same time. Raises LLMUnavailable when no provider answers."""
+    call_ids: List[str] = []
+    providers = chosen([("openai", config.LLM_MODEL), ("anthropic", config.ANTHROPIC_MODEL),
+                        ("gemini", config.GEMINI_MODEL)])
+    configured = [n for n, on in available_providers().items() if on and config.ONLY_PROVIDER in (None, n)]
+    phash = _prompt_hash(ALIGN_SYSTEM, schema, prompt)
+    key = _cache_key(purpose_label, "align", "|".join(m for _, m in providers), purpose="match",
+                     prompt_hash=phash, extra=json.dumps({"configured": configured, "max_tokens": ALIGN_MAX_TOKENS}))
+
+    def call_fields(provider, model):
+        return {"provider": provider, "model": model, "purpose": "match", "cache_key": key, "prompt_hash": phash,
+                "prompt": {"system": ALIGN_SYSTEM, "user": prompt, "schema": schema, **logged},
+                "request_config": {"step": "align", "decide": purpose_label, "tools": [],
+                                   "max_tokens": ALIGN_MAX_TOKENS, "configured_providers": configured}}
+
+    cached = _load_cache(key)
+    if isinstance(cached, dict) and "payload" in cached:
+        model = dict(providers).get(cached.get("provider"))
+        call_ids = [i for i in [_record_cache_hit(call_fields(cached.get("provider"), model), key)] if i]
+        return cached["payload"], call_ids, cached.get("provider")
+    for provider, model in providers:
+        if not enough_time_for_llm_call():
+            raise LLMDeadline("no time left for an alignment decision before the deadline")
+        call, t0, text = call_fields(provider, model), time.time(), None
+        try:
+            if provider == "openai":
+                require_key("OPENAI_API_KEY", config.OPENAI_API_KEY)
+                resp = _get_openai_client().with_options(**_client_options()).responses.create(
+                    model=model, instructions=ALIGN_SYSTEM, input=[{"role": "user", "content": prompt}],
+                    text={"format": {"type": "json_schema", "name": "align", "schema": schema, "strict": True}},
+                    max_output_tokens=ALIGN_MAX_TOKENS, store=False)
+                text = resp.output_text if resp.output else None
+            elif provider == "anthropic":
+                require_key("ANTHROPIC_API_KEY", config.ANTHROPIC_API_KEY)
+                resp = _get_anthropic_client().with_options(**_client_options()).messages.create(
+                    model=model, max_tokens=ALIGN_MAX_TOKENS,
+                    system=ALIGN_SYSTEM + "\nReply with one JSON object and nothing else, with these fields: "
+                    + json.dumps(schema["properties"]),
+                    messages=[{"role": "user", "content": prompt}])
+                text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+            else:
+                require_key("GOOGLE_API_KEY", config.GOOGLE_API_KEY)
+                from google.genai import types as genai_types
+                resp = _get_gemini_client().models.generate_content(
+                    model=model, contents=[genai_types.Content(parts=[genai_types.Part.from_text(text=prompt)])],
+                    config=genai_types.GenerateContentConfig(
+                        system_instruction=ALIGN_SYSTEM, max_output_tokens=ALIGN_MAX_TOKENS,
+                        response_mime_type="application/json", http_options=_gemini_http_options(),
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=0)))
+                text = resp.text
+        except ValueError as e:              # no key: nothing was sent
+            logger.debug("alignment decision: %s not available (%s)", provider, e)
+            continue
+        except Exception as e:  # noqa: BLE001 - recorded, then the next provider
+            call_ids.append(_record_error(call, e, 1, t0))
+            logger.warning("alignment decision: %s failed (%s); trying the next provider", provider, e)
+            continue
+        call_id = _record_response(call, resp, text, 1, t0)
+        call_ids.append(call_id)
+        try:
+            payload = _parse_json_text(re.search(r"\{[\s\S]*\}", text or "").group(0))
+            missing = [k for k in schema["required"] if k not in payload]
+            if missing:
+                raise ValueError(f"missing fields {missing}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("alignment decision: %s gave no valid JSON (%s); trying the next provider", provider, e)
+            continue
+        _save_cache(key, {"payload": payload, "provider": provider})
+        _save_cache_meta(key, call_id)
+        return payload, [i for i in call_ids if i], provider
+    raise LLMUnavailable("no provider could make the alignment decision")
+
+
+def _decide_choose(unit: Dict[str, Any], candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
+    payload, ids, provider = _align_json("choose", align_choose_prompt(unit, candidates), ALIGN_CHOOSE_SCHEMA,
+                          {"unit": unit, "choices": [c["qid"] for c in candidates]})
+    allowed = {c["qid"] for c in candidates}
+    choice = str(payload.get("choice") or "none").strip()
+    if choice not in allowed:
+        choice = "none"          # an answer outside the list is never used
+    also = [q for q in payload.get("also_same_unit") or [] if q in allowed and q != choice]
+    return {"choice": None if choice == "none" else choice, "also_same_unit": also,
+            "reason": str(payload.get("reason") or ""), "llm_call_ids": ids, "provider": provider}
+
+
+def _decide_yes_no(unit: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
+    payload, ids, provider = _align_json("yes_no", align_yes_no_prompt(unit, candidate), ALIGN_YES_NO_SCHEMA,
+                          {"unit": unit, "choices": [candidate["qid"]]})
+    return {"same_unit": payload.get("same_unit") is True, "reason": str(payload.get("reason") or ""),
+            "llm_call_ids": ids, "provider": provider}
+
+
+# LLMHelper entry points (all LLM calls go through LLMHelper).
+LLMHelper.decide_alignment_choose = staticmethod(_decide_choose)
+LLMHelper.decide_alignment_yes_no = staticmethod(_decide_yes_no)
