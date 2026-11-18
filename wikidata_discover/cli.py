@@ -63,7 +63,7 @@ def discover_with_run_log(qids, argv) -> None:
         config.console.print(f"[dim]{run_log.describe(status)}[/dim]")
 
 
-def subunits_with_run_log(qids, argv, fetch_pages: bool = True) -> None:
+def subunits_with_run_log(qids, argv, fetch_pages: bool = True, no_item=None) -> None:
     """Ask for the sub-units of each QID and record the run in the run log."""
     from wikidata_discover import subunits
     from wikidata_discover.batch import operator_identity, source_identity, RESULTS_DIR
@@ -78,10 +78,14 @@ def subunits_with_run_log(qids, argv, fetch_pages: bool = True) -> None:
     log.attach_source_patch(run_dir, identity)
     outcome, done = "failed", []
     pages = subunits.CitedPages(log)     # one fetch per cited URL for the whole run
+    jobs = [(q, None) for q in qids]
+    if no_item:     # (label, website, parent QID) of a unit with no Wikidata item
+        jobs.append((None, subunits.no_item_unit(*no_item)))
     try:
-        for qid in qids:
+        for qid, unit in jobs:
             try:
-                s = subunits.subunits_for(qid, log, fetch_pages=fetch_pages, pages=pages)
+                s = subunits.subunits_for(qid, log, fetch_pages=fetch_pages, pages=pages, unit=unit)
+                qid = qid or subunits.unit_stem(unit)
                 done.append(s)
                 config.console.print(f"{qid} {s['label']}: {s['outcome']}, {s['units']} sub-units from {s['provider']} "
                                      f"{s['by_type']}, {s['no_url']} without a URL, cited pages {s['pages']}. "
@@ -126,7 +130,9 @@ def run_cli():
     d.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     u = sub.add_parser("subunits", help="Ask an AI for the sub-units of a university or school")
-    u.add_argument("unit_qids", nargs="+", help="Q-IDs of units (e.g. Q770467 for NYU Stern)")
+    u.add_argument("unit_qids", nargs="*", help="Q-IDs of units (e.g. Q770467 for NYU Stern)")
+    u.add_argument("--no-item", nargs=3, metavar=("NAME", "WEBSITE", "PARENT_QID"), default=None,
+                   help="Also a unit with no Wikidata item: its name, its website, and its parent's Q-ID")
     u.add_argument("--provider", choices=config.PROVIDERS, default=None,
                    help="Run one AI alone. Default: Anthropic, then OpenAI, then Gemini")
     u.add_argument("--max-searches", type=positive_int, default=None,
@@ -161,13 +167,18 @@ def run_cli():
         bad = [q for q in args.unit_qids if not is_qid(q)]
         if bad:
             raise SystemExit("subunits: give Q-IDs such as Q770467. Bad: " + ", ".join(bad))
+        if not args.unit_qids and not args.no_item:
+            raise SystemExit("subunits: give Q-IDs, or --no-item NAME WEBSITE PARENT_QID")
+        if args.no_item and (not is_qid(args.no_item[2]) or not args.no_item[1].startswith(("http://", "https://"))):
+            raise SystemExit("subunits --no-item: give a name, a website that starts with http, and a parent Q-ID")
         if args.debug:
             logging.basicConfig(level=logging.DEBUG, force=True)
         config.ONLY_PROVIDER = args.provider
         if args.max_searches is not None:
             llm_helpers.SUBUNIT_MAX_SEARCHES = args.max_searches
         llm_helpers.SUBUNIT_SAMPLE = args.sample
-        subunits_with_run_log(args.unit_qids, sys.argv[1:], fetch_pages=not args.no_fetch)
+        extra = {"no_item": tuple(args.no_item)} if args.no_item else {}
+        subunits_with_run_log(args.unit_qids, sys.argv[1:], fetch_pages=not args.no_fetch, **extra)
 
     elif args.command == "harvest":
         fetch_us_universities()

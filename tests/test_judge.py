@@ -310,3 +310,9 @@ def test_compare_dirs_finds_a_changed_or_missing_file(tmp_path):
 def test_the_department_judge_has_its_own_prompt_and_key():
     assert lh.judge_cache_key("openai", "Stern", NAMES, 1, "department") != lh.judge_cache_key("openai", "Stern", NAMES, 1)
     assert "departments" in lh.DEPT_JUDGE_PROMPT_TEMPLATE and "SCHOOL" in lh.DEPT_JUDGE_PROMPT_TEMPLATE
+
+
+def test_a_school_with_no_item_is_found_by_its_no_item_files(tmp_path):
+    school = {"school_qid": "none", "school_label": "Point Park University Conservatory of Performing Arts"}
+    assert jd.school_stem(school) == "noitem-point-park-university-conservatory-of-performing-arts"
+    assert jd.school_stem({"school_qid": "Q770467", "school_label": "Stern"}) == "Q770467"

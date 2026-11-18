@@ -663,3 +663,42 @@ def test_same_name_rows_with_different_urls_stay_separate_and_rows_without_urls_
     assert [(u["name"], u["source_url"]) for u in units] == [
         ("Graduate Program", "https://a.example/econ"), ("Graduate Program", "https://a.example/math"),
         ("Marketing", None)]
+
+
+# ── a unit with no Wikidata item (Shuo's week 4) ─────────────────────────
+
+def test_unit_stem_is_the_qid_or_a_name_for_a_unit_with_no_item():
+    assert subunits.unit_stem({"qid": "Q770467", "label": "Stern"}) == "Q770467"
+    assert subunits.unit_stem({"qid": None, "label": "Point Park University Conservatory of Performing Arts"}) == \
+        "noitem-point-park-university-conservatory-of-performing-arts"
+
+
+def test_a_unit_with_no_item_runs_under_its_parent(monkeypatch, tmp_path):
+    unit = subunits.no_item_unit("Conservatory of Performing Arts", "https://conservatory.example/", "Q770467",
+                                 fetch=wikidata_tree())
+    assert (unit["qid"], unit["parent_label"], unit["parent_qid"]) == (None, "NYU Stern School of Business", "Q770467")
+    seen = []
+    monkeypatch.setattr(LLMHelper, "extract_subunits",
+                        staticmethod(lambda u: seen.append(u) or lh.normalize_subunits(ANSWER)))
+    monkeypatch.setattr(lh, "last_subunit_provider", "anthropic")
+    monkeypatch.setattr(lh, "last_subunit_call_ids", ["c1"])
+    log = run_log.RunLog("subunits-test", results_dir=tmp_path, enabled=False)
+    s = subunits.subunits_for(None, log, out_dir=tmp_path, fetch=wikidata_tree(), fetch_pages=False, unit=unit)
+    assert seen == [unit]
+    assert s["university_qid"] == "Q49210"            # found by walking up from the parent
+    assert (tmp_path / "noitem-conservatory-of-performing-arts_anthropic.csv").exists()
+    assert "Website: https://conservatory.example/" in lh.subunit_input(unit)
+
+
+@pytest.mark.parametrize("argv", [
+    ["subunits"],
+    ["subunits", "--no-item", "Conservatory", "not-a-url", "Q7208107"],
+    ["subunits", "--no-item", "Conservatory", "https://x.example/", "Point Park"],
+])
+def test_the_cli_refuses_a_bad_no_item_request(monkeypatch, argv):
+    import sys
+    from wikidata_discover import cli
+    monkeypatch.setattr(sys, "argv", ["prog", *argv])
+    monkeypatch.setattr(cli, "subunits_with_run_log", lambda *a, **k: pytest.fail("must not run"))
+    with pytest.raises(SystemExit):
+        cli.run_cli()

@@ -70,6 +70,23 @@ def fetch_unit(qid: str) -> Dict[str, Any]:
     return unit_from_bindings(qid, flatten(execute_sparql_bindings(UNIT_QUERY % {"q": qid})))
 
 
+def no_item_unit(label: str, website: str, parent_qid: str, fetch=fetch_unit) -> Dict[str, Any]:
+    """A unit that has no Wikidata item (Shuo's week 4: a small college's school): its name
+    and website as given, and its parent read from Wikidata. qid is None."""
+    parent = fetch(parent_qid)
+    return {"qid": None, "label": label, "website": website, "country": None,
+            "parent_qid": parent_qid, "parent_qids": [parent_qid], "parent_label": parent.get("label"),
+            "is_university": False, "is_system": False}
+
+
+def unit_stem(unit: Dict[str, Any]) -> str:
+    """The file name part for a unit: its QID, or "noitem-" and its name in lower case
+    with every other character a hyphen when it has no item. Pure."""
+    if unit.get("qid"):
+        return unit["qid"]
+    return "noitem-" + (re.sub(r"[^a-z0-9]+", "-", (unit.get("label") or "").lower()).strip("-")[:60] or "unit")
+
+
 MAX_LEVELS_UP = 6
 
 
@@ -194,7 +211,8 @@ def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
 
 def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path] = None,
                  fetch=fetch_unit, fetch_pages: bool = True, fetch_page=fetcher.fetch,
-                 pages: Optional[CitedPages] = None, university_qid: Optional[str] = None) -> Dict[str, Any]:
+                 pages: Optional[CitedPages] = None, university_qid: Optional[str] = None,
+                 unit: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Ask for one unit's sub-units, fetch and save each cited page once, write the two
     CSV files, and add a candidates row per sub-unit with its evidence id. `pages` is the
     run's CitedPages, so a page another QID of the run already fetched is reused; without
@@ -205,7 +223,7 @@ def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path
     from as university_qid; without it, find_university walks up Wikidata. Returns a short
     summary, with university_qid for the next level."""
     out_dir = out_dir or OUT_DIR
-    unit = fetch(qid)
+    unit = unit or fetch(qid)     # a unit with no item (no_item_unit) is given, with qid None
     if university_qid is None:
         university_qid = find_university(unit, fetch)
         if university_qid is None:
@@ -218,7 +236,7 @@ def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path
         pages = CitedPages(log, fetch_page)
     evidence = pages.cite(units) if fetch_pages else {}
     rows = csv_rows(units, unit, provider, evidence)
-    stem = f"{qid}_{provider}" + (f"_s{llm_helpers.SUBUNIT_SAMPLE}" if llm_helpers.SUBUNIT_SAMPLE is not None else "")
+    stem = f"{qid or unit_stem(unit)}_{provider}" + (f"_s{llm_helpers.SUBUNIT_SAMPLE}" if llm_helpers.SUBUNIT_SAMPLE is not None else "")
     full = out_dir / f"{stem}.csv"
     write_csv(full, rows)
     write_csv(out_dir / f"{stem}_departments.csv", [r for r in rows if r["unit_type"] == "department"])
