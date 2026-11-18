@@ -80,3 +80,5 @@ wikidata_discover/results/dept_scores/
 
 # Week 4 sub-unit CSVs (local outputs, like results/reports/)
 wikidata_discover/results/subunits/
+# Week 5 hierarchy files and the local read-only register copy (the bucket keeps both)
+wikidata_discover/results/hierarchy/
