@@ -43,8 +43,8 @@ class FakeWikidata:
                 d = self.items.get(x)
                 if d:
                     rows.append({"item": uri(x), "label": {"value": d["label"]},
-                                 **({"p31": uri(d["p31"])} if d.get("p31") else {}),
-                                 **({"p31Label": {"value": d["p31_label"]}} if d.get("p31_label") else {})})
+                                 **({"p31s": {"value": d["p31"]}} if d.get("p31") else {}),
+                                 **({"p31Labels": {"value": d["p31_label"]}} if d.get("p31_label") else {})})
             return rows
         raise AssertionError("unexpected query: " + q[:80])
 
@@ -257,3 +257,13 @@ def test_an_item_found_outside_the_snapshot_brings_its_subtree(tmp_path, monkeyp
     assert music["qid"] == "Q70" and music["alignment"] == "orphan"     # no P749 to the university
     assert by_name(doc)["Department of Piano (Wikidata)"]["parent_ids"] == [music["node_id"]]
     assert doc["alignment"]["subtrees_added"] == [{"qid": "Q70", "units_added": 2}]
+
+
+def test_details_come_one_row_per_item_with_joined_values():
+    rows = [{"item": {"value": "http://www.wikidata.org/entity/Q5"}, "label": {"value": "X School"},
+             "aliases": {"value": "XS|X"}, "p31s": {"value": "Q3918|Q1"}, "p31Labels": {"value": "university"},
+             "parents": {"value": "Q9"}, "sites": {"value": "https://x.edu"}}]
+    d = al.parse_details(rows)["Q5"]
+    assert d["aliases"] == ["XS", "X"] and d["p31_qids"] == ["Q3918", "Q1"] and d["parent_qids"] == ["Q9"]
+    assert d["countries"] == [] and d["websites"] == ["https://x.edu"]
+    assert "GROUP BY ?item" in al.details_query(["Q5"])

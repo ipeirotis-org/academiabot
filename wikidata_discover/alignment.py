@@ -37,6 +37,7 @@ SEARCH_KINDS = ("prefix", "fulltext", "university_name", "other_names", "website
 DECIDE_MODES = ("choose", "yes-no")
 PER_SEARCH = 7            # results kept from one search request
 MAX_CANDIDATES = 12       # items shown to the LLM for one unit
+DETAILS_BATCH = 20        # items per details query
 SKIP_P31 = {"Q4167836": "Wikimedia category", "Q4167410": "disambiguation page", "Q5": "human",
             "Q13442814": "scholarly article", "Q11266439": "Wikimedia template", "Q17633526": "Wikinews article"}
 
@@ -84,18 +85,29 @@ def website_query(url: str) -> Optional[str]:
 
 
 def details_query(qids: Iterable[str]) -> str:
+    """One row per item: the many values (aliases, types, parents, websites, countries) are
+    joined with "|". Without the grouping, the query returned one row per combination of
+    values, and for items with many aliases the answer passed 270 KB and arrived cut off."""
     values = " ".join(f"wd:{q}" for q in qids)
-    return f"""SELECT ?item ?label ?desc ?alias ?p31 ?p31Label ?parent ?parentLabel ?site ?countryLabel WHERE {{
+    lab = lambda v, out: (f'OPTIONAL {{ {v} rdfs:label {out} . FILTER(LANG({out}) = "en") }}')
+    return f"""SELECT ?item (SAMPLE(?l) AS ?label) (SAMPLE(?d) AS ?desc)
+  (GROUP_CONCAT(DISTINCT ?a; separator="|") AS ?aliases)
+  (GROUP_CONCAT(DISTINCT STRAFTER(STR(?t), "entity/"); separator="|") AS ?p31s)
+  (GROUP_CONCAT(DISTINCT ?tl; separator="|") AS ?p31Labels)
+  (GROUP_CONCAT(DISTINCT STRAFTER(STR(?p), "entity/"); separator="|") AS ?parents)
+  (GROUP_CONCAT(DISTINCT ?pl; separator="|") AS ?parentLabels)
+  (GROUP_CONCAT(DISTINCT STR(?s); separator="|") AS ?sites)
+  (GROUP_CONCAT(DISTINCT ?cl; separator="|") AS ?countryLabels)
+WHERE {{
   VALUES ?item {{ {values} }}
-  OPTIONAL {{ ?item rdfs:label ?label . FILTER(LANG(?label) = "en") }}
-  OPTIONAL {{ ?item schema:description ?desc . FILTER(LANG(?desc) = "en") }}
-  OPTIONAL {{ ?item skos:altLabel ?alias . FILTER(LANG(?alias) = "en") }}
-  OPTIONAL {{ ?item wdt:P31 ?p31 . }}
-  OPTIONAL {{ {{ ?item wdt:P749 ?parent }} UNION {{ ?item wdt:P361 ?parent }} }}
-  OPTIONAL {{ ?item wdt:P856 ?site . }}
-  OPTIONAL {{ ?item wdt:P17 ?country . }}
-  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
-}}"""
+  {lab("?item", "?l")}
+  OPTIONAL {{ ?item schema:description ?d . FILTER(LANG(?d) = "en") }}
+  OPTIONAL {{ ?item skos:altLabel ?a . FILTER(LANG(?a) = "en") }}
+  OPTIONAL {{ ?item wdt:P31 ?t . {lab("?t", "?tl")} }}
+  OPTIONAL {{ {{ ?item wdt:P749 ?p }} UNION {{ ?item wdt:P361 ?p }} {lab("?p", "?pl")} }}
+  OPTIONAL {{ ?item wdt:P856 ?s . }}
+  OPTIONAL {{ ?item wdt:P17 ?c . {lab("?c", "?cl")} }}
+}} GROUP BY ?item"""
 
 
 def _qid(uri: Optional[str]) -> Optional[str]:
@@ -115,22 +127,20 @@ def parse_items(bindings: List[dict]) -> List[str]:
 
 def parse_details(bindings: List[dict]) -> Dict[str, dict]:
     """{qid: label, description, aliases, p31 (labels), p31_qids, parents (labels),
-    parent_qids, websites, countries}. Pure."""
+    parent_qids, websites, countries} from the grouped rows of details_query. Pure."""
+    def parts(b, k):
+        v = (b.get(k) or {}).get("value") or ""
+        return [x for x in v.split("|") if x]
     out: Dict[str, dict] = {}
     for b in bindings:
         q = _qid((b.get("item") or {}).get("value"))
         if not q:
             continue
-        d = out.setdefault(q, {"qid": q, "label": None, "description": None, "aliases": [], "p31": [],
-                               "p31_qids": [], "parents": [], "parent_qids": [], "websites": [], "countries": []})
-        v = lambda k: (b.get(k) or {}).get("value")
-        d["label"] = d["label"] or v("label")
-        d["description"] = d["description"] or v("desc")
-        for key, val in (("aliases", v("alias")), ("p31", v("p31Label")), ("p31_qids", _qid(v("p31"))),
-                         ("parents", v("parentLabel")), ("parent_qids", _qid(v("parent"))),
-                         ("websites", v("site")), ("countries", v("countryLabel"))):
-            if val and val not in d[key]:
-                d[key].append(val)
+        out[q] = {"qid": q, "label": (b.get("label") or {}).get("value"),
+                  "description": (b.get("desc") or {}).get("value"),
+                  "aliases": parts(b, "aliases"), "p31": parts(b, "p31Labels"), "p31_qids": parts(b, "p31s"),
+                  "parents": parts(b, "parentLabels"), "parent_qids": parts(b, "parents"),
+                  "websites": parts(b, "sites"), "countries": parts(b, "countryLabels")}
     return out
 
 
@@ -216,8 +226,8 @@ class Searcher:
     def details(self, qids: List[str]) -> Dict[str, dict]:
         out: Dict[str, dict] = {}
         qids = sorted(set(qids))
-        for i in range(0, len(qids), 40):
-            out.update(parse_details(self.ask(details_query(qids[i:i + 40]))))
+        for i in range(0, len(qids), DETAILS_BATCH):
+            out.update(parse_details(self.ask(details_query(qids[i:i + DETAILS_BATCH]))))
         return out
 
 
