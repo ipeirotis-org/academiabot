@@ -195,6 +195,15 @@ def test_summary_has_intervals_per_provider():
     assert ("all", "url", "page_exists") in s
 
 
+def test_cluster_interval_is_wider_when_claims_share_a_page():
+    shared = [{"url": "https://u.edu/list" if i < 50 else f"https://u.edu/{i}", "ok": i < 50} for i in range(100)]
+    lo, hi = pc.cluster_interval(shared, lambda r: r["ok"], reps=500)
+    wlo, whi = pc.wilson(50, 100)
+    assert (hi - lo) > (whi - wlo)
+    assert pc.cluster_interval(shared, lambda r: r["ok"], reps=500) == (lo, hi)
+    assert pc.cluster_interval([], lambda r: True) == (None, None)
+
+
 def test_university_domains_merge_wikidata_and_known_websites():
     def fake_query(q):
         assert "wd:Q1" in q

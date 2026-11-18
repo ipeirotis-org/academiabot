@@ -507,12 +507,42 @@ def check_claims(claims: List[dict], pages: Dict[str, dict], domains: Dict[str, 
     return rows
 
 
-def _share(rows, test) -> dict:
+BOOT_REPS = 2000
+
+
+def cluster_interval(rows: List[dict], test, reps: int = BOOT_REPS, seed: int = DRAW_SEED):
+    """95% percentile bootstrap interval of the share, resampling cited URLs (clusters)
+    rather than claims: many claims cite one list page, so they are not independent and
+    the Wilson interval on claims is too narrow. A claim without a URL is its own
+    cluster. Same seed, same interval. Pure."""
+    clusters: Dict[str, List[int]] = {}
+    for i, r in enumerate(rows):
+        clusters.setdefault(r.get("url") or f"#no-url-{i}", []).append(1 if test(r) else 0)
+    stats = [(sum(v), len(v)) for _, v in sorted(clusters.items())]
+    if not stats:
+        return None, None
+    rng = random.Random(seed)
+    shares = []
+    for _ in range(reps):
+        k = n = 0
+        for _ in range(len(stats)):
+            a, b = stats[rng.randrange(len(stats))]
+            k += a
+            n += b
+        shares.append(k / n)
+    shares.sort()
+    return round(shares[int(0.025 * reps)], 4), round(shares[min(reps - 1, int(0.975 * reps))], 4)
+
+
+def _share(rows, test, clustered: bool = True) -> dict:
     n = len(rows)
     k = sum(1 for r in rows if test(r))
     lo, hi = wilson(k, n)
-    return {"k": k, "n": n, "share": round(k / n, 4) if n else "", "ci_low": lo if lo is not None else "",
-            "ci_high": hi if hi is not None else ""}
+    clo, chi = cluster_interval(rows, test) if clustered else (None, None)
+    blank = lambda v: v if v is not None else ""  # noqa: E731
+    return {"k": k, "n": n, "share": round(k / n, 4) if n else "", "ci_low": blank(lo), "ci_high": blank(hi),
+            "url_ci_low": blank(clo), "url_ci_high": blank(chi),
+            "urls": len({r.get("url") or f"#{i}" for i, r in enumerate(rows)})}
 
 
 MEASURES = (
@@ -528,7 +558,9 @@ MEASURES = (
 
 def summary(rows: List[dict]) -> List[dict]:
     """Per claim set, provider (and all providers), and measure: k of n claims, with a
-    95% Wilson interval. Also the same per distinct URL for page_exists. Pure."""
+    95% Wilson interval and a 95% interval that resamples cited URLs (url_ci_*; use this
+    one, because claims that cite the same page are not independent). Also page_exists
+    per distinct URL. Pure."""
     out = []
     for setting in SETTINGS:
         srows = [r for r in rows if r["setting"] == setting]
@@ -586,8 +618,8 @@ def draw_failures(rows: List[dict], size: int = FAILURES, seed: int = DRAW_SEED)
 
 
 def claim_text(r: dict) -> str:
-    kind = r.get("unit_type") or "unit"
-    return f"{r['name']} is a {kind} of {r.get('parent_label') or r['parent_qid']}"
+    """The claim as the annotation pilot writes it: "Unit is part of Parent". Pure."""
+    return f"{r['name']} is part of {r.get('parent_label') or r['parent_qid']}"
 
 
 def s1_page_pass(rows: List[dict], week3_dir: Optional[Path]) -> List[dict]:
@@ -636,7 +668,8 @@ def write_report(out_dir: Path, rows: List[dict], week3_dir: Optional[Path]) -> 
     write_csv(out_dir / "claims.csv", rows, CLAIM_COLUMNS)
     tables = {"summary": summary(rows)}
     write_csv(out_dir / "summary.csv", tables["summary"],
-              ["setting", "provider", "search", "unit", "measure", "k", "n", "share", "ci_low", "ci_high"])
+              ["setting", "provider", "search", "unit", "measure", "k", "n", "share", "ci_low", "ci_high",
+               "urls", "url_ci_low", "url_ci_high"])
     pair_cols = ["pair_id", "provider", "setting", "search", "claim", "url", "final_url", "fetch_outcome",
                  "http_status", "text_file", "evidence_id", "label", "reason", "passage", "notes"]
     pages_index = {}
@@ -788,7 +821,7 @@ def print_summary(tables: Dict[str, List[dict]]) -> None:
     for r in tables["summary"]:
         if r["unit"] == "claim" and r["measure"] in ("page_exists", "all_four_pass"):
             console.print(f"{r['setting']:<11} {r['provider']:<10} {r['measure']:<14} "
-                          f"{r['k']:>4} of {r['n']:<4} = {r['share']}  [{r['ci_low']}, {r['ci_high']}]")
+                          f"{r['k']:>4} of {r['n']:<4} = {r['share']}  [{r['url_ci_low']}, {r['url_ci_high']}]")
 
 
 def main(argv: Optional[List[str]] = None) -> None:
