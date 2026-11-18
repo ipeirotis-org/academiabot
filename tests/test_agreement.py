@@ -213,6 +213,19 @@ def test_precision_by_agreement_level():
     assert get("runs_exactly", 9)["schools"] == 1
 
 
+def test_precision_by_agreement_matches_each_subset_again():
+    # The 1-provider group named the school in more runs and took the match; the
+    # 2-provider group is its duplicate. At "at least 2 providers" the duplicate is kept alone.
+    groups = [{"university_qid": "Q1", "university_set": "eval", "n_providers": 1, "n_runs": 3, "status": "correct",
+               "truth_name": "Law", "truth_options": ["Law"]},
+              {"university_qid": "Q1", "university_set": "eval", "n_providers": 2, "n_runs": 2, "status": "wrong",
+               "truth_name": "Law", "truth_options": ["Law"]}]
+    rows = ag.precision_by_agreement(groups, 3, 3)
+    get = lambda level, k: next(r for r in rows if r["university_set"] == "all" and r["level"] == level and r["k"] == k)
+    assert get("providers_at_least", 2)["precision"] == 1.0
+    assert (get("providers_at_least", 1)["correct"], get("providers_at_least", 1)["wrong"]) == (1, 1)
+
+
 def test_cross_provider_error_rates():
     groups = [{"providers": ["openai", "gemini"], "status": "wrong"},
               {"providers": ["openai"], "status": "wrong"},

@@ -209,35 +209,7 @@ def self_preference(verdicts: List[dict], judges: Sequence[str]) -> List[dict]:
     return rows
 
 
-def matched_count(kept: List[dict]) -> int:
-    """How many true schools the kept groups cover: a maximum one-to-one matching of
-    the kept groups to true schools, per university. It is computed again for each
-    kept subset, so a judge that drops the correct group and keeps its duplicate
-    still covers the school once. A group's options are `truth_options`; without
-    them, a correct group counts as its own school. Pure."""
-    total = 0
-    by_u: Dict[str, List[dict]] = {}
-    for g in kept:
-        by_u.setdefault(g["university_qid"], []).append(g)
-    for gs in by_u.values():
-        edges = []
-        for g in gs:
-            opts = g.get("truth_options")
-            if opts is None:
-                opts = [g.get("truth_name") or g["group_id"]] if g["status"] == "correct" else []
-            edges.append(list(opts))
-        owner: Dict[str, int] = {}
-
-        def augment(i: int, seen: set) -> bool:
-            for t in edges[i]:
-                if t not in seen:
-                    seen.add(t)
-                    if t not in owner or augment(owner[t], seen):
-                        owner[t] = i
-                        return True
-            return False
-        total += sum(1 for i in range(len(edges)) if augment(i, set()))
-    return total
+matched_count = agreement.matched_count
 
 
 def _pr_row(method: str, run: str, uset: str, kept: List[dict], total_correct: int, total_wrong: int,
