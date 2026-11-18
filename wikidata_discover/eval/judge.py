@@ -115,7 +115,7 @@ def judge_university(university: dict, groups: List[dict], judges: Sequence[str]
             taken, unmapped = map_kept(kept or [], names, match)
             runs.append({"university_qid": qid, "judge": judge, "order": order, "sample": sample,
                          "listed": len(names), "answered": answered, "kept": len(taken) if answered else "",
-                         "unmapped": unmapped, "cache_key": llm_helpers.judge_cache_key(judge, label, names, sample, level)})
+                         "unmapped": unmapped, "cache_key": llm_helpers.judge_cache_key(judge, label, names, sample, level, order)})
             for pos, n in enumerate(names, 1):
                 g = by_name[n]
                 verdict = (1 if (pos - 1) in taken else 0) if answered else ""
@@ -532,7 +532,7 @@ def cached_ask(cache_only: bool, level: str = "school"):
     def ask(label, names, judge, sample, order):
         if cache_only:
             llm_helpers.last_judge_call_id = None
-            key = llm_helpers.judge_cache_key(judge, label, names, sample, level)
+            key = llm_helpers.judge_cache_key(judge, label, names, sample, level, order)
             if not (llm_helpers._CACHE_DIR / f"{key}.json").exists():
                 return None
         return LLMHelper.judge_sampled(label, names, judge, sample, order, level)
@@ -625,12 +625,13 @@ def run(args) -> Path:
         log = run_log.current()
         if log is not None:
             log.attach_source_patch(out_dir, identity)
-            week3 = week3_agreement_checks()
-            console.print(f"[dim]{len(week3)} week 3 agreement checks found for the judge checks[/dim]")
     console.print(f"[bold]Judge run {run_id}: {len(universities)} universities, judges {judges}, "
                   f"{len(RUNS)} runs each[/bold]")
     lists, verdicts, runs, outcome = [], [], [], "failed"
     try:
+        if log is not None:     # inside the try, so a failed lookup still writes the runs row
+            week3 = week3_agreement_checks()
+            console.print(f"[dim]{len(week3)} week 3 agreement checks found for the judge checks[/dim]")
         for u in universities:
             if log is not None:
                 log.set_university(u["qid"])

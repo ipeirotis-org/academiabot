@@ -237,7 +237,8 @@ Report: `results/judge/<run_id>/` (not in git).
   ignored) samples 1 and 2, and order B (A reversed) samples 1 and 2.
   `LLMHelper.judge_sampled()` uses the `judge_union` prompt; its cache key
   (`judge_cache_key`) holds provider, model, prompt hash, university, the hash of the list in
-  its order, the sample, and the output budget (2048). Gemini runs with thinking off (also in
+  its order, the sample, and the output budget (2048). A list that reads the same in reverse (one
+  name) also has the order in its key, so orders A and B stay separate calls; no other key changed. Gemini runs with thinking off (also in
   the key). A bad answer is retried once and never cached; no valid answer gives None (the
   run counts as not answered, and its verdicts are blank). `judge_union` itself is unchanged.
 - Returned names are mapped back to the list (`map_kept`): exact, then case and punctuation
@@ -246,7 +247,8 @@ Report: `results/judge/<run_id>/` (not in git).
 - With the run log, each verdict is a `checks` row: kind `judge`, result pass (kept), fail
   (dropped), or unclear (no answer), on the `candidate_id` of the week 3 agreement check of the
   same group (`week3_agreement_checks()`, run `agreement-20261109T204358Z-32c21a`; group ids
-  are stable), with the judge call in `llm_call_ids` and judge, order, sample, and position in
+  are stable; the lookup runs inside the run log block, so a failed lookup still writes the runs
+  row), with the judge call in `llm_call_ids` and judge, order, sample, and position in
   `detail`.
 - Tables: `flip_rates.csv` (same order: A1-A2 and B1-B2; cross order: the 4 A-B pairs; order
   effect = cross minus same), `self_preference.csv` (keep rate of schools the judge's own
