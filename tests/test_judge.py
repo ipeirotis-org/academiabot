@@ -203,6 +203,32 @@ def test_a_university_with_no_groups_still_counts_in_its_set_recall():
     assert (other["schools_kept"], other["recall"]) == (0, 0.0)
 
 
+def test_a_kept_duplicate_counts_when_the_first_group_of_its_school_is_dropped():
+    # Two groups name the same true school: c1 matched it, d1 is the duplicate.
+    groups = [{"university_qid": "Q1", "university_set": "eval", "group_id": "c1", "status": "correct",
+               "n_providers": 2, "truth_name": "Law", "truth_options": ["Law"]},
+              {"university_qid": "Q1", "university_set": "eval", "group_id": "d1", "status": "wrong",
+               "n_providers": 1, "truth_name": "Law", "truth_options": ["Law"]}]
+    assert jd.matched_count(groups) == 1 and jd.matched_count(groups[1:]) == 1
+    vs = []
+    for order, sample in jd.RUNS:
+        vs += [verdict("c1", "openai", order, sample, 0), verdict("d1", "openai", order, sample, 1)]
+    rows = jd.precision_recall(groups, vs, ["openai"], {"Q1": 1})
+    a1 = next(x for x in rows if x["method"] == "judge_openai" and x["run"] == "A1" and x["university_set"] == "all")
+    assert (a1["correct_kept"], a1["wrong_kept"], a1["precision"], a1["recall"]) == (1, 0, 1.0, 1.0)
+    nf = next(x for x in rows if x["method"] == "no_filter" and x["university_set"] == "all")
+    assert (nf["correct_kept"], nf["wrong_kept"]) == (1, 1)     # both kept: the school once, one wrong
+
+
+def test_the_week3_groups_carry_every_true_school_they_can_match():
+    from wikidata_discover.eval import agreement as ag
+    props = [{"provider": "openai", "sample": 1, "name": "School of Law", "unit_type": "school"},
+             {"provider": "gemini", "sample": 1, "name": "Law School", "unit_type": "school"}]
+    gs = ag.analyze_university("Q1", props, ["School of Law", "School of Medicine"], [("openai", 1), ("gemini", 1)],
+                               match=lambda a, b: "Law" in a and "Law" in b)
+    assert all(g["truth_options"] == ["School of Law"] for g in gs)
+
+
 # ── check 1: a hand-made list with fake schools ──────────────────────────
 
 def test_hand_list_reports_each_fake_school_removed(tmp_path):

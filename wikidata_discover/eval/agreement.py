@@ -261,6 +261,8 @@ def analyze_university(qid: str, proposals: List[dict], truth: Sequence[str],
             "runs": [run_label(p, s) for p, s in runs], "n_runs": len(runs),
             "score": round(len(runs) / total_runs, 4), "status": status,
             "truth_name": truth_name, "wrong_kind": kind, "member_index": list(g),
+            # every true school this group can match, so a subset can be matched again (week 4)
+            "truth_options": [t for t in truth if any(match(n, t) for n in names[gi])],
         })
     return out
 

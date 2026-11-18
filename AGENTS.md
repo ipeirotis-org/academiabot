@@ -256,6 +256,8 @@ Report: `results/judge/<run_id>/` (not in git).
   one-provider schools, so agreement does not mix in), `precision_recall.csv` (no filter,
   agreement 2+ and 3, each judge per run, mean, and majority 3 of 4). Recall counts the true schools of every
   requested university or school in its set, also one that gave no list (review of pull request 25).
+  The kept schools are matched to the true schools again for each filter and run (`matched_count`,
+  on each group's `truth_options`), so a kept duplicate counts when its school's first group was dropped.
 - `--hand-list FILE` (check 1): a CSV `university_qid,name,fake`; fake is `yes` (planted),
   `wrong` (a known wrong school, such as a wrong week 3 group), or `no`. Each judge runs 4 times
   on it; a fake or wrong school must be dropped. `hand_list_summary.csv` gives fakes removed,
