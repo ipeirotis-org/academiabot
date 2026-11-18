@@ -114,6 +114,17 @@ def check_host_for_proxy(host: str) -> str:
             raise Refused(f"{host} is a non-public address")
         return literal
     name = host.lower().rstrip(".")
+    # Other spellings of an IPv4 address ("127.1", "127.0.0.01", "0x7f.1", "2130706433")
+    # are not addresses to ipaddress, but a resolver may read them as one. A real host
+    # name never has an all-numeric last label, so refuse both.
+    try:
+        socket.inet_aton(name)
+        numeric = True
+    except (OSError, ValueError):
+        numeric = False
+    last = name.rsplit(".", 1)[-1]
+    if numeric or re.fullmatch(r"(0x[0-9a-f]*|[0-9]+)", last):
+        raise Refused(f"{host} is a numeric address in a non-standard form")
     if name in LOCAL_NAMES or name.endswith(LOCAL_SUFFIXES) or "." not in name:
         raise Refused(f"{host} is a local name")
     return name
@@ -346,8 +357,13 @@ def _tunnel(proxy: Tuple[str, int], host: str, port: int, timeout: float, deadli
     try:
         proxy_ip = str(ipaddress.ip_address(proxy_host.strip("[]")))
     except ValueError:
-        proxy_ip = socket.getaddrinfo(proxy_host, proxy_port, 0, socket.SOCK_STREAM)[0][4][0]
-    sock = _connect_ip(proxy_ip, proxy_port, timeout, deadline=deadline)
+        # The proxy's own name: the lookup may use only the time left, like any other.
+        infos = lookup_within(socket.getaddrinfo, proxy_host, proxy_port, deadline - time.monotonic())
+        proxy_ip = infos[0][4][0]
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise socket.timeout("the time budget is used up")
+    sock = _connect_ip(proxy_ip, proxy_port, min(timeout, left), deadline=deadline)
     try:
         target = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
         sock.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode("ascii"))
@@ -487,6 +503,9 @@ def fetch(url: str, *, resolve: Callable = socket.getaddrinfo, connect: Callable
             return result
         except socket.timeout:
             result.outcome, result.detail = "timeout", f"over {max_seconds:g} s"
+            return result
+        except LookupTimeout as e:
+            result.outcome, result.detail = "timeout", where + str(e)
             return result
         except ProxyAnswer as e:
             if e.status in (403, 407):

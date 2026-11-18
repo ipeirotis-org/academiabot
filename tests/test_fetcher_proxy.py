@@ -122,7 +122,9 @@ def test_a_page_comes_through_the_tunnel_with_no_local_name_lookup(proxy):
 
 @pytest.mark.parametrize("url", ["http://localhost/", "http://LOCALHOST./x", "http://metadata.google.internal/",
                                  "http://printer.local/", "http://intranet/", "http://127.0.0.1/",
-                                 "http://169.254.169.254/latest", "http://[::1]/", "http://10.1.2.3/"])
+                                 "http://169.254.169.254/latest", "http://[::1]/", "http://10.1.2.3/",
+                                 "http://127.1/", "http://127.0.0.01/", "http://0x7f.1/", "http://2130706433/",
+                                 "http://0177.0.0.1/", "http://10.0.0.1./"])
 def test_local_names_and_non_public_addresses_are_refused_without_asking_the_proxy(proxy, url):
     r = fetcher.fetch(url, proxy=proxy.address, resolve=no_dns)
     assert r.outcome == "refused"
@@ -161,3 +163,19 @@ def test_a_proxy_that_never_answers_is_stopped_at_the_time_limit():
 
 def test_tests_fetch_directly_even_when_https_proxy_is_set():
     assert fetcher.proxy_from_env() is None
+
+
+def test_a_slow_lookup_of_the_proxy_name_is_bounded_by_the_fetch_time(monkeypatch):
+    def slow(*a, **k):
+        time.sleep(2)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 9))]
+    monkeypatch.setattr(fetcher.socket, "getaddrinfo", slow)
+    t0 = time.monotonic()
+    r = fetcher.fetch("https://www.uni.example.edu/", proxy=("proxy.example", 8080), resolve=no_dns,
+                      max_seconds=0.3)
+    assert time.monotonic() - t0 < 1.0
+    assert r.outcome == "timeout"
+
+
+def test_a_name_that_only_starts_with_digits_is_allowed():
+    assert fetcher.check_host_for_proxy("1800flowers.example.com") == "1800flowers.example.com"
