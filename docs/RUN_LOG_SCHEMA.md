@@ -113,8 +113,12 @@ with the result of the check against Wikidata.
 
 ## checks
 
-One row is one automated check of one unit. Shuo built it in week 3. Today the only kind is
-`agreement`: how many providers and runs named the same school. Checks are append-only.
+One row is one automated check of one unit. Shuo built it in week 3. Kinds so far:
+`agreement` (week 3: how many providers and runs named the same school), `judge` (week 4:
+one judge verdict), and four page checks (week 5, `eval/page_checks.py`): `page_status`
+(is the cited link dead), `soft_404` (does a page that answers 200 say "not found"),
+`on_domain` (is the page on the university's own website), and `name_on_page` (is the
+unit's name on the page). Checks are append-only.
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -124,10 +128,10 @@ One row is one automated check of one unit. Shuo built it in week 3. Today the o
 | candidate_id | STRING | The candidates row checked. For an agreement check, one row of the group; `detail` lists all of them |
 | parent_id | STRING | The parent link checked. Empty for a check on the whole unit |
 | node_version | STRING | The node version the check looked at. Empty until week 5 |
-| kind | STRING | `agreement`, `judge`, `page_status`, `name_on_page`, or `verifier` |
+| kind | STRING | `agreement`, `judge`, `page_status`, `soft_404`, `on_domain`, `name_on_page`, or `verifier` |
 | result | STRING | `pass`, `fail`, or `unclear`. An agreement check passes when 2 or more providers named the unit |
-| score | FLOAT | For an agreement check, the share of runs that named the unit (7 of 9 runs gives 0.78) |
-| detail | STRING, JSON | For an agreement check: the university, the name variants, the providers and runs that named the unit, and every `candidate_id` in the group |
+| score | FLOAT | For an agreement check, the share of runs that named the unit (7 of 9 runs gives 0.78). For `name_on_page`: 1.0 exact, 0.95 a variant ("Finance Department"), 0.8 the core name ("Social Work"), else the close-match score. Other page checks: 1.0 pass, 0.0 otherwise |
+| detail | STRING, JSON | For an agreement check: the university, the name variants, the providers and runs that named the unit, and every `candidate_id` in the group. For a page check: the claim set (`week3`, `schools_on`, `depts_on`, `us_tier1`), provider, sample, search (on or off), the cited URL, the final URL, and why (`why`) |
 | llm_call_ids | STRING, list | Every call the check used. For an agreement check, the extract call of each provider and sample it counted |
 | evidence_ids | STRING, list | Saved pages the check used |
 | checked_at | TIMESTAMP | Time of the check (UTC) |
