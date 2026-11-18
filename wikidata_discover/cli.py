@@ -18,13 +18,13 @@ def positive_int(value: str) -> int:
     return n
 
 
-def run_config(key_sources: dict) -> dict:
+def run_config(key_sources: dict, depth: int = 1) -> dict:
     """The configuration recorded in the runs row: providers, models, depth, and where
     each key came from (never the key itself)."""
     return {"providers": llm_helpers.available_providers(),
             "models": {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL,
                        "gemini": config.GEMINI_MODEL},
-            "depth": 1, "only_provider": config.ONLY_PROVIDER, "key_sources": key_sources,
+            "depth": depth, "only_provider": config.ONLY_PROVIDER, "key_sources": key_sources,
             "user_agent": config.USER_AGENT,
             "dataset": config.RUNLOG_DATASET, "bucket": config.RUNLOG_BUCKET}
 
@@ -59,6 +59,57 @@ def discover_with_run_log(qids, argv) -> None:
         outcome = "ok"
     finally:
         status = log.finish(outcome, {"qids_done": done})
+        config.console.print(f"[dim]{run_log.describe(status)}[/dim]")
+
+
+def hierarchy_with_run_log(qids, argv, depth: int = 2, expand=None, search: bool = True,
+                           decide: str = "choose", replay_searches=None) -> None:
+    """discover --depth 2: one hierarchy file per university (week 5), with the run log."""
+    from google.cloud import storage
+    from wikidata_discover import hierarchy_file, node_register, subunits
+    from wikidata_discover.batch import operator_identity, source_identity, RESULTS_DIR
+    key_sources = config.load_api_keys()
+    check_only_provider()
+    run_id = run_log.new_run_id("discover")
+    run_dir = RESULTS_DIR / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    identity = source_identity(run_dir)
+    cfg = {**run_config(key_sources, depth), "expand": list(expand or []), "search": search, "decide": decide,
+           "replay_searches": list(replay_searches or []),
+           "study_away_file": str(hierarchy_file.STUDY_AWAY_FILE.name)}
+    log = run_log.start(run_id, command="discover", args={"argv": argv}, qids=qids,
+                        who=operator_identity(), git_commit=identity, run_config=cfg)
+    log.attach_source_patch(run_dir, identity)
+    store = node_register.RegisterStore(storage.Client(project=config.GCP_PROJECT).bucket(config.RUNLOG_BUCKET),
+                                        RESULTS_DIR / "hierarchy")
+    aligner = None
+    if search:            # week 6: every search, then an LLM decision
+        from wikidata_discover import alignment, snapshot
+        # --replay-searches: the search answers an earlier run saved are used instead of new
+        # requests, so a second run tests the merge and id logic, not changes on Wikidata.
+        preloaded = {}
+        for old in replay_searches or []:
+            preloaded.update(alignment.load_saved_responses(log._get_bucket(), old))
+        if replay_searches:
+            config.console.print(f"Replaying {len(preloaded)} saved search answers from {replay_searches}")
+        aligner = hierarchy_file.SearchAligner(alignment.Searcher(log=log, preloaded=preloaded), decide,
+                                               take_subtree=lambda q: snapshot.take_snapshot(q, max_units=300))
+    deps = hierarchy_file.Deps(pages=subunits.CitedPages(log), aligner=aligner)   # one fetch per cited URL per run
+    outcome, done = "failed", []
+    try:
+        for qid in qids:
+            try:
+                s = hierarchy_file.run_university(qid, depth, log, store, deps, expand=expand)
+                done.append({k: v for k, v in s.items() if k != "lookups"})
+                config.console.print(
+                    f"{qid} {s['label']}: {s['nodes']} nodes {s['by_level']}, alignment {s['by_alignment']}, "
+                    f"{s['with_saved_page']} with a saved page, {s['with_flags']} with flags, "
+                    f"{s['left_out']} left out. Wrote {s['file']}")
+            finally:
+                log.flush()
+        outcome = "ok"
+    finally:
+        status = log.finish(outcome, {"done": done})
         config.console.print(f"[dim]{run_log.describe(status)}[/dim]")
 
 
@@ -122,6 +173,18 @@ def run_cli():
     d.add_argument("--llm", dest="llm_model", default=None)
     d.add_argument("--provider", choices=config.PROVIDERS, default=None,
                    help="Run one AI alone, for extraction and matching. Default: the first that answers")
+    d.add_argument("--depth", type=int, choices=(1, 2), default=1,
+                   help="1: schools only (default). 2: the hierarchy file, with departments (week 5)")
+    d.add_argument("--expand", nargs="+", default=None, metavar="QID_OR_NAME",
+                   help="With --depth 2: look up level 2 only below these units (a pilot)")
+    d.add_argument("--decide", choices=("choose", "yes-no"), default="choose",
+                   help="With --depth 2: how an LLM picks the Wikidata item. choose: one item from the list "
+                        "or none (default). yes-no: one yes-or-no question per item (research question A1)")
+    d.add_argument("--replay-searches", nargs="+", default=None, metavar="RUN_ID",
+                   help="With --depth 2: use the search answers these runs saved instead of asking Wikidata "
+                        "again (a search they did not save is still sent)")
+    d.add_argument("--no-search", action="store_true",
+                   help="With --depth 2: align against the snapshot only, as in week 5")
     d.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     u = sub.add_parser("subunits", help="Ask an AI for the sub-units of a university or school")
@@ -151,7 +214,21 @@ def run_cli():
         if args.llm_model:
             config.LLM_MODEL = args.llm_model
         config.ONLY_PROVIDER = args.provider
-        discover_with_run_log(args.university_qids, sys.argv[1:])
+        from wikidata_discover.batch import is_qid
+        bad = [q for q in args.university_qids if not is_qid(q)]
+        if bad:
+            raise SystemExit("discover: give Q-IDs such as Q49210. Bad: " + ", ".join(bad))
+        if (args.expand or args.no_search or args.decide != "choose" or args.replay_searches) and args.depth != 2:
+            raise SystemExit("discover: --expand, --no-search, --decide, and --replay-searches need --depth 2. "
+                             "Nothing was run.")
+        if args.replay_searches and args.no_search:
+            raise SystemExit("discover: --replay-searches and --no-search do not go together. Nothing was run.")
+        if args.depth == 2:
+            hierarchy_with_run_log(args.university_qids, sys.argv[1:], depth=2, expand=args.expand,
+                                   search=not args.no_search, decide=args.decide,
+                                   replay_searches=args.replay_searches)
+        else:
+            discover_with_run_log(args.university_qids, sys.argv[1:])
 
     elif args.command == "subunits":
         from wikidata_discover.batch import is_qid

@@ -1,0 +1,11 @@
+{
+  "Q49210": {
+    "university": "New York University",
+    "source": "https://bulletins.nyu.edu/nyu/about/locations-facilities/",
+    "note": "Study-away sites: a node is kept with type campus, and its sub-units are not looked up. NYU Abu Dhabi and NYU Shanghai are degree-granting campuses, not study-away sites. List to be confirmed by Anya (2026-11-18).",
+    "qids": ["Q24204434", "Q24204433"],
+    "sites": ["NYU Accra", "NYU Berlin", "NYU Buenos Aires", "NYU Florence", "NYU London", "NYU Los Angeles",
+              "NYU Madrid", "NYU Paris", "NYU Prague", "NYU Sydney", "NYU Tel Aviv", "NYU Tulsa",
+              "NYU Washington, DC", "NYU Washington DC"]
+  }
+}

@@ -1,7 +1,8 @@
 """Run log: a record of every run in BigQuery, with large text in Cloud Storage.
 
 Four tables in dataset `academiabot` of project `wikidata-academia` (see "Run log" in
-AGENTS.md): runs, llm_calls, evidence, candidates. Full prompts and raw responses go
+AGENTS.md): runs, llm_calls, evidence, candidates, and nodes (week 5: one row per node of a
+hierarchy file). Full prompts and raw responses go
 to gs://academiabot/runs/<run_id>/llm_calls/<llm_call_id>/ and the row keeps the path.
 
 When BigQuery or the bucket cannot be reached, the rows and texts are written as JSON
@@ -30,7 +31,7 @@ from wikidata_discover import config
 
 logger = logging.getLogger(__name__)
 
-TABLES = ("runs", "llm_calls", "evidence", "candidates")
+TABLES = ("runs", "llm_calls", "evidence", "candidates", "nodes")
 
 # Column name, BigQuery type, mode. JSON-shaped values (args, config, request_config)
 # are stored as JSON text in STRING columns.
@@ -82,9 +83,32 @@ SCHEMAS: Dict[str, List[tuple]] = {
         ("created_at", "TIMESTAMP", "NULLABLE"),
         ("legacy", "BOOLEAN", "NULLABLE"), ("source_file", "STRING", "NULLABLE"),
     ],
+    # Week 5. JSON-shaped fields (parent_links, country, evidence, ...) are JSON text.
+    # alignment_candidates, wikidata_duplicates, and merged_into are filled in week 6.
+    "nodes": [
+        ("node_id", "STRING", "REQUIRED"), ("run_id", "STRING", "REQUIRED"),
+        ("invocation_id", "STRING", "REQUIRED"), ("university_qid", "STRING", "NULLABLE"),
+        ("level", "INTEGER", "NULLABLE"), ("name", "STRING", "NULLABLE"),
+        ("aliases", "STRING", "REPEATED"), ("unit_type", "STRING", "NULLABLE"),
+        ("type_source", "STRING", "NULLABLE"), ("in_scope", "STRING", "NULLABLE"),
+        ("origin", "STRING", "NULLABLE"), ("parent_ids", "STRING", "REPEATED"),
+        ("parent_links", "STRING", "NULLABLE"), ("qid", "STRING", "NULLABLE"),
+        ("country", "STRING", "NULLABLE"), ("node_version", "STRING", "NULLABLE"),
+        ("alignment", "STRING", "NULLABLE"), ("alignment_reason", "STRING", "NULLABLE"),
+        ("alignment_candidates", "STRING", "NULLABLE"), ("wikidata_duplicates", "STRING", "NULLABLE"),
+        ("merged_into", "STRING", "NULLABLE"),
+        ("website", "STRING", "NULLABLE"), ("description", "STRING", "NULLABLE"),
+        ("source_url", "STRING", "NULLABLE"), ("evidence_ids", "STRING", "REPEATED"),
+        ("evidence", "STRING", "NULLABLE"), ("children_lookup", "STRING", "NULLABLE"),
+        ("flags", "STRING", "REPEATED"), ("candidate_ids", "STRING", "REPEATED"),
+        ("llm_call_ids", "STRING", "REPEATED"), ("provider", "STRING", "NULLABLE"),
+        ("created_at", "TIMESTAMP", "NULLABLE"),
+    ],
 }
 
-CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved", "unaligned")
+# pending and uncertain: week 5 alignment (a unit under a parent without a QID, and a unit
+# the snapshot does not have).
+CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved", "unaligned", "pending", "uncertain")
 
 # Columns added after the tables were first created (week 3). setup_tables() adds them
 # to existing tables, and fills `legacy` with false on rows written before.
@@ -134,7 +158,7 @@ def table_ref(table: str) -> str:
 
 
 def setup_tables(client=None) -> List[str]:
-    """Create the dataset and the four tables if they do not exist. Returns the table ids.
+    """Create the dataset and the tables if they do not exist. Returns the table ids.
     Run once by a person; runs never create tables, so a wrong dataset name fails
     loudly (and falls back to local files) instead of silently making a new dataset."""
     from google.cloud import bigquery
@@ -340,6 +364,12 @@ class RunLog:
                                  "created_at": now_iso(), "legacy": False, **fields})
         return cid
 
+    def add_node(self, row: dict) -> None:
+        """Add one nodes row (a node of a hierarchy file, week 5)."""
+        if not row.get("node_id"):
+            raise ValueError("a nodes row needs a node_id")
+        self._add("nodes", {"created_at": now_iso(), **row})
+
     def add_evidence(self, *, url: str, http_status: Optional[int], content: Optional[bytes],
                      unit_names=(), final_url: Optional[str] = None, outcome: str = "ok",
                      detail: str = "", content_type: str = "", text: Optional[str] = None,
@@ -416,7 +446,7 @@ class RunLog:
         self._add("runs", self.run_row)
         self.flush()
         if self.enabled and self.local_written:
-            # All four files exist, even an empty evidence.jsonl, so a reader can tell
+            # All the files exist, even an empty evidence.jsonl, so a reader can tell
             # "nothing fetched" from "file lost".
             self.local_dir.mkdir(parents=True, exist_ok=True)
             for t in TABLES:
@@ -447,7 +477,7 @@ def describe(status: dict) -> str:
     bq = "ok" if status["bigquery"] == "ok" else "FAILED"
     bucket = "ok" if status["bucket"] == "ok" else "FAILED"
     text = (f"Run log {status['run_id']}: {rows['llm_calls']} LLM calls, {rows['candidates']} candidates, "
-            f"{rows['evidence']} evidence rows. BigQuery {config.GCP_PROJECT}.{config.RUNLOG_DATASET}: {bq}. "
+            f"{rows['evidence']} evidence rows, {rows.get('nodes', 0)} nodes. BigQuery {config.GCP_PROJECT}.{config.RUNLOG_DATASET}: {bq}. "
             f"Bucket {config.RUNLOG_BUCKET}: {bucket}.")
     if status["local_dir"]:
         text += f" Local copy: {status['local_dir']}"

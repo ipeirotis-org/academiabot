@@ -77,3 +77,11 @@ wikidata_discover/results/reports/
 wikidata_discover/results/missing_divisions_*.csv
 wikidata_discover/results/quickstatements_*.qs
 wikidata_discover/results/dept_scores/
+
+# Week 4 sub-unit CSVs (local outputs, like results/reports/)
+wikidata_discover/results/subunits/
+# Week 5 hierarchy files and the local read-only register copy (the bucket keeps both)
+wikidata_discover/results/hierarchy/
+# Week 6 check outputs and A1 decisions (the bucket keeps the A1 run)
+wikidata_discover/results/week6/
+wikidata_discover/results/a1/

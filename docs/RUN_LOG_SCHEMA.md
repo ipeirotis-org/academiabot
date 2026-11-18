@@ -98,7 +98,7 @@ with the result of the check against Wikidata.
 | parent_candidate_id | STRING | Parent's candidate_id when the parent has no QID. Empty today |
 | name | STRING | Name the LLM gave |
 | unit_type | STRING | Type the LLM gave, as free text (for example "College") |
-| status | STRING | `linked` (on Wikidata and linked to the university), `orphan` (on Wikidata, not linked), `missing` (not found on Wikidata), `unresolved` (could not be checked), `unaligned` (a sub-unit from the week 4 `subunits` step, not yet compared with Wikidata) |
+| status | STRING | `linked` (on Wikidata and linked to the university), `orphan` (on Wikidata, not linked), `missing` (not found on Wikidata), `unresolved` (could not be checked), `unaligned` (a sub-unit from the week 4 `subunits` step, not yet compared with Wikidata), `pending` (week 5: on Wikidata, under a parent that has no QID yet), `uncertain` (week 5: not in the Wikidata snapshot; the full search is week 6) |
 | matched_qid, matched_label | STRING | The Wikidata item it was matched to, and that item's label |
 | match_method | STRING | `fuzzy` (name comparison), `llm` (an LLM picked the item), `none` (no match), `legacy_unknown` (legacy row: the old run did not save how it matched) |
 | match_choices | STRING, JSON | Every Wikidata item the match step considered. `source` is `linked_child` (already linked to the university) or `search` (found by name search) |
@@ -111,6 +111,47 @@ with the result of the check against Wikidata.
 | legacy | BOOLEAN | True for a row imported from a run before the run log (run `us-tier1`). Such a row has no saved prompt, response, or page |
 | source_file | STRING | For a legacy row: the original CSV or cache file in the bucket that the row came from. Empty otherwise |
 
+## nodes
+
+One row is one node of a hierarchy file (week 5, `discover --depth 2`): a unit of one
+university's tree, with its stable node id. The same node id appears in later runs; each
+run adds new rows and never changes old ones. The full file is
+`runs/<run_id>/hierarchy/<QID>.json` in the bucket.
+
+| Column | Type | Meaning |
+|---|---|---|
+| node_id | STRING, required | Stable id from the register `gs://academiabot/hierarchy/<QID>/ids.json`. The university is `root` |
+| run_id, invocation_id | STRING, required | The run and invocation that wrote the node |
+| university_qid | STRING | The university at the root of the tree |
+| level | INTEGER | 0 for the university, 1 for its direct units, 2 below them |
+| name | STRING | Name the unit uses (the LLM's name, or the Wikidata label for a unit only Wikidata has) |
+| aliases | STRING, list | Other names: the Wikidata label and English aliases of the matched item |
+| unit_type | STRING | school, department, program, center, campus, office, other (`docs/MODELING_RULES.md`) |
+| type_source | STRING | `llm`, or `wikidata (...)` with the reason, for a unit only Wikidata has |
+| in_scope | STRING | yes, no, or check (a person decides). Units with "no" are left out of the file |
+| origin | STRING | `llm`, `snapshot` (only Wikidata has it), or `llm and snapshot` |
+| parent_ids | STRING, list | node_ids of the parents. A parent in another university's tree is `<QID>/root` |
+| parent_links | STRING, JSON | One entry per parent: parent_id, parent_qid, and `p749` (present, missing, or not applicable) |
+| qid | STRING | The Wikidata item, or empty |
+| country | STRING, JSON | label, qid, and source (a page, an address, or `wikidata:<QID> (P17)`) |
+| node_version | STRING | Hash of everything a reviewer is shown. It changes when any of it changes |
+| alignment | STRING | root, linked, orphan, pending, or uncertain (week 6 adds new) |
+| alignment_reason | STRING | Why, in words: for example "not in the snapshot; full search in week 6" |
+| alignment_candidates | STRING, JSON | The Wikidata items considered, how each was found, and which was chosen |
+| wikidata_duplicates | STRING, JSON | Items that look like a second Wikidata item for the same unit (week 6) |
+| merged_into | STRING | The surviving node_id when this node was merged into another (week 6) |
+| website | STRING | The unit's website |
+| description | STRING | The English description a new item would get |
+| source_url | STRING | The page that names the unit as part of its parent |
+| evidence_ids | STRING, list | `evidence` rows of the saved pages for this node |
+| evidence | STRING, JSON | One entry per fact (unit, country): url, evidence_id, fetch outcome, name_on_page |
+| children_lookup | STRING | Whether the sub-units were looked up, and why not: for example "children not looked up (study-away site)" |
+| flags | STRING, list | Problems for a person: no source URL, no country, an unclear id match |
+| candidate_ids | STRING, list | The `candidates` rows that proposed the unit (empty for a unit only Wikidata has) |
+| llm_call_ids | STRING, list | The sub-unit call behind the unit |
+| provider | STRING | Provider whose answer proposed the unit |
+| created_at | TIMESTAMP | Time the row was made (UTC) |
+
 ## How the tables link
 
 - `run_id` and `invocation_id` connect every row to one `runs` row: who ran it, with
@@ -118,6 +159,8 @@ with the result of the check against Wikidata.
 - `candidates.llm_call_ids` lists `llm_calls.llm_call_id` values. They give the prompt
   and raw response behind each unit and each match decision.
 - `candidates.evidence_ids` will list `evidence.evidence_id` values from week 4.
+- `nodes.candidate_ids`, `nodes.evidence_ids`, and `nodes.llm_call_ids` lead to the rows
+  behind each node. `nodes.node_id` stays the same across runs.
 - `llm_calls.cached_from_llm_call_id` points a cache hit to the call that first made the
   answer, which can be in an earlier run.
 

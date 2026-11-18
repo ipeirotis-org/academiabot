@@ -24,6 +24,11 @@ academiabot/
 │   ├── run_log.py               # Run log: BigQuery rows, texts in the bucket, local JSON fallback
 │   ├── snapshot.py              # snapshot <QID>: a university's whole subtree as Wikidata has it today
 │   ├── legacy_import.py         # One-time import of run us-tier1 into llm_calls and candidates (legacy)
+│   ├── hierarchy_file.py        # discover --depth 2 (week 5): the hierarchy file and the nodes rows
+│   ├── node_register.py         # Stable node ids: the register in gs://academiabot/hierarchy/<QID>/ids.json
+│   ├── alignment.py             # Week 6: six read-only searches and the decision (choose, yes-no)
+│   ├── a1_eval.py               # Research question A1: run (searches, decisions) and score (rates)
+│   ├── data/                    # study_away_sites.json, extra_intermediates.pem (pinned CA certificate)
 │   ├── cloud/collect_function.py # Cloud Function (gen 2) entry point: one time slice of a run, on a schedule
 │   ├── requirements.txt
 │   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness;
@@ -488,6 +493,55 @@ How it works today (`wikidata_discover/run_log.py`; every column is explained in
   Two same-name rows are one unit when their URL sets {source_url, website} overlap
   (empty values ignored), or when neither row has any URL. Checked 2026-11-04: none of the
   71 cache answer files holds an empty unit list.
+- Week 5 and 6 (Anya, branch `anya-week-5-6`, 2026-11-18). `discover <QID> --depth 2`
+  (`hierarchy_file.py`) writes `results/hierarchy/<QID>.json`, a copy under
+  `runs/<run_id>/hierarchy/` with the snapshot it used, and one `nodes` row per node
+  (table created by `run_log setup` on 2026-11-18). Options: `--expand QID...` (level 2 only
+  below these units), `--decide choose|yes-no`, `--no-search` (week 5: snapshot only), and
+  `--replay-searches RUN_ID...` (use the search answers those runs saved; for a second run
+  that tests ids and merges, not Wikidata changes). Level 2 is looked up only below schools
+  and campuses. Study-away sites (`data/study_away_sites.json`, 13 for NYU) get "children not
+  looked up (study-away site)". Snapshot units are typed from the label first, then P31
+  (Wikidata types are often wrong); journals, scholarships, libraries, and buildings are left
+  out, with the reason, in the file's `left_out`. A second P749 parent outside the tree
+  is kept as `<QID>/root` (NYU Shanghai -> `Q2034790/root`).
+- Node ids (`node_register.py`): the register is loaded before any AI call; without the
+  bucket the run stops (no ids, no file). Rules in the module docstring. A joint unit can be
+  in the tree twice with one QID (Furman Center: Wagner and Law): the parent decides. A merge
+  is recorded in the register's `merged` map (old id -> surviving id) and the old id is never
+  matched again. A URL that several units of one run share (allnyu.nyu.edu) is ignored by
+  the URL rules. `node_version` hashes the page's text, not its bytes (nyu.edu adds a new
+  encrypted token to every response) and never the evidence row ids.
+- Week 6 alignment (`alignment.py`) runs only for nodes without a QID. Every search goes
+  through SPARQL `mwapi` with `wikibase:limit "once"` (without it a generic name returned
+  thousands of results and the answer arrived cut off), and the details query is grouped,
+  one row per item. Every response is saved under `runs/<run_id>/searches/`. "New" only
+  after every search ran; a failed search makes the unit "uncertain". The candidate list is
+  ranked (tree, website, university-name hits first) before the cut at 12. Decisions use
+  OpenAI first (gpt-4o, purpose `match`, cached per prompt). Two AI nodes on one QID lose it
+  and are flagged; a Wikidata-only node on the same QID as an AI node is merged into it.
+  Known gap: scholarly articles have no label and no P31 in the main query service, so the
+  P31 filter misses them (A1-040, A1-055, A1-045 linked to articles); planned fix: drop
+  candidates with no label and no P31. Known gap: a department listed under several schools
+  (NYU Mathematics, 5 nodes) is held for a person by the two-nodes-one-QID rule (week 7).
+- NYU runs: week 5 full run `discover-20261118T033819Z-768cb9` (624 nodes, 27 min, about
+  $8.40; no cache about $10.50); check 5 `discover-20261118T090518Z-e73506` and
+  `discover-20261118T092730Z-283d9b` (624 of 624 ids). Week 6 run 1
+  `discover-20261118T161209Z-51ed25` (resumed from the stopped `...150430Z-05696c`; 604
+  nodes, 20 merges, 2,027 searches) and run 2 `discover-20261118T192056Z-01d646` (replay, 0
+  searches, 604 of 604 ids). `docs/MIDPOINT_REPORT_WEEK5.md` has the week 5 numbers.
+- Week 6 checks: `python -m wikidata_discover.scripts.week6_checks ground-truth|baseline`
+  writes `results/week6/check1_ground_truth.csv` and `check2_baseline_<decide>.csv`.
+- A1 (`a1_eval.py`): sample in `gs://academiabot/a1/` (seed 20261118; 100 missing, 50
+  linked or orphan; weights 64.13 and 55.54). Labels: `a1_labels_anya.csv` (first) and
+  `a1_labels_anya_reviewed.csv` (after review). Scored run `a1-eval-20261118T145714Z-8af05f`
+  (after the ranking fix; `...140956Z-d21ff0` is before it); score files carry the suffix
+  `_first_labels`, `_reviewed`, or `_reviewed_without_045_147`. `run --resume-from RUN_ID`
+  reuses saved searches; rows are flushed every 10 units and 100 decisions. The "before"
+  false-link rate on linked rows is rebuilt and approximate (us-tier1 kept no QID).
+- The Codespace restarted at 12:50, 13:57, and 16:04 UTC on 2026-11-18 and stopped the
+  detached runs each time (idle timeout). Start long runs with `setsid nohup`, keep the
+  Codespace open, and resume with `--resume-from` / `--replay-searches`.
 
 | Table | One row per | Must contain |
 |---|---|---|

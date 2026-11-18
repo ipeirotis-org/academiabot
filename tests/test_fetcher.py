@@ -518,3 +518,44 @@ def test_the_csv_name_on_page_uses_whole_words():
     page = {"name_check": "done", "text": "Department of Economics"}
     assert subunits.name_on_page("Art", page) == "no"
     assert subunits.name_on_page("Economics", page) == "yes"
+
+
+# ── extra intermediate certificates (week 5) ─────────────────────────────
+
+PINNED_INTERMEDIATES = {
+    "9C0F288EAABB71405701020C972F8159446296078D38591C68499B12CE379444": "InCommon RSA OV SSL CA 3",
+}
+
+
+def _extra_certs():
+    from cryptography import x509
+    return x509.load_pem_x509_certificates(fetcher.EXTRA_INTERMEDIATES.read_bytes())
+
+
+def test_extra_intermediates_are_exactly_the_pinned_certificates():
+    from cryptography.hazmat.primitives import hashes
+    got = {c.fingerprint(hashes.SHA256()).hex().upper(): c for c in _extra_certs()}
+    assert set(got) == set(PINNED_INTERMEDIATES)
+    for fp, cn in PINNED_INTERMEDIATES.items():
+        assert cn in got[fp].subject.rfc4514_string()
+
+
+def test_each_extra_intermediate_is_signed_by_a_root_that_is_already_trusted():
+    """Trusting it adds no trust: a root in certifi already vouches for it."""
+    import certifi
+    from cryptography import x509
+    roots = x509.load_pem_x509_certificates(open(certifi.where(), "rb").read())
+    for inter in _extra_certs():
+        issuers = [r for r in roots if r.subject == inter.issuer]
+        assert issuers, f"no trusted root for {inter.subject.rfc4514_string()}"
+        issuers[0].public_key()  # noqa: B018
+        inter.verify_directly_issued_by(issuers[0])        # raises if the signature is wrong
+        assert inter.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
+
+
+def test_the_fetcher_context_checks_certificates_and_loads_the_extras():
+    import ssl
+    ctx = fetcher._ssl_context()
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+    subjects = [dict(x[0] for x in c["subject"]).get("commonName") for c in ctx.get_ca_certs()]
+    assert "InCommon RSA OV SSL CA 3" in subjects

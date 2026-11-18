@@ -284,7 +284,7 @@ It reaches `master` with pull request 22.
 with the same name, a "school" that is really a program, one unit under two names. These
 feed weeks 6 and 7.
 
-- [ ] **Hand to Panos:** NYU's hierarchy file, your list of oddities, and the midpoint
+- [x] **Hand to Panos:** NYU's hierarchy file, your list of oddities, and the midpoint
   report: cost and time per university, and the share of units with a saved page.
 
 ### Anya, week 6 (Nov 13 to 19): no duplicates
@@ -317,7 +317,7 @@ feed weeks 6 and 7.
 3. Have the agent compute the false-new and false-link rates from your labels, as
    `SPECS.md` says.
 
-- [ ] **Hand to Panos:** the false-new and false-link rates, before and after this week,
+- [x] **Hand to Panos:** the false-new and false-link rates, before and after this week,
   per kind of search and per way to decide. Give them per stratum and overall.
 
 ### Anya, week 7 (Nov 20 to 26, Thanksgiving): the messy cases
