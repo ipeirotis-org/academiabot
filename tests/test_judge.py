@@ -251,6 +251,19 @@ def test_hand_list_reports_each_fake_school_removed(tmp_path):
     assert s["gemini"]["fakes_kept_at_least_once"] == ["School of Maritime Studies"]
 
 
+def test_an_unanswered_run_does_not_pass_the_every_fake_removed_check():
+    hand = {"Q1": [("School of Law", "no"), ("School of Maritime Studies", "yes")]}
+    calls = []
+
+    def one_answer(label, names, judge, sample, order):     # only A1 answers; 3 runs give no answer
+        calls.append(1)
+        return ["School of Law"] if len(calls) == 1 else None
+    rows = jd.judge_hand_list(hand, {"Q1": {"name": "NYU"}}, ["openai"], one_answer)
+    s = jd.hand_summary(rows)[0]
+    assert s["fake_removed"] == 1 and s["fake_verdicts"] == 1
+    assert not s["removed_every_fake_every_run"]
+
+
 def test_judge_university_marks_a_silent_run_unclear():
     u = {"qid": "Q1", "name": "NYU", "set": "eval"}
     groups = [{"group_id": "Q1-g01", "name": "School of Law", "status": "correct", "providers": ["openai"],
