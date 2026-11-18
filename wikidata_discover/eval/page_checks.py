@@ -638,12 +638,12 @@ def write_report(out_dir: Path, rows: List[dict], week3_dir: Optional[Path]) -> 
     write_csv(out_dir / "summary.csv", tables["summary"],
               ["setting", "provider", "search", "unit", "measure", "k", "n", "share", "ci_low", "ci_high"])
     pair_cols = ["pair_id", "provider", "setting", "search", "claim", "url", "final_url", "fetch_outcome",
-                 "http_status", "text_file", "evidence_id", "label", "notes"]
+                 "http_status", "text_file", "evidence_id", "label", "reason", "passage", "notes"]
     pages_index = {}
     if (out_dir / "pages.csv").exists():
         pages_index = {r["url"]: r["text_file"] for r in csv.DictReader((out_dir / "pages.csv").open(newline=""))}
     pairs = [{**r, "pair_id": i, "claim": claim_text(r), "text_file": pages_index.get(r["url"], ""),
-              "label": "", "notes": ""} for i, r in enumerate(draw_pairs(rows), 1)]
+              "label": "", "reason": "", "passage": "", "notes": ""} for i, r in enumerate(draw_pairs(rows), 1)]
     write_csv(out_dir / "pairs_100.csv", pairs, pair_cols)
     fail_cols = ["failure_id", "provider", "setting", "claim", "url", "final_url"] + \
                 [k for k in KINDS] + [f"{k}_detail" for k in KINDS] + ["text_file", "category", "notes"]
