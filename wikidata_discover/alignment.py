@@ -48,15 +48,19 @@ def _lit(s: str) -> str:
     return json.dumps(s or "")          # a SPARQL string literal with escapes
 
 
+# wikibase:limit "once" stops the search service after one result page. Without it the
+# service follows every page: a generic name ("College of Education") then returns
+# thousands of items, and the answer arrives cut off (check 2, second try).
+
 def prefix_query(text: str, limit: int = PER_SEARCH) -> str:
     return ("SELECT ?item WHERE { SERVICE wikibase:mwapi { bd:serviceParam wikibase:endpoint \"www.wikidata.org\"; "
-            f"wikibase:api \"EntitySearch\"; mwapi:search {_lit(text)}; mwapi:language \"en\"; mwapi:limit \"{limit}\". "
+            f"wikibase:limit \"once\"; wikibase:api \"EntitySearch\"; mwapi:search {_lit(text)}; mwapi:language \"en\"; mwapi:limit \"{limit}\". "
             "?item wikibase:apiOutputItem mwapi:item. } }")
 
 
 def fulltext_query(text: str, limit: int = PER_SEARCH) -> str:
     return ("SELECT ?item WHERE { SERVICE wikibase:mwapi { bd:serviceParam wikibase:endpoint \"www.wikidata.org\"; "
-            f"wikibase:api \"Search\"; mwapi:srsearch {_lit(text)}; mwapi:srlimit \"{limit}\". "
+            f"wikibase:limit \"once\"; wikibase:api \"Search\"; mwapi:srsearch {_lit(text)}; mwapi:srlimit \"{limit}\". "
             "?item wikibase:apiOutputItem mwapi:title. } }")
 
 

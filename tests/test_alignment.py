@@ -267,3 +267,8 @@ def test_details_come_one_row_per_item_with_joined_values():
     assert d["aliases"] == ["XS", "X"] and d["p31_qids"] == ["Q3918", "Q1"] and d["parent_qids"] == ["Q9"]
     assert d["countries"] == [] and d["websites"] == ["https://x.edu"]
     assert "GROUP BY ?item" in al.details_query(["Q5"])
+
+
+def test_search_queries_stop_after_one_result_page():
+    for q in (al.prefix_query("College of Education"), al.fulltext_query("College of Education")):
+        assert 'wikibase:limit "once"' in q
