@@ -296,3 +296,23 @@ def test_the_same_page_content_keeps_the_node_version():
     changed = {"name": "X", "evidence": [dict(base["evidence"][0], content_hash="def")]}
     assert hf.node_version(base) == hf.node_version(again)
     assert hf.node_version(base) != hf.node_version(changed)
+
+
+def test_a_new_token_in_the_html_does_not_change_the_version_when_the_text_is_the_same():
+    e = {"fact": "unit", "url": "https://as.nyu.edu", "evidence_id": "e1", "outcome": "ok", "text_hash": "t1"}
+    a = {"name": "X", "evidence": [dict(e, content_hash="bytes-1")]}
+    b = {"name": "X", "evidence": [dict(e, evidence_id="e2", content_hash="bytes-2")]}
+    c = {"name": "X", "evidence": [dict(e, text_hash="t2", content_hash="bytes-2")]}
+    pdf = {"name": "X", "evidence": [dict(e, text_hash=None, content_hash="bytes-3")]}
+    assert hf.node_version(a) == hf.node_version(b) != hf.node_version(c)
+    assert hf.node_version(pdf) != hf.node_version(a)
+
+
+def test_cited_pages_record_both_hashes():
+    from wikidata_discover import subunits
+    from wikidata_discover.fetcher import FetchResult
+    r = FetchResult(url="https://u.edu", outcome="ok")
+    r.content, r.content_type, r.http_status = b"<html><body>School of Art</body></html>", "text/html", 200
+    pages = subunits.CitedPages(None, fetch=lambda url: r)
+    got = pages.cite([{"name": "School of Art", "source_url": "https://u.edu"}])["https://u.edu"]
+    assert got["content_hash"] and got["text_hash"] and got["content_hash"] != got["text_hash"]

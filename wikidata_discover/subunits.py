@@ -158,7 +158,10 @@ class CitedPages:
             eid = fetcher.record(self.log, result, names, read) if self.log is not None else None
             content = getattr(result, "content", None)
             self.pages[url] = {"evidence_id": eid, "outcome": result.outcome, "text": read[0], "name_check": read[1],
-                               "content_hash": hashlib.sha256(content).hexdigest() if content is not None else None}
+                               "content_hash": hashlib.sha256(content).hexdigest() if content is not None else None,
+                               # The text's hash: nyu.edu pages put a new encrypted token in a script
+                               # block on every request, so the bytes change while the text does not.
+                               "text_hash": hashlib.sha256(read[0].encode()).hexdigest() if read[0] else None}
         return {url: self.pages[url] for url in citing}
 
 
