@@ -36,3 +36,19 @@ def test_a_valid_max_searches_is_used(run):
 
 def test_without_max_searches_the_default_stays(run):
     assert run("subunits", "Q770467") == [(["Q770467"], 5)]
+
+
+def test_replay_searches_reaches_the_hierarchy_run(monkeypatch):
+    got = {}
+    monkeypatch.setattr(cli, "hierarchy_with_run_log", lambda qids, argv, **kw: got.update(kw))
+    monkeypatch.setattr(sys, "argv", ["prog", "discover", "Q49210", "--depth", "2", "--replay-searches", "discover-x"])
+    cli.run_cli()
+    assert got["replay_searches"] == ["discover-x"] and got["search"] is True
+
+
+def test_replay_searches_needs_depth_2_and_search(monkeypatch):
+    for args in (["discover", "Q49210", "--replay-searches", "r"],
+                 ["discover", "Q49210", "--depth", "2", "--no-search", "--replay-searches", "r"]):
+        monkeypatch.setattr(sys, "argv", ["prog", *args])
+        with pytest.raises(SystemExit):
+            cli.run_cli()

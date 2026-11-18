@@ -63,7 +63,7 @@ def discover_with_run_log(qids, argv) -> None:
 
 
 def hierarchy_with_run_log(qids, argv, depth: int = 2, expand=None, search: bool = True,
-                           decide: str = "choose") -> None:
+                           decide: str = "choose", replay_searches=None) -> None:
     """discover --depth 2: one hierarchy file per university (week 5), with the run log."""
     from google.cloud import storage
     from wikidata_discover import hierarchy_file, node_register, subunits
@@ -75,6 +75,7 @@ def hierarchy_with_run_log(qids, argv, depth: int = 2, expand=None, search: bool
     run_dir.mkdir(parents=True, exist_ok=True)
     identity = source_identity(run_dir)
     cfg = {**run_config(key_sources, depth), "expand": list(expand or []), "search": search, "decide": decide,
+           "replay_searches": list(replay_searches or []),
            "study_away_file": str(hierarchy_file.STUDY_AWAY_FILE.name)}
     log = run_log.start(run_id, command="discover", args={"argv": argv}, qids=qids,
                         who=operator_identity(), git_commit=identity, run_config=cfg)
@@ -84,7 +85,14 @@ def hierarchy_with_run_log(qids, argv, depth: int = 2, expand=None, search: bool
     aligner = None
     if search:            # week 6: every search, then an LLM decision
         from wikidata_discover import alignment, snapshot
-        aligner = hierarchy_file.SearchAligner(alignment.Searcher(log=log), decide,
+        # --replay-searches: the search answers an earlier run saved are used instead of new
+        # requests, so a second run tests the merge and id logic, not changes on Wikidata.
+        preloaded = {}
+        for old in replay_searches or []:
+            preloaded.update(alignment.load_saved_responses(log._get_bucket(), old))
+        if replay_searches:
+            config.console.print(f"Replaying {len(preloaded)} saved search answers from {replay_searches}")
+        aligner = hierarchy_file.SearchAligner(alignment.Searcher(log=log, preloaded=preloaded), decide,
                                                take_subtree=lambda q: snapshot.take_snapshot(q, max_units=300))
     deps = hierarchy_file.Deps(pages=subunits.CitedPages(log), aligner=aligner)   # one fetch per cited URL per run
     outcome, done = "failed", []
@@ -172,6 +180,9 @@ def run_cli():
     d.add_argument("--decide", choices=("choose", "yes-no"), default="choose",
                    help="With --depth 2: how an LLM picks the Wikidata item. choose: one item from the list "
                         "or none (default). yes-no: one yes-or-no question per item (research question A1)")
+    d.add_argument("--replay-searches", nargs="+", default=None, metavar="RUN_ID",
+                   help="With --depth 2: use the search answers these runs saved instead of asking Wikidata "
+                        "again (a search they did not save is still sent)")
     d.add_argument("--no-search", action="store_true",
                    help="With --depth 2: align against the snapshot only, as in week 5")
     d.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -207,11 +218,15 @@ def run_cli():
         bad = [q for q in args.university_qids if not is_qid(q)]
         if bad:
             raise SystemExit("discover: give Q-IDs such as Q49210. Bad: " + ", ".join(bad))
-        if (args.expand or args.no_search or args.decide != "choose") and args.depth != 2:
-            raise SystemExit("discover: --expand, --no-search, and --decide need --depth 2. Nothing was run.")
+        if (args.expand or args.no_search or args.decide != "choose" or args.replay_searches) and args.depth != 2:
+            raise SystemExit("discover: --expand, --no-search, --decide, and --replay-searches need --depth 2. "
+                             "Nothing was run.")
+        if args.replay_searches and args.no_search:
+            raise SystemExit("discover: --replay-searches and --no-search do not go together. Nothing was run.")
         if args.depth == 2:
             hierarchy_with_run_log(args.university_qids, sys.argv[1:], depth=2, expand=args.expand,
-                                   search=not args.no_search, decide=args.decide)
+                                   search=not args.no_search, decide=args.decide,
+                                   replay_searches=args.replay_searches)
         else:
             discover_with_run_log(args.university_qids, sys.argv[1:])
 
