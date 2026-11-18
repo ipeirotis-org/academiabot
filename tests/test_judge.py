@@ -264,6 +264,15 @@ def test_an_unanswered_run_does_not_pass_the_every_fake_removed_check():
     assert not s["removed_every_fake_every_run"]
 
 
+@pytest.mark.parametrize("content", ['{"keep": ["School of La', '{"kept": []}', "[]"])
+def test_cache_only_never_calls_a_judge_on_a_broken_cache_file(monkeypatch, tmp_path, content):
+    monkeypatch.setattr(lh, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(LLMHelper, "judge_sampled", staticmethod(lambda *a, **k: pytest.fail("must not call")))
+    key = lh.judge_cache_key("openai", "NYU", NAMES, 1)
+    (tmp_path / f"{key}.json").write_text(content)
+    assert jd.cached_ask(True)("NYU", NAMES, "openai", 1, "A") is None
+
+
 def test_judge_university_marks_a_silent_run_unclear():
     u = {"qid": "Q1", "name": "NYU", "set": "eval"}
     groups = [{"group_id": "Q1-g01", "name": "School of Law", "status": "correct", "providers": ["openai"],

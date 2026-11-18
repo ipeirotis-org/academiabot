@@ -195,7 +195,9 @@ school in `eval/small_ground_truth_sources.csv`), 3 samples each (`--samples`). 
 - `--no-run-log` writes the report only, with no run log rows. Use it to rescore cached
   answers, so BigQuery does not get a second copy of the same candidates and checks. It makes
   no LLM calls: a sample with no cache file is not asked, and its row in `cache_files.csv` has
-  `missing_from_cache` true (review of pull request 24). It loads no keys and keeps every
+  `missing_from_cache` true (review of pull request 24). A cache file that does not hold a valid answer
+  (cut off, not JSON) also counts as missing, and a valid empty answer (`[]`) counts as answered
+  (review of pull request 25). It loads no keys and keeps every
   requested provider, because the cache is read before any key is needed. A run with the run log uploads the
   dirty-worktree patch with `attach_source_patch()`, as `discover` does.
 - `--compare DIR_A DIR_B` checks that two runs gave identical report files (`ids.csv` and
@@ -279,7 +281,8 @@ Report: `results/judge/<run_id>/` (not in git).
   as given, parent from Wikidata, qid None, so the cache key holds the name and website). Its
   files are named `noitem-<name>` (`subunits.unit_stem`), and its candidates rows have an empty
   parent_qid. First use: Point Park's Conservatory of Performing Arts (2026-11-17).
-- `--no-run-log` makes no LLM calls and rescores from the cache. `--compare DIR_A DIR_B`
+- `--no-run-log` makes no LLM calls and rescores from the cache. A judge cache file without a valid
+  `keep` list counts as not answered and is never sent to the provider. `--compare DIR_A DIR_B`
   compares the report files, including `departments/`.
 - In a Claude Code cloud session the page fetcher cannot resolve host names (no direct DNS),
   so a `subunits` run there records every cited page as `refused` ("the host name does not
