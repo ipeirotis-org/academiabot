@@ -344,8 +344,11 @@ def elsewhere_matches(name: str, snap: dict, exclude_parent: Optional[str], pref
     candidates for week 6; never chosen in week 5 (two schools can each have a
     "Department of Economics"). Pure."""
     out = []
+    # The unit's own parent and that parent's ancestors are never "the same unit elsewhere":
+    # with the parent's name removed, "Department of Mathematics" would fit Courant itself.
+    above = ({exclude_parent} | _ancestors(snap, exclude_parent)) if exclude_parent else set()
     for q, u in snap["units"].items():
-        if not u.get("in_tree") or q == snap["university_qid"]:
+        if not u.get("in_tree") or q == snap["university_qid"] or q in above:
             continue
         tp = tree_parents(snap, q)
         if exclude_parent and exclude_parent in tp:

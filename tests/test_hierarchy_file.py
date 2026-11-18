@@ -281,3 +281,9 @@ def test_a_snapshot_unit_with_the_same_name_under_another_parent_is_a_candidate_
     assert hist_law["qid"] is None and hist_law["alignment"] == "uncertain"
     assert {"Q12"} == {c["qid"] for c in hist_law["alignment_candidates"] if not c["chosen"]}
     assert hist_law["alignment_reason"].startswith("not in the snapshot; full search in week 6")
+
+
+def test_the_parent_itself_is_never_a_same_name_candidate():
+    snap = make_snapshot([snap_unit("Q40", "School of Mathematics", ["faculty"], [("Q1", "P749")])])
+    got = hf.elsewhere_matches("Department of Mathematics", snap, "Q40", ["Test University", "School of Mathematics"])
+    assert "Q40" not in {c["qid"] for c in got}
