@@ -702,3 +702,30 @@ def test_the_cli_refuses_a_bad_no_item_request(monkeypatch, argv):
     monkeypatch.setattr(cli, "subunits_with_run_log", lambda *a, **k: pytest.fail("must not run"))
     with pytest.raises(SystemExit):
         cli.run_cli()
+
+
+def test_a_failed_parent_lookup_for_a_unit_with_no_item_still_writes_the_runs_row(monkeypatch, tmp_path):
+    from wikidata_discover import batch, cli
+    finished = []
+
+    class Log:
+        def attach_source_patch(self, *a): pass
+        def flush(self): pass
+        def finish(self, outcome, summary):
+            finished.append((outcome, summary))
+            return {}
+
+    def lookup_fails(*a):
+        raise RuntimeError("SPARQL endpoint unreachable")
+
+    monkeypatch.setattr(cli.config, "load_api_keys", lambda: {})
+    monkeypatch.setattr(cli, "check_only_provider", lambda: None)
+    monkeypatch.setattr(batch, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(batch, "source_identity", lambda d: "abc")
+    monkeypatch.setattr(batch, "operator_identity", lambda: "tester")
+    monkeypatch.setattr(run_log, "start", lambda *a, **k: Log())
+    monkeypatch.setattr(run_log, "describe", lambda status: "")
+    monkeypatch.setattr(subunits, "no_item_unit", lookup_fails)
+    with pytest.raises(RuntimeError):
+        cli.subunits_with_run_log([], ["subunits"], no_item=("Conservatory", "https://x.example/", "Q7208107"))
+    assert finished == [("failed", {"done": []})]

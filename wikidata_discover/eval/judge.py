@@ -220,16 +220,20 @@ def _pr_row(method: str, run: str, uset: str, kept: List[dict], total_correct: i
 
 
 def precision_recall(groups: List[dict], verdicts: List[dict], judges: Sequence[str],
-                     true_counts: Dict[str, int]) -> List[dict]:
+                     true_counts: Dict[str, int], university_sets: Optional[Dict[str, str]] = None) -> List[dict]:
     """Precision and recall of the merged list before any filter, after agreement
     filters (2 or more providers, all 3 providers), and after each judge: per run,
     the mean over its runs, and the majority (kept in 3 or more of 4 runs). Recall
     counts true schools matched by a kept school, over all true schools of the set.
-    A run that did not answer for a university counts as keeping nothing there."""
+    A run that did not answer for a university counts as keeping nothing there.
+    university_sets (qid -> set) puts every requested university in its set, so a
+    university with no groups still adds its true count to that set's recall."""
     rows = []
-    for uset in _sets_of(groups):
+    sets = university_sets or {}
+    for uset in _sets_of(groups + [{"university_set": s} for s in sets.values()]):
         gs = [g for g in groups if uset == "all" or g["university_set"] == uset]
-        tc = sum(true_counts[q] for q in {g["university_qid"] for g in gs}) if uset != "all" else sum(true_counts.values())
+        members = {g["university_qid"] for g in gs} | {q for q, s in sets.items() if s == uset}
+        tc = sum(true_counts[q] for q in members) if uset != "all" else sum(true_counts.values())
         correct = sum(1 for g in gs if g["status"] == "correct")
         wrong = len(gs) - correct
         rows.append(_pr_row("no_filter", "", uset, gs, correct, wrong, tc))
@@ -263,11 +267,11 @@ def precision_recall(groups: List[dict], verdicts: List[dict], judges: Sequence[
 
 
 def analyze(groups: List[dict], verdicts: List[dict], judges: Sequence[str],
-            true_counts: Dict[str, int]) -> Dict[str, List[dict]]:
+            true_counts: Dict[str, int], university_sets: Optional[Dict[str, str]] = None) -> Dict[str, List[dict]]:
     """Every table of the report. Pure: no calls, no files."""
     return {"flip_rates": flip_rates(verdicts, judges),
             "self_preference": self_preference(verdicts, judges),
-            "precision_recall": precision_recall(groups, verdicts, judges, true_counts)}
+            "precision_recall": precision_recall(groups, verdicts, judges, true_counts, university_sets)}
 
 
 # ─────────────────────────  CHECK 1: A HAND-MADE LIST WITH FAKE SCHOOLS  ─────────────────────────
@@ -448,7 +452,7 @@ def run_departments(args, judges: Sequence[str], out_dir: Path, log) -> Dict[str
         console.print(f"  {school['id']} {school['school_label']}: {len(gs)} departments merged"
                       + (f"; no list from {absent}" if absent else ""))
     true_counts = {s["id"]: sum(1 for t in truth.rows if t.parent == s["parent"]) for s in schools}
-    tables = analyze(groups, verdicts, judges, true_counts)
+    tables = analyze(groups, verdicts, judges, true_counts, {s["id"]: s["set"] for s in schools})
     d = out_dir / "departments"
     d.mkdir(parents=True, exist_ok=True)
     write_csv(d / "list_files.csv", files)
@@ -639,7 +643,8 @@ def run(args) -> Path:
             silent = [run_name(x["judge"], x["order"], x["sample"]) for x in r if not x["answered"]]
             console.print(f"  {u['qid']} {u['name']}: {len(by_qid.get(u['qid'], []))} schools"
                           + (f"; no answer from {silent}" if silent else ""))
-        tables = analyze(groups, verdicts, judges, {u["qid"]: len(u["schools"]) for u in universities})
+        tables = analyze(groups, verdicts, judges, {u["qid"]: len(u["schools"]) for u in universities},
+                         {u["qid"]: u["set"] for u in universities})
         write_csv(out_dir / "merged_lists.csv", lists)
         write_csv(out_dir / "verdicts.csv", verdicts, VERDICT_COLUMNS)
         write_csv(out_dir / "judge_runs.csv", runs, RUN_COLUMNS)
