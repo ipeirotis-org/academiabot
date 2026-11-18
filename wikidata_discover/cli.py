@@ -18,13 +18,13 @@ def positive_int(value: str) -> int:
     return n
 
 
-def run_config(key_sources: dict) -> dict:
+def run_config(key_sources: dict, depth: int = 1) -> dict:
     """The configuration recorded in the runs row: providers, models, depth, and where
     each key came from (never the key itself)."""
     return {"providers": llm_helpers.available_providers(),
             "models": {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL,
                        "gemini": config.GEMINI_MODEL},
-            "depth": 1, "only_provider": config.ONLY_PROVIDER, "key_sources": key_sources,
+            "depth": depth, "only_provider": config.ONLY_PROVIDER, "key_sources": key_sources,
             "user_agent": config.USER_AGENT,
             "dataset": config.RUNLOG_DATASET, "bucket": config.RUNLOG_BUCKET}
 
@@ -59,6 +59,43 @@ def discover_with_run_log(qids, argv) -> None:
         outcome = "ok"
     finally:
         status = log.finish(outcome, {"qids_done": done})
+        config.console.print(f"[dim]{run_log.describe(status)}[/dim]")
+
+
+def hierarchy_with_run_log(qids, argv, depth: int = 2, expand=None) -> None:
+    """discover --depth 2: one hierarchy file per university (week 5), with the run log."""
+    from google.cloud import storage
+    from wikidata_discover import hierarchy_file, node_register, subunits
+    from wikidata_discover.batch import operator_identity, source_identity, RESULTS_DIR
+    key_sources = config.load_api_keys()
+    check_only_provider()
+    run_id = run_log.new_run_id("discover")
+    run_dir = RESULTS_DIR / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    identity = source_identity(run_dir)
+    cfg = {**run_config(key_sources, depth), "expand": list(expand or []),
+           "study_away_file": str(hierarchy_file.STUDY_AWAY_FILE.name)}
+    log = run_log.start(run_id, command="discover", args={"argv": argv}, qids=qids,
+                        who=operator_identity(), git_commit=identity, run_config=cfg)
+    log.attach_source_patch(run_dir, identity)
+    store = node_register.RegisterStore(storage.Client(project=config.GCP_PROJECT).bucket(config.RUNLOG_BUCKET),
+                                        RESULTS_DIR / "hierarchy")
+    deps = hierarchy_file.Deps(pages=subunits.CitedPages(log))   # one fetch per cited URL for the whole run
+    outcome, done = "failed", []
+    try:
+        for qid in qids:
+            try:
+                s = hierarchy_file.run_university(qid, depth, log, store, deps, expand=expand)
+                done.append({k: v for k, v in s.items() if k != "lookups"})
+                config.console.print(
+                    f"{qid} {s['label']}: {s['nodes']} nodes {s['by_level']}, alignment {s['by_alignment']}, "
+                    f"{s['with_saved_page']} with a saved page, {s['with_flags']} with flags, "
+                    f"{s['left_out']} left out. Wrote {s['file']}")
+            finally:
+                log.flush()
+        outcome = "ok"
+    finally:
+        status = log.finish(outcome, {"done": done})
         config.console.print(f"[dim]{run_log.describe(status)}[/dim]")
 
 
@@ -122,6 +159,10 @@ def run_cli():
     d.add_argument("--llm", dest="llm_model", default=None)
     d.add_argument("--provider", choices=config.PROVIDERS, default=None,
                    help="Run one AI alone, for extraction and matching. Default: the first that answers")
+    d.add_argument("--depth", type=int, choices=(1, 2), default=1,
+                   help="1: schools only (default). 2: the hierarchy file, with departments (week 5)")
+    d.add_argument("--expand", nargs="+", default=None, metavar="QID_OR_NAME",
+                   help="With --depth 2: look up level 2 only below these units (a pilot)")
     d.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     u = sub.add_parser("subunits", help="Ask an AI for the sub-units of a university or school")
@@ -151,7 +192,16 @@ def run_cli():
         if args.llm_model:
             config.LLM_MODEL = args.llm_model
         config.ONLY_PROVIDER = args.provider
-        discover_with_run_log(args.university_qids, sys.argv[1:])
+        from wikidata_discover.batch import is_qid
+        bad = [q for q in args.university_qids if not is_qid(q)]
+        if bad:
+            raise SystemExit("discover: give Q-IDs such as Q49210. Bad: " + ", ".join(bad))
+        if args.expand and args.depth != 2:
+            raise SystemExit("discover: --expand needs --depth 2. Nothing was run.")
+        if args.depth == 2:
+            hierarchy_with_run_log(args.university_qids, sys.argv[1:], depth=2, expand=args.expand)
+        else:
+            discover_with_run_log(args.university_qids, sys.argv[1:])
 
     elif args.command == "subunits":
         from wikidata_discover.batch import is_qid
