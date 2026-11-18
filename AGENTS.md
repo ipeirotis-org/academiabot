@@ -286,13 +286,60 @@ Report: `results/judge/<run_id>/` (not in git).
 - `--no-run-log` makes no LLM calls and rescores from the cache. A judge cache file without a valid
   `keep` list counts as not answered and is never sent to the provider. `--compare DIR_A DIR_B`
   compares the report files, including `departments/`.
-- In a Claude Code cloud session the page fetcher cannot resolve host names (no direct DNS),
-  so a `subunits` run there records every cited page as `refused` ("the host name does not
-  resolve"). Use `--no-fetch` there when pages are not needed.
+- In a Claude Code cloud session the page fetcher could not resolve host names (no direct DNS),
+  so the week 4 `subunits` runs there recorded every cited page as `refused` ("the host name
+  does not resolve"). Since week 5 the fetcher tunnels through `HTTPS_PROXY` there (see "Page
+  checks"). The project's cloud environment needs Network access set to Full (2026-11-18).
 - `google-genai` is pinned below 3: version 3 calls API v1 by default, which refuses
   `thinking_budget=0` ("Thinking is not enabled for api version v1").
 
 Tests: `tests/test_judge.py`.
+
+## Page checks (Shuo, week 5)
+
+`python -m wikidata_discover.eval.page_checks` (`wikidata_discover/eval/page_checks.py`):
+does each cited page exist and name the unit. A claim is one candidates row (one unit, one
+provider, one sample) with its cited `source_url`. Each distinct URL is fetched once per run
+(8 threads; evidence rows are written by the main thread only), and each claim gets 4
+`checks` rows: `page_status`, `soft_404`, `on_domain`, `name_on_page`.
+
+- Claim sets, reported apart: `week3` (run `agreement-20261109T204358Z-32c21a`; OpenAI had
+  `web_search_preview`, not forced; Anthropic and Gemini no search), `schools_on` (week 5
+  `subunits <university> --provider P --sample N --no-fetch` runs from 2026-11-18, search on
+  for all), `depts_on` (the week 4 department runs of the 6 ground-truth schools, search on),
+  `us_tier1` (300 random legacy rows, one per distinct `website`, seed 20261118; those
+  answers had no reference field, so the website is the cited page). For `schools_on` and
+  `depts_on` only the latest run of each (parent, provider, sample) list counts
+  (`latest_lists`), because the week 4 step was run more than once for some schools.
+- Search on or off comes from the extract call's `request_config.tools`.
+- Results: `page_status` fails for no URL, 404, 410, a host the proxy cannot reach (CONNECT
+  502), or a refused URL; it is unclear for 401, 403, 405, 406, 429, 451, 999 (the site refuses
+  the fetcher), 5xx, timeouts, TLS errors, connection resets, and redirect loops. In the cloud
+  session on 2026-11-18, columbia.edu, umich.edu, nyu.edu, and uth.edu answered 403 to most
+  pages, and stern.nyu.edu loops on redirects (it sets a cookie; the fetcher keeps none).
+  The fetcher never poses as a browser. `soft_404` fails when the title or first 300
+  characters say "not found", a deep link lands on the home page, or the final URL path says
+  not-found/404/error. `on_domain` compares registrable domains (`site_domain`, a short
+  two-level suffix list) with the university's P856 websites plus the ground-truth website.
+  `name_on_page` passes on the exact name (1.0), a swapped form such as "Finance Department"
+  (0.95), the core name of 2 words or more ("Social Work", 0.8), or a rapidfuzz partial_ratio
+  of 90 or more for names of 10 letters or more.
+- Output in `results/page_checks/<run_id>/`: `claims.csv`, `pages.csv` and `pages/*.txt` (the
+  text of each page), `summary.csv` (k of n with 95% Wilson intervals, per set and provider),
+  `pairs_100.csv` (34/33/33 per provider, one per distinct provider-name-URL, seed 20261118),
+  `failures_20.csv` (seed 20261119), `s1_page_pass.csv` (S1 counting only week 3 groups with a
+  proposal whose four checks pass; needs `--week3-report DIR`, a week 3 agreement folder).
+  `claims_input.json` and `domains.json` let `--rescore DIR` check the saved pages again with
+  no fetch and no run log.
+- `--check10 FILE` is the week's check 1: url, unit_name, university_qid, your_label (dead,
+  other_page, correct). It writes `check10_result.csv` with the machine's label beside each.
+- Fetcher proxy mode (`fetcher.proxy_from_env`): `ACADEMIABOT_FETCH_PROXY` (or "off"), else
+  `HTTPS_PROXY`. The tunnel is HTTP CONNECT to the proxy; a URL with a non-public address or
+  a local name (localhost, *.local, *.internal, a name without a dot) is refused before the
+  proxy is asked, on every redirect. The proxy resolves names, so there is no local address
+  check in this mode. `tests/conftest.py` sets `ACADEMIABOT_FETCH_PROXY=off` for every test.
+
+Tests: `tests/test_page_checks.py`, `tests/test_fetcher_proxy.py`.
 
 ## LLM integration details
 
