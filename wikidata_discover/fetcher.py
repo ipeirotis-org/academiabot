@@ -23,6 +23,7 @@ import codecs
 import http.client
 import ipaddress
 import os
+from pathlib import Path
 import re
 import socket
 import ssl
@@ -150,6 +151,13 @@ def resolve_public(host: str, port: int, resolve: Callable = socket.getaddrinfo,
     return ips[0]
 
 
+# Intermediate CA certificates that some servers fail to send (nyu.edu sends only its own
+# certificate). Browsers fetch the missing one themselves; the fetcher trusts the pinned
+# copies in this file instead. Checking stays on: each one is signed by a root that is
+# already trusted (tests/test_fetcher.py checks the signature and the SHA-256).
+EXTRA_INTERMEDIATES = Path(__file__).parent / "data" / "extra_intermediates.pem"
+
+
 def _ssl_context() -> ssl.SSLContext:
     cafile = os.environ.get("REQUESTS_CA_BUNDLE")
     if not cafile:
@@ -159,6 +167,8 @@ def _ssl_context() -> ssl.SSLContext:
         except ImportError:
             cafile = None
     ctx = ssl.create_default_context(cafile=cafile)
+    if EXTRA_INTERMEDIATES.exists():
+        ctx.load_verify_locations(cafile=str(EXTRA_INTERMEDIATES))
     ctx.sslsocket_class = _DeadlineSSLSocket
     return ctx
 
