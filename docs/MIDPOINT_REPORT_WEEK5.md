@@ -115,6 +115,9 @@ official source. Certificate checking stays on. Tests check that a trusted root 
   School. They are left out of the file, with the reason.
 - Wrong types on Wikidata: "New York University Department of Accounting" has the type
   "business school". The code reads the label before the type.
+- NYU's Faculty of Arts and Science (Q107684046) contains the College and the Graduate School
+  of Arts and Science, which also sit directly under NYU, so these schools and their
+  departments appear two or three times in the tree.
 
 ## Known limitations
 
