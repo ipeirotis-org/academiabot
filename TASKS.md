@@ -512,6 +512,11 @@ real.
 
 ### Shuo, week 4 (Nov 6 to 12): the LLM judge, tested
 
+**Status on 2026-11-17.** The judge test ran on the 18 universities (run
+`judge-20261117T051126Z-9d8317`, 216 calls, 3,588 `checks` rows). The department test ran on
+the 3 NYU schools. It runs again when the 3 new schools are in the department ground truth.
+The command is `python -m wikidata_discover.eval.judge` (AGENTS.md, "Judge runs").
+
 **Goal.** Find out whether an LLM judge helps, and how it is biased.
 
 **Ask the agent to build:**
