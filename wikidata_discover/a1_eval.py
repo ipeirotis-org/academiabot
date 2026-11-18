@@ -2,6 +2,7 @@
 which search finds it?
 
     python -m wikidata_discover.a1_eval run              # searches and decisions (spends LLM credit)
+    python -m wikidata_discover.a1_eval run --resume-from a1-eval-<...>   # after a stopped run
     python -m wikidata_discover.a1_eval score --labels a1_labels_anya.csv
 
 Inputs (from gs://academiabot/a1/, drawn on 2026-11-18 with seed 20261118):
@@ -139,7 +140,10 @@ def run(bucket, log, workers: int = 4, out_dir: Path = None, searcher=None, choo
         details = searcher.details([q for v in found.values() for q in v])
         found_by_item[row["item_id"]] = (u, found, errors, details)
         if i % 10 == 0:
-            config.console.print(f"A1 searches: {i} of {len(sheet)} units")
+            config.console.print(f"A1 searches: {i} of {len(sheet)} units "
+                                 f"({searcher.queries} sent, {searcher.reused} reused from an earlier run)")
+            if log is not None:
+                log.flush()           # rows reach BigQuery during the run, not only at the end
     # Phase 2, in parallel: the decisions (LLM calls; identical prompts are cached).
     jobs = [(item, kinds, mode) for item in found_by_item for kinds in distinct_sets() for mode in alignment.DECIDE_MODES]
 
@@ -156,8 +160,10 @@ def run(bucket, log, workers: int = 4, out_dir: Path = None, searcher=None, choo
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         for n, res in enumerate(pool.map(one, jobs), 1):
             rows.append(res)
-            if n % 200 == 0:
+            if n % 100 == 0:
                 config.console.print(f"A1 decisions: {n} of {len(jobs)}")
+                if log is not None:
+                    log.flush()
     with path.open("w") as f:
         for item, (u, found, errors, details) in found_by_item.items():
             f.write(json.dumps({"item_id": item, "searches": found, "search_errors": errors}) + "\n")
@@ -300,6 +306,8 @@ def main(argv=None) -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--workers", type=int, default=4)
+    r.add_argument("--resume-from", nargs="+", default=[], metavar="RUN_ID",
+                   help="Reuse the search responses that these earlier (stopped) runs saved in the bucket")
     s = sub.add_parser("score")
     s.add_argument("--labels", required=True, help="Labeled sheet (local path)")
     args = p.parse_args(argv)
@@ -320,7 +328,13 @@ def main(argv=None) -> None:
         log.attach_source_patch(run_dir, identity)
         outcome = "failed"
         try:
-            path = run(bucket, log, args.workers, out_dir=OUT_DIR / run_id)
+            preloaded = {}
+            for old in args.resume_from:
+                preloaded.update(alignment.load_saved_responses(bucket, old))
+            config.console.print(f"Reusing {len(preloaded)} saved search responses from {args.resume_from or 'no run'}")
+            log.run_row["config"]["resumed_from"] = {"runs": args.resume_from, "responses": len(preloaded)}
+            path = run(bucket, log, args.workers, out_dir=OUT_DIR / run_id,
+                       searcher=alignment.Searcher(log=log, preloaded=preloaded))
             outcome = "ok"
         finally:
             config.console.print(run_log.describe(log.finish(outcome)))

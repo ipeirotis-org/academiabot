@@ -182,17 +182,25 @@ class Searcher:
     """Runs the searches for units, through one query function, and keeps every response
     (saved with the run when a run log is given, and reused within the run)."""
 
-    def __init__(self, sparql: Callable[[str], List[dict]] = execute_sparql_bindings, log=None):
+    def __init__(self, sparql: Callable[[str], List[dict]] = execute_sparql_bindings, log=None,
+                 preloaded: Optional[Dict[str, List[dict]]] = None):
         self.sparql, self.log = sparql, log
         self.responses: Dict[str, List[dict]] = {}
         self.saved_paths: Dict[str, str] = {}
+        # Responses an earlier, stopped run saved (load_saved_responses): reused, not sent again.
+        self.preloaded: Dict[str, List[dict]] = dict(preloaded or {})
         self.queries = 0
+        self.reused = 0
 
     def ask(self, query: str) -> List[dict]:
         if query in self.responses:
             return self.responses[query]
-        self.queries += 1
-        rows = self.sparql(query)
+        if query in self.preloaded:
+            self.reused += 1
+            rows = self.preloaded[query]
+        else:
+            self.queries += 1
+            rows = self.sparql(query)
         self.responses[query] = rows
         if self.log is not None:
             h = hashlib.sha256(query.encode()).hexdigest()[:20]
@@ -233,6 +241,19 @@ class Searcher:
         for i in range(0, len(qids), DETAILS_BATCH):
             out.update(parse_details(self.ask(details_query(qids[i:i + DETAILS_BATCH]))))
         return out
+
+
+def load_saved_responses(bucket, run_id: str) -> Dict[str, List[dict]]:
+    """{query: bindings} for every search response a run saved under
+    runs/<run_id>/searches/ in the bucket. A file that does not parse is skipped."""
+    out: Dict[str, List[dict]] = {}
+    for blob in bucket.list_blobs(prefix=f"runs/{run_id}/searches/"):
+        try:
+            d = json.loads(blob.download_as_bytes())
+            out[d["query"]] = d["bindings"]
+        except Exception:  # noqa: BLE001 - a broken file is asked again
+            logger.warning("load_saved_responses: skipped %s", blob.name)
+    return out
 
 
 def candidate_pool(found: Dict[str, List[str]], details: Dict[str, dict], kinds: Iterable[str],

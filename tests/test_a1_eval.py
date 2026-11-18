@@ -114,3 +114,65 @@ def test_run_searches_each_unit_once_and_decides_every_set_both_ways(tmp_path):
     assert by[(("prefix", "fulltext"), "choose")]["qid"] == "Q9"
     n_search_queries = searcher.queries
     assert n_search_queries == len(set(wd.queries))      # every query was sent once
+
+
+def test_a_resumed_run_reuses_saved_responses_and_saves_them_again(tmp_path):
+    from tests.test_alignment import FakeWikidata
+    from tests.test_node_register import FakeBucket
+    from wikidata_discover import run_log
+    import json
+    bucket = FakeBucket()
+    first = alignment.Searcher(FakeWikidata(fulltext={"Wheelock College": []}),
+                               log=run_log.RunLog("old", "i", bucket=bucket, results_dir=tmp_path))
+    first.ask(alignment.fulltext_query("Wheelock College"))
+    bucket.list_blobs = lambda prefix: [bucket.blob(k) for k in list(bucket.objects) if k.startswith(prefix)]
+    for name in list(bucket.objects):
+        blob = bucket.blob(name)
+        blob.download_as_bytes = (lambda n=name: bucket.objects[n][0].encode())
+    saved = {}
+    for k in bucket.objects:
+        if k.startswith("runs/old/searches/"):
+            d = json.loads(bucket.objects[k][0])
+            saved[d["query"]] = d["bindings"]
+    wd = FakeWikidata(fulltext={"Wheelock College": []})
+    new = alignment.Searcher(wd, log=run_log.RunLog("new", "i", bucket=bucket, results_dir=tmp_path), preloaded=saved)
+    new.ask(alignment.fulltext_query("Wheelock College"))
+    assert wd.queries == [] and new.reused == 1 and new.queries == 0
+    assert any(k.startswith("runs/new/searches/") for k in bucket.objects)
+
+
+def test_load_saved_responses_reads_the_run_folder():
+    import json
+
+    class Blob:
+        def __init__(self, name, data):
+            self.name, self.data = name, data
+
+        def download_as_bytes(self):
+            return self.data
+
+    class Bucket:
+        def list_blobs(self, prefix):
+            assert prefix == "runs/r1/searches/"
+            return [Blob("runs/r1/searches/a.json", json.dumps({"query": "Q", "bindings": [1]}).encode()),
+                    Blob("runs/r1/searches/b.json", b"not json")]
+    assert alignment.load_saved_responses(Bucket(), "r1") == {"Q": [1]}
+
+
+def test_the_run_log_is_flushed_during_the_run(tmp_path):
+    from tests.test_alignment import FakeWikidata
+    rows = "".join(f"A1-{i:03d},School {i},Boston University,Q49110,School,,,,\n" for i in range(1, 21))
+    sheet = "item_id,unit_name,university,university_qid,unit_type,website_or_source_url,my_qid,second_qid,notes\n" + rows
+    answers = "item_id,candidate_id,stratum,status,matched_qid,matched_label,university_qid,name,source_file\n" + "".join(
+        f"A1-{i:03d},c{i},missing,missing,,,Q49110,School {i},x\n" for i in range(1, 21))
+
+    class Log:
+        flushes = 0
+
+        def flush(self):
+            Log.flushes += 1
+    choose = lambda u, c: {"choice": None, "also_same_unit": [], "reason": "", "llm_call_ids": [], "provider": "f"}
+    a1.run(_Bucket({"a1/a1_labeling_sheet.csv": sheet, "a1/a1_pipeline_answers.csv": answers}), Log(), workers=1,
+           out_dir=tmp_path, searcher=alignment.Searcher(FakeWikidata()), choose_fn=choose,
+           yes_no_fn=lambda u, c: {}, snapshots={"Q49110": None})
+    assert Log.flushes >= 2          # after units 10 and 20, before the end
