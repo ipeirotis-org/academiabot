@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 SEARCH_KINDS = ("prefix", "fulltext", "university_name", "other_names", "website", "tree")
 DECIDE_MODES = ("choose", "yes-no")
+PRECISE_KINDS = ("tree", "website", "university_name")   # ranked first in the candidate list
 PER_SEARCH = 7            # results kept from one search request
 MAX_CANDIDATES = 12       # items shown to the LLM for one unit
 DETAILS_BATCH = 20        # items per details query
@@ -258,9 +259,10 @@ def load_saved_responses(bucket, run_id: str) -> Dict[str, List[dict]]:
 
 def candidate_pool(found: Dict[str, List[str]], details: Dict[str, dict], kinds: Iterable[str],
                    exclude: Iterable[str] = ()) -> List[dict]:
-    """The items the chosen search kinds found, in kind order, each with every kind that
-    found it, without categories, people, and other items that are never units, and without
-    `exclude` (the university itself, the unit's parent). At most MAX_CANDIDATES. Pure."""
+    """The items the chosen search kinds found, each with every kind that found it, without
+    categories, people, and other items that are never units, and without `exclude` (the
+    university itself, the unit's parent). Ranked (precise searches first, then the number
+    of searches that found the item), then cut to MAX_CANDIDATES. Pure."""
     kinds = [k for k in SEARCH_KINDS if k in set(kinds)]
     skip = set(exclude)
     pool: Dict[str, dict] = {}
@@ -274,7 +276,15 @@ def candidate_pool(found: Dict[str, List[str]], details: Dict[str, dict], kinds:
             pool.setdefault(q, {**d, "found_by": []})
             if k not in pool[q]["found_by"]:
                 pool[q]["found_by"].append(k)
-    return list(pool.values())[:MAX_CANDIDATES]
+    # Rank before the cut: items a precise search found first, then items more searches
+    # found, then search order. Without the ranking, the 7 + 7 hits of the prefix and
+    # full-text searches for a generic name ("College of Business") filled all 12 places
+    # and cut the right item that the university-name or tree search had found
+    # (A1 run a1-eval-20261118T140956Z-d21ff0: 8 of 10 misses in the linked stratum).
+    order = list(pool)
+    ranked = sorted(pool.values(), key=lambda c: (-sum(k in PRECISE_KINDS for k in c["found_by"]),
+                                                  -len(c["found_by"]), order.index(c["qid"])))
+    return ranked[:MAX_CANDIDATES]
 
 
 # ── deciding ─────────────────────────────────────────────────────────────

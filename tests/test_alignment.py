@@ -272,3 +272,12 @@ def test_details_come_one_row_per_item_with_joined_values():
 def test_search_queries_stop_after_one_result_page():
     for q in (al.prefix_query("College of Education"), al.fulltext_query("College of Education")):
         assert 'wikibase:limit "once"' in q
+
+
+def test_generic_hits_never_push_a_precise_hit_out_of_the_candidate_list():
+    generic = [f"Q{i}" for i in range(100, 114)]                # 14 unrelated "College of Business" items
+    found = {"prefix": generic[:7], "fulltext": generic[7:], "university_name": ["Q5"], "tree": ["Q5"]}
+    details = {q: {"qid": q, "label": q} for q in generic + ["Q5"]}
+    pool = al.candidate_pool(found, details, al.SEARCH_KINDS)
+    assert len(pool) == al.MAX_CANDIDATES and pool[0]["qid"] == "Q5"
+    assert pool[0]["found_by"] == ["university_name", "tree"]
