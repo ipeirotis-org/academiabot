@@ -77,3 +77,6 @@ wikidata_discover/results/reports/
 wikidata_discover/results/missing_divisions_*.csv
 wikidata_discover/results/quickstatements_*.qs
 wikidata_discover/results/dept_scores/
+
+# Week 4 sub-unit CSVs (local outputs, like results/reports/)
+wikidata_discover/results/subunits/
