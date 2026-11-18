@@ -73,8 +73,17 @@ official source. Certificate checking stays on. Tests check that a trusted root 
 ## Checks (TASKS.md week 5)
 
 1. Run `discover --depth 2 Q49210`. Done: the runs above.
-2. Ten departments at random (seed 20261119) from Stern, Courant, and Steinhardt. Anya
-   checks them by hand.
+2. Ten departments at random (seed 20261119) from Stern, Courant, and Steinhardt, checked
+   by hand by Anya:
+   - School: 10 of 10 right.
+   - Type: 10 of 10 right (all are departments).
+   - QID: 6 of 10 right. Finance (Q128602068) is right. Nutrition and Food Studies,
+     Occupational Therapy, Art and Art Professions, Technology, Operations, and Statistics,
+     and Management and Organizations are rightly empty: a search of Wikidata found no item.
+   - 4 of 10 wrong: the QID is empty, but Wikidata has an item attached directly to NYU, not
+     to the school: Marketing (Q101027500), Mathematics (Q101027501), Applied Psychology
+     (Q101027484), and Teaching and Learning (Q101027519). Week 5 missed them because it
+     matches a unit only against the snapshot items under its own school.
 3. Every node has a source URL or a flag. Passed in every run.
 4. Every in-scope school in the snapshot is in the file, with its departments looked up.
    Passed: 27 of 27 are in the file. 25 were looked up; NYU Paris and NYU Florence are
@@ -93,10 +102,11 @@ official source. Certificate checking stays on. Tests check that a trusted root 
   parents.
 - A unit with two parents in two universities: NYU Shanghai is under NYU and under East
   China Normal University. Both are kept in `parent_ids`.
-- Departments directly under the university: 33 Wikidata items, such as "New York University
-  Department of Accounting", hang directly under NYU, not under their school. The AI puts
-  the same departments under Stern, Steinhardt, or Courant. 13 such pairs are listed in the
-  week 5 notes; week 6 searches and merges them.
+- Departments attached directly to NYU instead of their school: 33 Wikidata items, such as
+  "New York University Department of Accounting", hang directly under NYU, not under their
+  school. The AI puts the same departments under Stern, Steinhardt, or Courant. Week 5
+  matches only under the school, so it misses them: 4 of the 10 departments in check 2.
+  13 such pairs are listed in the week 5 notes; week 6 searches and merges them.
 - Two departments with the same name: Stern's Department of Economics is not the Arts and
   Science Department of Economics (Q101027493). Shuo's ground truth agrees.
 - Same name, other campus: NYU Shanghai's "Arts and Sciences" and "Center for Data Science"
