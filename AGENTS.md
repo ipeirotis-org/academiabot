@@ -150,8 +150,149 @@ whose parent is not a school in the answer key is left out of every score
 only some schools, and other schools have departments with the same names (Economics).
 QIDs only break a tie between equally good matches. An empty list scores 0 recall and F1. Shuo's ground truth for
 Stern, Courant and Steinhardt is `wikidata_discover/eval/dept_ground_truth.csv` (24 rows, 2026-10-16);
-`tests/fixtures/dept_truth_sample.csv` is a copy, and a test fails if the two differ.
+`tests/fixtures/dept_truth_sample.csv` is a copy of those 24 rows, and a test fails if they differ.
+Week 4 (2026-11-17) added 15 rows checked by Shuo for 3 schools outside NYU: UT Austin's Cockrell
+School of Engineering (7), Howard's College of Engineering and Architecture (5), and Winthrop's
+College of Business and Technology (3; its Wikidata item Q101028456 has the old name "College of
+Business Administration"). Their school QIDs are in `eval/dept_schools.csv`.
 Tests: `tests/test_dept_scorer.py`.
+
+## Agreement runs (Shuo, week 3)
+
+`python -m wikidata_discover.eval.agreement` asks every provider with a key to list the schools
+of every university in `eval/ground_truth.py` (the 12 in `GROUND_TRUTH`, plus the 6 in
+`SMALL_GROUND_TRUTH`, 30 schools that Shuo checked on 2026-11-09, with one source URL per
+school in `eval/small_ground_truth_sources.csv`), 3 samples each (`--samples`). Report: `results/agreement/<run_id>/` (not in git).
+
+- Samples: the three extractors take `sample=` (1 or more). The sample goes into the cache key
+  (`|sample=N` after the website, `_extract_extra()` in `llm_helpers.py`) and into the call's
+  `request_config`. Without a sample the key is unchanged, so old cache files still match.
+- Sampled Gemini calls run with thinking off (`thinking_budget=0`, also in the cache key).
+  With thinking on, Gemini spent its 2048 output tokens thinking and most answers were cut off
+  (finish reason MAX_TOKENS): only 9 of 36 answered in the first run on 2026-11-04. Gemini
+  calls without a sample (discover, the eval harness) still have thinking on and the same
+  problem; that fix is outside week 3.
+- Each school a provider names in one sample is a `candidates` row with status `unaligned`
+  (no Wikidata matching in this step) and its extract call in `llm_call_ids`.
+- Name comparison ignores the university's own name inside a school name ("Stanford Law
+  School" matches "School of Law"; `strip_university()`), and notes in brackets.
+- Name variants are grouped with `is_fuzzy_match`: a name joins the first group with a member it
+  matches, visited in a fixed order (provider, sample, position), so the same answers give the
+  same groups. Each group gets one `checks` row: kind `agreement`, result `pass` when 2 or more
+  providers named it (else `fail`), score = runs that named it / runs that answered, the first
+  member's `candidate_id`, and every member's id in `detail`. Its `llm_call_ids` hold the call of every
+  answered run, also the runs that did not name the school, because the score counts them (since
+  2026-11-17, review of pull request 25; the 299 rows of the final week 3 run list only the naming calls).
+- Scoring: groups match true schools one to one (maximum matching). A second group that matches
+  an already matched school is a `duplicate` and counts as wrong, as a repeated name does in
+  week 2. Other wrong groups are `non_academic` (library, office, hospital, admissions, ... in
+  the name or the LLM's unit_type), `campus`, or `invented` (everything else; "not in the ground
+  truth", which a person must confirm). Each row of `precision_by_agreement.csv` matches its own subset of
+  groups to the true schools again (`matched_count`), so a duplicate kept without its first group
+  counts as correct (2026-11-17, review of pull request 25: the 1-provider precision rose from 0.12 to 0.14).
+- S1: Chapman for each pair of providers, M_t (independent lists: solve
+  prod(1 - n_j/N) = 1 - r/N) for all providers together and for the samples of one provider.
+  Each counted two ways: `all` (every group) and `matched` (only groups that match a true
+  school). No overlap at all gives no M_t estimate (blank).
+- `--no-run-log` writes the report only, with no run log rows. Use it to rescore cached
+  answers, so BigQuery does not get a second copy of the same candidates and checks. It makes
+  no LLM calls: a sample with no cache file is not asked, and its row in `cache_files.csv` has
+  `missing_from_cache` true (review of pull request 24). A cache file that does not hold a valid answer
+  (cut off, not JSON) also counts as missing, and a valid empty answer (`[]`) counts as answered
+  (review of pull request 25). It loads no keys and keeps every
+  requested provider, because the cache is read before any key is needed. A run with the run log uploads the
+  dirty-worktree patch with `attach_source_patch()`, as `discover` does.
+- `--compare DIR_A DIR_B` checks that two runs gave identical report files (`ids.csv` and
+  `cache_files.csv` hold new ids or paths each run and are left out).
+- `--draw-small --seed 2026` prints the draw order of the small universities: sort us-tier1 by
+  (sitelinks, QID number), take the bottom third (506), `random.Random(seed).sample(bottom, 20)`.
+  Sitelinks come from the saved snapshot `eval/us_tier1_sitelinks.csv` (2026-10-23), because live
+  counts drift. Shuo's rule (2026-11-04): walk the order and keep the first 6 universities with
+  at least one top-level academic unit. A person decided which have none (`SKIPPED_NO_UNITS`:
+  #1, #6, #8), so the 6 kept QIDs are fixed in `SMALL_UNIVERSITIES` (#2 to #5, #7, #9). The
+  sample therefore shows small universities that have schools, not all small universities.
+- Final run with the run log: `agreement-20261109T204358Z-32c21a` (18 universities, 162 calls,
+  1,863 candidates, 299 checks). A change to a ground truth changes only the scoring: rescore
+  with `--no-run-log`, which replays the cache and makes no new calls.
+- `single_provider_review.csv` is a random sample (seed 2026) of 20 one-provider schools, with
+  blank `real` and `notes` columns for Shuo's verdicts. Shuo's verdicts (2026-11-10) are in
+  `eval/single_provider_review_verdicts.csv` (4 real, 16 not) and, for the 18 eval schools that
+  2 or more providers named outside the ground truth, `eval/not_in_ground_truth_verdicts.csv`.
+  From them, `GROUND_TRUTH` grew from 171 to 180 schools: 9 added, and 2 renamed to the
+  current name (Berkeley's College of Computing, Data Science, and Society; Howard's Chadwick
+  A. Boseman College of Fine Arts). Affiliates (Barnard, Teachers College), seminaries, and
+  labs (SLAC, Hoover, JPL) stay out, and so does UChicago's The College (Shuo's call).
+- The `checks` table must exist in BigQuery (`python -m wikidata_discover.run_log setup` creates
+  missing tables only). Without it, the first flush fails and the rest of the run log goes to
+  the local fallback.
+
+Tests: `tests/test_agreement.py`.
+
+## Judge runs (Shuo, week 4)
+
+`python -m wikidata_discover.eval.judge` tests the LLM judge on the week 3 merged school lists.
+Report: `results/judge/<run_id>/` (not in git).
+
+- The merged list of a university is every week 3 group (`agreement.collect` with
+  `cache_only=True`, then `analyze_all`), one name per group (the group label). It needs the
+  162 week 3 extraction answers in `results/cache`; without them it stops, because the list
+  would differ. On 2026-11-16 the cache was rebuilt from the raw responses in the bucket
+  (`llm_calls.response_path`, parsed with the same code); a cache-only replay of week 3 gave
+  identical report files. A copy is in the project files (`week4-judge/week3_cache_restored`).
+- Each judge (OpenAI, Anthropic, Gemini) runs 4 times: order A (names sorted A to Z, case
+  ignored) samples 1 and 2, and order B (A reversed) samples 1 and 2.
+  `LLMHelper.judge_sampled()` uses the `judge_union` prompt; its cache key
+  (`judge_cache_key`) holds provider, model, prompt hash, university, the hash of the list in
+  its order, the sample, and the output budget (2048). A list that reads the same in reverse (one
+  name) also has the order in its key, so orders A and B stay separate calls; no other key changed. Gemini runs with thinking off (also in
+  the key). A bad answer is retried once and never cached; no valid answer gives None (the
+  run counts as not answered, and its verdicts are blank). `judge_union` itself is unchanged.
+- Returned names are mapped back to the list (`map_kept`): exact, then case and punctuation
+  ignored, then a name variant (`university_matcher`). A returned name that fits nothing is in
+  `judge_runs.csv` (`unmapped`).
+- With the run log, each verdict is a `checks` row: kind `judge`, result pass (kept), fail
+  (dropped), or unclear (no answer), on the `candidate_id` of the week 3 agreement check of the
+  same group (`week3_agreement_checks()`, run `agreement-20261109T204358Z-32c21a`; group ids
+  are stable; the lookup runs inside the run log block, so a failed lookup still writes the runs
+  row), with the judge call in `llm_call_ids` and judge, order, sample, and position in
+  `detail`.
+- Tables: `flip_rates.csv` (same order: A1-A2 and B1-B2; cross order: the 4 A-B pairs; order
+  effect = cross minus same), `self_preference.csv` (keep rate of schools the judge's own
+  provider named against the others', per correctness; scope `one_provider` uses only
+  one-provider schools, so agreement does not mix in), `precision_recall.csv` (no filter,
+  agreement 2+ and 3, each judge per run, mean, and majority 3 of 4). Recall counts the true schools of every
+  requested university or school in its set, also one that gave no list (review of pull request 25).
+  The kept schools are matched to the true schools again for each filter and run (`matched_count`,
+  on each group's `truth_options`), so a kept duplicate counts when its school's first group was dropped.
+- `--hand-list FILE` (check 1): a CSV `university_qid,name,fake`; fake is `yes` (planted),
+  `wrong` (a known wrong school, such as a wrong week 3 group), or `no`. Each judge runs 4 times
+  on it; a fake or wrong school must be dropped. `hand_list_summary.csv` gives fakes removed,
+  known wrong removed, and real kept. Shuo's check 1 (2026-11-17): Caltech's 7 week 3 groups
+  (6 real, JPL wrong) plus 3 fakes. Every judge removed every fake in every run; Gemini kept JPL
+  in both order B runs.
+- `--departments`: the same test on departments. The lists come from
+  `subunits <QID> --provider P --sample N` (new `--sample`, `llm_helpers.SUBUNIT_SAMPLE`: the
+  sample is in the request and so in the cache key; without it the key is unchanged; the CSV
+  files get `_s<N>`). Schools and their QIDs are in `eval/dept_schools.csv`, which must have a
+  row for every school whose departments are scored. Each list is scored with
+  `dept_scorer.score` (`departments/list_scores.csv`), the lists are merged with
+  `dept_names_match`, and the merged list is judged with `DEPT_JUDGE_PROMPT_TEMPLATE`.
+  Department verdicts write no `checks` rows: the subunits CSV files carry no candidate ids.
+- A school with no Wikidata item has `school_qid` "none" in `dept_schools.csv`. Its lists come
+  from `subunits --no-item NAME WEBSITE PARENT_QID` (`subunits.no_item_unit`: name and website
+  as given, parent from Wikidata, qid None, so the cache key holds the name and website). Its
+  files are named `noitem-<name>` (`subunits.unit_stem`), and its candidates rows have an empty
+  parent_qid. First use: Point Park's Conservatory of Performing Arts (2026-11-17).
+- `--no-run-log` makes no LLM calls and rescores from the cache. A judge cache file without a valid
+  `keep` list counts as not answered and is never sent to the provider. `--compare DIR_A DIR_B`
+  compares the report files, including `departments/`.
+- In a Claude Code cloud session the page fetcher cannot resolve host names (no direct DNS),
+  so a `subunits` run there records every cited page as `refused` ("the host name does not
+  resolve"). Use `--no-fetch` there when pages are not needed.
+- `google-genai` is pinned below 3: version 3 calls API v1 by default, which refuses
+  `thinking_budget=0` ("Thinking is not enabled for api version v1").
+
+Tests: `tests/test_judge.py`.
 
 ## LLM integration details
 
@@ -165,12 +306,14 @@ Tests: `tests/test_dept_scorer.py`.
 - `extract_divisions_ensemble()`: OpenAI + Anthropic generate, Gemini judges. Used by the eval harness only
 - `judge_union()`: one provider reviews the union of all candidates and keeps only real units
 - `choose_match()`: single-token classification (QID / ORPHAN:QID / NONE)
-- Responses are cached in `results/cache/`, keyed by (university, provider, model, prompt hash).
+- Responses are cached in `results/cache/`, keyed by (university, provider, model, prompt hash,
+  website, and the sample number when there is one).
   Match decisions are also keyed by which providers are configured, and a cached decision
   made by a fallback provider is asked again once the preferred provider answers
 - Models configured in `config.py`: `LLM_MODEL` (OpenAI), `ANTHROPIC_MODEL`, `GEMINI_MODEL`; all overridable in `.env`
 - Eval on 12 universities: best config is Anthropic judge over OpenAI + Gemini, about 0.95 precision and recall
-  (see `eval/results_summary.csv`)
+  (see `eval/results_summary.csv`). Those numbers predate the 2026-11-10 ground truth changes
+  (171 to 180 schools), so a rerun of `run_eval` will differ
 
 ## Working norms (read first)
 
@@ -316,12 +459,12 @@ it's Y", "dive into", or "robust".
 - **New team members:** The agent handles onboarding via the cloud-bootstrap "Add Team Member" flow
 - **Permission escalation:** Ask the agent to escalate; it will propose roles and ask you to approve via `gcloud`
 
-## Run log (first four tables built in Anya's week 2)
+## Run log (first four tables built in Anya's week 2, `checks` in Shuo's week 3)
 
 Every run must be reproducible. The first four tables below are in dataset
 `academiabot` of project `wikidata-academia`, with large text in Cloud Storage and the GCS path
 kept in the row. The other three come later and are specified here so both tracks build to the
-same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3), `reviews` (Shuo, week 7).
+same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3; now in `run_log.py`), `reviews` (Shuo, week 7).
 
 How it works today (`wikidata_discover/run_log.py`; every column is explained in
 `docs/RUN_LOG_SCHEMA.md`, and a test fails when a column is missing there):

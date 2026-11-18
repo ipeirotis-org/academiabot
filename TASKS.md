@@ -474,9 +474,10 @@ departments (`wikidata_discover/eval/dept_ground_truth.csv`).
 
 ### Shuo, week 3 (finish Nov 6 to 12): parallel extraction
 
-**Status on 2026-11-04.** Three runs on the 12 evaluation universities are in BigQuery
-(685 `checks` rows). The 6 small universities are not in them yet. The code is not on
-GitHub yet (section 1).
+**Status on 2026-11-10.** The final run covers all 18 universities (run
+`agreement-20261109T204358Z-32c21a`, 299 `checks` rows). All 3 checks pass. For check 3,
+the agent recounted Caltech and Point Park from the raw lists (2026-11-11); every count
+matched. Your two own tasks are done.
 
 **Goal.** Find out whether independent LLMs agree, and whether agreement means a school is
 real.
@@ -510,6 +511,11 @@ real.
   true count.
 
 ### Shuo, week 4 (Nov 6 to 12): the LLM judge, tested
+
+**Status on 2026-11-17.** The judge test ran on the 18 universities (run
+`judge-20261117T051126Z-9d8317`, 216 calls, 3,588 `checks` rows). The department test ran on
+the 6 department ground-truth schools (run `judge-20261117T060958Z-f1bf60`). Shuo's 15 new
+rows are in `eval/dept_ground_truth.csv`. Check 1 passed on NYU and on Caltech. The command is `python -m wikidata_discover.eval.judge` (AGENTS.md, "Judge runs").
 
 **Goal.** Find out whether an LLM judge helps, and how it is biased.
 
