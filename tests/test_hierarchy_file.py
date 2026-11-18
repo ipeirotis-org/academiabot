@@ -287,3 +287,12 @@ def test_the_parent_itself_is_never_a_same_name_candidate():
     snap = make_snapshot([snap_unit("Q40", "School of Mathematics", ["faculty"], [("Q1", "P749")])])
     got = hf.elsewhere_matches("Department of Mathematics", snap, "Q40", ["Test University", "School of Mathematics"])
     assert "Q40" not in {c["qid"] for c in got}
+
+
+def test_the_same_page_content_keeps_the_node_version():
+    base = {"name": "X", "evidence": [{"fact": "unit", "url": "https://u.edu", "evidence_id": "e1", "outcome": "ok",
+                                       "content_hash": "abc"}]}
+    again = {"name": "X", "evidence": [dict(base["evidence"][0], evidence_id="e2")]}
+    changed = {"name": "X", "evidence": [dict(base["evidence"][0], content_hash="def")]}
+    assert hf.node_version(base) == hf.node_version(again)
+    assert hf.node_version(base) != hf.node_version(changed)

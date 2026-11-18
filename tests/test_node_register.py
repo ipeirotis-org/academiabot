@@ -157,3 +157,26 @@ def test_an_unreachable_bucket_assigns_no_ids(tmp_path):
     with pytest.raises(nr.RegisterUnavailable):
         nr.assign_and_save(store, "Q1", [ROOT, unit("a", "School A")], "run1")
     assert not (tmp_path / "Q1" / "ids.json").exists()
+
+
+def test_a_joint_unit_in_the_tree_twice_keeps_both_ids_across_runs():
+    """The Furman Center is under Wagner and under Law on Wikidata, with one QID (check 5)."""
+    units = [unit("w", "Wagner", qid="Q618001"), unit("l", "Law", qid="Q846173"),
+             unit("f1", "Furman Center", parent="w", qid="Q594306"),
+             unit("f2", "Furman Center for Real Estate", parent="l", qid="Q594306")]
+    ids1, _, reg = first_run(units)
+    ids2, flags, reg2 = nr.assign_ids(reg, [ROOT] + units, "run2")
+    assert ids2 == ids1 and not flags
+    ids3, flags3, _ = nr.assign_ids(reg2, [ROOT] + units, "run3")
+    assert ids3 == ids1 and not flags3
+
+
+def test_entries_with_the_same_qid_and_parent_merge_into_the_oldest_id():
+    reg = nr.empty_register("Q1")
+    reg["entries"] = {"n00001": {"qid": "Q9", "names": ["center"], "parents": ["root"]},
+                      "n00007": {"qid": "Q9", "names": ["center"], "parents": ["root"]}}
+    reg["next_seq"] = 8
+    ids, flags, reg2 = nr.assign_ids(reg, [ROOT, unit("c", "Center", qid="Q9")], "run")
+    assert ids["c"] == "n00001" and reg2["merged"] == {"n00007": "n00001"}
+    ids2, flags2, _ = nr.assign_ids(reg2, [ROOT, unit("c", "Center", qid="Q9")], "run2")
+    assert ids2["c"] == "n00001" and not flags2

@@ -15,6 +15,7 @@ Each sub-unit also adds a candidates row with status "unaligned": it is not yet 
 with Wikidata (alignment is week 6). Offices are kept, with in_scope "no".
 """
 import csv
+import hashlib
 import logging
 import re
 from pathlib import Path
@@ -155,7 +156,9 @@ class CitedPages:
             self.fetches += 1
             read = fetcher.read_result(result)
             eid = fetcher.record(self.log, result, names, read) if self.log is not None else None
-            self.pages[url] = {"evidence_id": eid, "outcome": result.outcome, "text": read[0], "name_check": read[1]}
+            content = getattr(result, "content", None)
+            self.pages[url] = {"evidence_id": eid, "outcome": result.outcome, "text": read[0], "name_check": read[1],
+                               "content_hash": hashlib.sha256(content).hexdigest() if content is not None else None}
         return {url: self.pages[url] for url in citing}
 
 

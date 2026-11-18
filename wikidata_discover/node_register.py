@@ -125,21 +125,37 @@ def assign_ids(register: dict, units: List[dict], run_id: str) -> Tuple[Dict[str
 
     def free(eid: str, u: dict) -> bool:
         e = entries[eid]
-        # An entry that already has a different QID is another unit.
-        return eid not in used and not (u.get("qid") and e.get("qid") and e["qid"] != u["qid"])
+        # An entry that already has a different QID is another unit; a merged entry is retired.
+        return (eid not in used and eid not in reg.get("merged", {})
+                and not (u.get("qid") and e.get("qid") and e["qid"] != u["qid"]))
 
     def take(u: dict, eid: str, rule: str) -> None:
         ids[u["key"]] = eid
         used.add(eid)
         how[u["key"]] = rule
 
-    # Pass 1: the root and every unit whose QID the register knows.
+    # Pass 1: the root and every unit whose QID the register knows. A joint unit can be in
+    # the tree twice, under two parents, with one QID (the Furman Center: Wagner and Law):
+    # then the parent decides. Entries with the same QID AND the same parent are one unit:
+    # the oldest id survives and the others are recorded as merged into it.
+    merged = reg.setdefault("merged", {})
     for u in units:
         if u.get("is_root"):
             take(u, ROOT_ID, "root")
             continue
         if u.get("qid"):
-            fits = [eid for eid, e in entries.items() if e.get("qid") == u["qid"] and eid not in used]
+            fits = [eid for eid, e in entries.items()
+                    if e.get("qid") == u["qid"] and eid not in used and eid not in merged]
+            if len(fits) > 1:
+                p = parent_ids(u)[0] if parent_ids(u) else None
+                same_parent = [eid for eid in fits if p in (entries[eid].get("parents") or [])]
+                if same_parent:
+                    fits = sorted(same_parent)
+                    for old in fits[1:]:
+                        merged[old] = fits[0]
+                        flags.setdefault(u["key"], []).append(
+                            f"register: {old} merged into {fits[0]} (same QID and same parent)")
+                    fits = fits[:1]
             if len(fits) == 1:
                 take(u, fits[0], "qid")
             elif len(fits) > 1:

@@ -226,8 +226,13 @@ VERSION_FIELDS = ("name", "aliases", "description", "unit_type", "parent_ids", "
 
 
 def node_version(node: dict) -> str:
-    """Hash of everything a reviewer is shown (AGENTS.md, "Hierarchy file"). Pure."""
+    """Hash of everything a reviewer is shown (AGENTS.md, "Hierarchy file"). Pure.
+    Evidence counts by fact, URL, fetch outcome, and content hash, not by evidence row id:
+    every fetch adds a new row, and the same page with the same content must keep the
+    version (and a reviewer's verdict) valid."""
     shown = {k: node.get(k) for k in VERSION_FIELDS}
+    shown["evidence"] = [{k: e.get(k) for k in ("fact", "url", "outcome", "content_hash")}
+                         for e in node.get("evidence") or []]
     return hashlib.sha256(json.dumps(shown, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
@@ -513,13 +518,13 @@ def _evidence(nodes: List[dict], deps: Deps, root_qid: str) -> None:
         n["evidence"] = []
         if page:
             n["evidence"].append({"fact": "unit", "url": src, "evidence_id": page.get("evidence_id"),
-                                  "outcome": page.get("outcome"),
+                                  "outcome": page.get("outcome"), "content_hash": page.get("content_hash"),
                                   "name_on_page": subunits.name_on_page(n["name"], page)})
         c = n.get("country") or {}
         cpage = got.get(subunits.country_url({"country_source": c.get("source")}))
         if cpage:
             n["evidence"].append({"fact": "country", "url": c.get("source"), "evidence_id": cpage.get("evidence_id"),
-                                  "outcome": cpage.get("outcome")})
+                                  "outcome": cpage.get("outcome"), "content_hash": cpage.get("content_hash")})
         if not c.get("label") and n.get("qid") in countries:
             n["country"] = {**countries[n["qid"]], "source": f"wikidata:{n['qid']} (P17)"}
         if not src:
