@@ -9,3 +9,10 @@ def _no_real_run_log(monkeypatch):
     records nothing. Tests of the run log build a RunLog with fake clients instead."""
     monkeypatch.setattr(run_log, "DISABLED", True)
     monkeypatch.setattr(run_log, "_current", None)
+
+
+@pytest.fixture(autouse=True)
+def _fetch_direct(monkeypatch):
+    """The fetcher connects directly in tests, even in a session with HTTPS_PROXY set.
+    Tests of proxy mode pass proxy= themselves."""
+    monkeypatch.setenv("ACADEMIABOT_FETCH_PROXY", "off")

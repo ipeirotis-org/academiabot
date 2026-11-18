@@ -17,6 +17,17 @@ Rules (SPECS.md, week 4; AGENTS.md, "Run log"):
   left, so a server that sends its headers a byte at a time cannot pass it.
 - A refused URL is recorded as refused, with the reason, and nothing is fetched from it.
 
+Proxy mode (Shuo, week 5). A Claude Code cloud session has no DNS of its own: it reaches
+the web only through a local HTTPS proxy (HTTPS_PROXY). There the fetcher opens a tunnel
+through that proxy (HTTP CONNECT host:port) and speaks HTTP or HTTPS inside it. The proxy,
+not this machine, resolves the name, so no local address check is possible. The URL rules
+still hold: an address written in the URL must be public, and names such as "localhost"
+are refused, on the first request and on every redirect. Limits are the same. Each hop
+records "proxy <host>:<port>" in place of the address. A proxy that cannot reach the host
+(CONNECT 502 or 504) gives outcome "error"; a proxy that refuses it (403, 407) gives
+"refused". ACADEMIABOT_FETCH_PROXY sets the proxy (http://host:port), or "off" turns proxy
+mode off; without it, HTTPS_PROXY is used when it is set.
+
 fetch(url) returns a FetchResult; it never raises for a bad URL or a bad server.
 """
 import codecs
@@ -58,6 +69,54 @@ class Refused(Exception):
 
 class LookupTimeout(Exception):
     """The DNS lookup did not answer within the time that is left; nothing is sent."""
+
+
+class ProxyAnswer(Exception):
+    """The proxy answered the CONNECT with a status other than 200."""
+
+    def __init__(self, status: int, reason: str = ""):
+        super().__init__(f"CONNECT {status} {reason}".strip())
+        self.status = status
+
+
+# Names that always mean this machine or its private network. In proxy mode no address
+# is known, so these are refused by name.
+LOCAL_NAMES = ("localhost", "localhost.localdomain", "metadata", "metadata.google.internal")
+LOCAL_SUFFIXES = (".localhost", ".local", ".internal", ".localdomain", ".home.arpa")
+
+
+def proxy_from_env(env=None) -> Optional[Tuple[str, int]]:
+    """(host, port) of the proxy to tunnel through, or None for direct connections.
+    ACADEMIABOT_FETCH_PROXY wins ("off", "none", or "" turns proxy mode off); else
+    HTTPS_PROXY or https_proxy. Only an http:// proxy is used. Pure."""
+    env = os.environ if env is None else env
+    value = env.get("ACADEMIABOT_FETCH_PROXY")
+    if value is None:
+        value = env.get("HTTPS_PROXY") or env.get("https_proxy") or ""
+    value = value.strip()
+    if value.lower() in ("", "off", "none", "0"):
+        return None
+    parts = urlsplit(value if "://" in value else "http://" + value)
+    if parts.scheme.lower() != "http" or not parts.hostname:
+        return None
+    return parts.hostname, parts.port or 80
+
+
+def check_host_for_proxy(host: str) -> str:
+    """In proxy mode: the host may not be a non-public address or a local name. Returns
+    the label recorded in place of an address. Raises Refused. Pure."""
+    try:
+        literal = str(ipaddress.ip_address(host.strip("[]")))
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if not is_public(literal):
+            raise Refused(f"{host} is a non-public address")
+        return literal
+    name = host.lower().rstrip(".")
+    if name in LOCAL_NAMES or name.endswith(LOCAL_SUFFIXES) or "." not in name:
+        raise Refused(f"{host} is a local name")
+    return name
 
 
 def is_public(ip: str) -> bool:
@@ -261,16 +320,98 @@ class _PinnedHTTPS(http.client.HTTPSConnection):
         self.sock.deadline = self._deadline
 
 
+def _read_connect_reply(sock, limit: int = 16384) -> Tuple[int, str]:
+    """Read the proxy's answer to CONNECT up to the blank line, one byte at a time so
+    nothing of the tunnel is read past it. Returns (status, reason)."""
+    data = b""
+    while not data.endswith(b"\r\n\r\n"):
+        chunk = sock.recv(1)
+        if not chunk:
+            raise http.client.RemoteDisconnected("the proxy closed the connection during CONNECT")
+        data += chunk
+        if len(data) > limit:
+            raise http.client.HTTPException("the proxy answer to CONNECT is too long")
+    first = data.split(b"\r\n", 1)[0].decode("latin-1")
+    parts = first.split(" ", 2)
+    try:
+        return int(parts[1]), (parts[2] if len(parts) > 2 else "")
+    except (IndexError, ValueError):
+        raise http.client.HTTPException(f"not an HTTP answer from the proxy: {first[:80]!r}")
+
+
+def _tunnel(proxy: Tuple[str, int], host: str, port: int, timeout: float, deadline: float) -> socket.socket:
+    """A socket to the proxy with an open tunnel to host:port. Raises ProxyAnswer when the
+    proxy does not answer 200."""
+    proxy_host, proxy_port = proxy
+    try:
+        proxy_ip = str(ipaddress.ip_address(proxy_host.strip("[]")))
+    except ValueError:
+        proxy_ip = socket.getaddrinfo(proxy_host, proxy_port, 0, socket.SOCK_STREAM)[0][4][0]
+    sock = _connect_ip(proxy_ip, proxy_port, timeout, deadline=deadline)
+    try:
+        target = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+        sock.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode("ascii"))
+        status, reason = _read_connect_reply(sock)
+        if status != 200:
+            raise ProxyAnswer(status, reason)
+    except BaseException:
+        sock.close()
+        raise
+    return sock
+
+
+class _ProxiedHTTP(http.client.HTTPConnection):
+    """An HTTP connection inside a CONNECT tunnel through the proxy."""
+
+    def __init__(self, host, port, proxy, timeout):
+        super().__init__(host, port, timeout=timeout)
+        self._proxy = proxy
+        self._deadline = time.monotonic() + timeout
+
+    def connect(self):
+        self.sock = _tunnel(self._proxy, self.host, self.port, self.timeout, self._deadline)
+
+
+class _ProxiedHTTPS(http.client.HTTPSConnection):
+    """An HTTPS connection inside a CONNECT tunnel. SNI and the certificate check use the name."""
+
+    def __init__(self, host, port, proxy, timeout):
+        super().__init__(host, port, timeout=timeout, context=_ssl_context())
+        self._proxy = proxy
+        self._deadline = time.monotonic() + timeout
+
+    def connect(self):
+        sock = _tunnel(self._proxy, self.host, self.port, self.timeout, self._deadline)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        self.sock.deadline = self._deadline
+
+
+def open_proxied(scheme: str, host: str, port: int, proxy: Tuple[str, int], timeout: float):
+    """The connection the fetcher uses in proxy mode."""
+    cls = _ProxiedHTTPS if scheme == "https" else _ProxiedHTTP
+    return cls(host, port, proxy, timeout)
+
+
 def open_connection(scheme: str, host: str, port: int, ip: str, timeout: float):
     """The connection the fetcher uses. Tests replace it to see which address is used."""
     cls = _PinnedHTTPS if scheme == "https" else _PinnedHTTP
     return cls(host, port, ip, timeout)
 
 
+_FROM_ENV = object()
+
+
 def fetch(url: str, *, resolve: Callable = socket.getaddrinfo, connect: Callable = None,
           max_redirects: int = MAX_REDIRECTS, max_bytes: int = MAX_BYTES,
-          max_seconds: float = MAX_SECONDS, clock: Callable[[], float] = time.monotonic) -> FetchResult:
-    """Fetch one cited URL under the rules above. Never raises for a bad URL or server."""
+          max_seconds: float = MAX_SECONDS, clock: Callable[[], float] = time.monotonic,
+          proxy=_FROM_ENV) -> FetchResult:
+    """Fetch one cited URL under the rules above. Never raises for a bad URL or server.
+    `proxy` is (host, port), None for direct connections, or by default proxy_from_env()."""
+    if proxy is _FROM_ENV:
+        proxy = proxy_from_env()
+    if proxy is not None:
+        connect = connect or (lambda scheme, host, port, _label, timeout:
+                              open_proxied(scheme, host, port, proxy, timeout))
     connect = connect or open_connection
     start = clock()
     result = FetchResult(url=url, outcome="error")
@@ -283,7 +424,11 @@ def fetch(url: str, *, resolve: Callable = socket.getaddrinfo, connect: Callable
             return result
         try:
             scheme, host, port, path = check_url(current)
-            ip = resolve_public(host, port, resolve, timeout=left)
+            if proxy is not None:
+                check_host_for_proxy(host)
+                ip = f"proxy {proxy[0]}:{proxy[1]}"
+            else:
+                ip = resolve_public(host, port, resolve, timeout=left)
         except Refused as e:
             result.outcome, result.detail = "refused", where + str(e)
             result.final_url = current
@@ -342,6 +487,14 @@ def fetch(url: str, *, resolve: Callable = socket.getaddrinfo, connect: Callable
             return result
         except socket.timeout:
             result.outcome, result.detail = "timeout", f"over {max_seconds:g} s"
+            return result
+        except ProxyAnswer as e:
+            if e.status in (403, 407):
+                result.outcome = "refused"
+                result.detail = where + f"the proxy refused the host ({e})"
+            else:
+                result.outcome = "error"
+                result.detail = where + f"the proxy could not reach the host ({e})"
             return result
         except (OSError, http.client.HTTPException, ssl.SSLError, ValueError) as e:
             result.outcome, result.detail = "error", f"{type(e).__name__}: {str(e)[:200]}"
