@@ -96,7 +96,7 @@ SCHEMAS: Dict[str, List[tuple]] = {
 # unaligned: not yet compared with Wikidata (Shuo's week 3 agreement runs, the week 4
 # subunits step), so linked, orphan, and missing do not apply yet.
 CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved", "unaligned")
-CHECK_KINDS = ("agreement", "judge", "page_status", "name_on_page", "verifier")
+CHECK_KINDS = ("agreement", "judge", "page_status", "soft_404", "on_domain", "name_on_page", "verifier")
 CHECK_RESULTS = ("pass", "fail", "unclear")
 
 # Columns added after the tables were first created (week 3). setup_tables() adds them

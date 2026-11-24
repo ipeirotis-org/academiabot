@@ -346,6 +346,20 @@ three providers answered the same questions.
 nyu.edu answers status 405 to the fetcher on some pages (4 of the 16 pages saved in week 4),
 because the site refuses the fetcher's User-Agent (AGENTS.md). Such a page is not dead.
 
+Built 2026-11-24 (`eval/page_checks.py`; AGENTS.md, "Page checks"). Four kinds of `checks`
+rows per claim: `page_status`, `soft_404`, `on_domain`, `name_on_page`. Any 401, 403, 405,
+406, 429, 451, or 999 answer is unclear, never dead. Shares come with two 95% intervals: one
+per claim (Wilson) and one that resamples cited pages, because claims that cite one list
+page are not independent. Report the second.
+
+**Tests:** a 404 page is dead and a 403 or 405 page is unclear; a page whose title says "Page
+Not Found" fails the soft 404 check, and so does a deep link that lands on the home page; a
+page on Wikipedia is off the university's domain, and a redirect onto the domain is on it;
+"Finance Department" counts for "Department of Finance", and "Business" alone never counts for
+"School of Business"; each URL is fetched once and each claim gets 4 `checks` rows; the 100
+pairs are 34, 33, and 33 per provider, the same for the same seed; the 10-URL check sorts a
+dead, an other, and a correct page as given.
+
 ### Shuo, week 6 (Nov 20 to 26, Thanksgiving)
 
 **LLM verifier.** Given a claim and the saved page, answer supported, not supported, or
