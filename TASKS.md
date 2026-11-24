@@ -543,6 +543,11 @@ columns.
 
 ### Shuo, week 5 (Nov 13 to 19): does the page exist and name the unit?
 
+**Status on 2026-11-24.** Started again and built on a local branch (`shuo-week5`, not pushed).
+Run `page-checks-20261124T070324Z-f5cad1`: 873 pages, 22,808 `checks` rows. New search-on
+school lists: 162 calls. The week 4 department lists already had search on and were reused.
+Your 3 steps are open. The sheets are in the project files, `week5-page-checks-v2/`.
+
 **Goal.** Simple, mechanical checks on every saved page.
 
 **Ask the agent to build:**
