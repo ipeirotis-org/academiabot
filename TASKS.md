@@ -546,7 +546,9 @@ columns.
 **Status on 2026-11-24.** Started again and built on a local branch (`shuo-week5`, not pushed).
 Run `page-checks-20261124T070324Z-f5cad1`: 873 pages, 22,808 `checks` rows. New search-on
 school lists: 162 calls. The week 4 department lists already had search on and were reused.
-Your 3 steps are open. The sheets are in the project files, `week5-page-checks-v2/`.
+Check 1 passed on 2026-11-25: the checks sorted all 10 of your URLs as you did (6 correct,
+2 other page, 2 dead). The 100 pairs and the 20 failures are open. The sheets are in the
+project files, `week5-page-checks-v2/`.
 
 **Goal.** Simple, mechanical checks on every saved page.
 
