@@ -92,7 +92,8 @@ def map_kept(kept: Sequence[str], names: Sequence[str],
 def judge_university(university: dict, groups: List[dict], judges: Sequence[str],
                      ask: Callable[..., Optional[List[str]]], log=None,
                      week3_checks: Optional[Dict[str, dict]] = None, level: str = "school",
-                     match: Optional[Callable[[str, str], bool]] = None) -> Tuple[List[dict], List[dict], List[dict]]:
+                     match: Optional[Callable[[str, str], bool]] = None,
+                     list_source: str = WEEK3_RUN) -> Tuple[List[dict], List[dict], List[dict]]:
     """Every judge run on one university's merged list. `ask(label, names, judge,
     sample, order)` returns the kept names or None (no answer). Returns (list rows,
     verdict rows, run rows). With a run log, each verdict is also a `checks` row
@@ -134,7 +135,7 @@ def judge_university(university: dict, groups: List[dict], judges: Sequence[str]
                                           "position": pos, "list_length": len(names),
                                           "returned_name": taken.get(pos - 1, ""),
                                           "agreement_check_id": w3.get("check_id"),
-                                          "agreement_run_id": WEEK3_RUN})
+                                          "agreement_run_id": list_source})
     return list_rows, verdicts, runs
 
 
@@ -532,6 +533,50 @@ def merged_groups(universities: List[dict], providers: Sequence[str], samples: i
     return agreement.analyze_all(universities, props, runs, providers, samples)["groups"]
 
 
+SEARCH_ON_TYPES = ("school",)
+
+
+def search_on_proposals(claims: Sequence[dict], universities: Sequence[dict], providers: Sequence[str],
+                        samples: int, types: Sequence[str] = SEARCH_ON_TYPES) -> Tuple[Dict[str, List[dict]], Dict[str, List[dict]]]:
+    """The week 5 search-on school lists (claims.csv rows of setting schools_on) as week 3
+    proposals and run rows, so the week 3 grouping and the week 4 judge test run on them
+    unchanged. Only units of `types` enter the list (the week 3 prompt asked for schools,
+    colleges and divisions; the week 5 prompt also lists offices, centers and programs).
+    A (provider, sample) with any unit counts as answered. Pure."""
+    props: Dict[str, List[dict]] = {}
+    runs: Dict[str, List[dict]] = {}
+    for u in universities:
+        qid = u["qid"]
+        mine = [c for c in claims if c.get("setting") == "schools_on" and c["university_qid"] == qid]
+        props[qid], runs[qid] = [], []
+        for p in providers:
+            for smp in range(1, samples + 1):
+                rows = [c for c in mine if c["provider"] == p and int(c["sample"] or 0) == smp]
+                kept = [c for c in rows if (c.get("unit_type") or "").lower() in types]
+                for idx, c in enumerate(kept):
+                    props[qid].append({"university_qid": qid, "provider": p, "sample": smp, "index": idx,
+                                       "name": c["name"], "unit_type": c.get("unit_type") or "",
+                                       "source_url": c.get("url") or "", "website": c.get("website") or "",
+                                       "candidate_id": c["candidate_id"], "llm_call_id": "", "cache_key": ""})
+                runs[qid].append({"university_qid": qid, "provider": p, "sample": smp, "schools": len(kept),
+                                  "answered": bool(rows), "missing_from_cache": False,
+                                  "units_listed": len(rows), "run_id": rows[0]["run_id"] if rows else ""})
+    return props, runs
+
+
+def search_on_groups(claims: Sequence[dict], universities: List[dict], providers: Sequence[str],
+                     samples: int) -> Tuple[List[dict], Dict[str, dict], List[dict]]:
+    """(groups, {group_id: {candidate_id}}, run rows) of the search-on school lists. A
+    judge check names the candidate of the group's first member."""
+    props, runs = search_on_proposals(claims, universities, providers, samples)
+    groups = agreement.analyze_all(universities, props, runs, providers, samples)["groups"]
+    links = {}
+    for g in groups:
+        first = props[g["university_qid"]][g["member_index"][0]]
+        links[g["group_id"]] = {"candidate_id": first["candidate_id"], "check_id": None}
+    return groups, links, [r for q in runs for r in runs[q]]
+
+
 def cached_ask(cache_only: bool, level: str = "school"):
     """The judge call. With cache_only, a run with no valid cache file is not asked (None)."""
     from wikidata_discover import llm_helpers
@@ -620,7 +665,14 @@ def run(args) -> Path:
         console.print(f"\nReport: {out_dir}")
         return out_dir
 
-    groups = merged_groups(universities, PROVIDERS, agreement.DEFAULT_SAMPLES)
+    search_on_links, list_source = None, WEEK3_RUN
+    if args.search_on:
+        claims = list(csv.DictReader(Path(args.search_on).open(newline="", encoding="utf-8")))
+        groups, search_on_links, list_runs = search_on_groups(claims, universities, PROVIDERS, agreement.DEFAULT_SAMPLES)
+        list_source = "schools_on: " + ", ".join(sorted({r["run_id"] for r in list_runs if r["run_id"]}))
+        write_csv(out_dir / "search_on_lists.csv", list_runs)
+    else:
+        groups = merged_groups(universities, PROVIDERS, agreement.DEFAULT_SAMPLES)
     by_qid: Dict[str, List[dict]] = {}
     for g in groups:
         by_qid.setdefault(g["university_qid"], []).append(g)
@@ -630,7 +682,9 @@ def run(args) -> Path:
         run_log.start(run_id, command="judge", args={"argv": sys.argv[1:]},
                       qids=[u["qid"] for u in universities], who=operator_identity(), git_commit=identity,
                       run_config={**run_config(key_sources), "judges": judges, "orders": list(ORDERS),
-                                  "samples_per_order": SAMPLES_PER_ORDER, "week3_run": WEEK3_RUN})
+                                  "samples_per_order": SAMPLES_PER_ORDER, "week3_run": WEEK3_RUN,
+                                  "lists": "search_on" if args.search_on else "week3",
+                                  "search_on_claims": args.search_on or ""})
         log = run_log.current()
         if log is not None:
             log.attach_source_patch(out_dir, identity)
@@ -638,13 +692,16 @@ def run(args) -> Path:
                   f"{len(RUNS)} runs each[/bold]")
     lists, verdicts, runs, outcome = [], [], [], "failed"
     try:
-        if log is not None:     # inside the try, so a failed lookup still writes the runs row
+        if search_on_links is not None:
+            week3 = search_on_links
+        elif log is not None:     # inside the try, so a failed lookup still writes the runs row
             week3 = week3_agreement_checks()
             console.print(f"[dim]{len(week3)} week 3 agreement checks found for the judge checks[/dim]")
         for u in universities:
             if log is not None:
                 log.set_university(u["qid"])
-            l, v, r = judge_university(u, by_qid.get(u["qid"], []), judges, ask, log, week3)
+            l, v, r = judge_university(u, by_qid.get(u["qid"], []), judges, ask, log, week3,
+                                       list_source=list_source)
             lists += l
             verdicts += v
             runs += r
@@ -656,6 +713,8 @@ def run(args) -> Path:
         tables = analyze(groups, verdicts, judges, {u["qid"]: len(u["schools"]) for u in universities},
                          {u["qid"]: u["set"] for u in universities})
         write_csv(out_dir / "merged_lists.csv", lists)
+        if args.search_on:
+            write_csv(out_dir / "groups.csv", groups, agreement.GROUP_COLUMNS)
         write_csv(out_dir / "verdicts.csv", verdicts, VERDICT_COLUMNS)
         write_csv(out_dir / "judge_runs.csv", runs, RUN_COLUMNS)
         for name in ("flip_rates", "self_preference", "precision_recall"):
@@ -701,6 +760,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--dept-schools", help=f"school QIDs of the ground truth (default {DEPT_SCHOOLS.name})")
     parser.add_argument("--dept-samples", type=int, default=DEPT_SAMPLES, help="lists per provider (default 3)")
     parser.add_argument("--subunits-dir", help="folder of the subunits CSV files (default results/subunits)")
+    parser.add_argument("--search-on", metavar="CLAIMS_CSV",
+                        help="judge the week 5 search-on school lists (claims.csv of a page-check report) "
+                             "instead of the week 3 lists")
     parser.add_argument("--compare", nargs=2, metavar=("DIR_A", "DIR_B"), help="check that two runs gave the same report")
     args = parser.parse_args(argv)
     if args.dept_samples < 1:

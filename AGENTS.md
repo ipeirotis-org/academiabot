@@ -28,6 +28,7 @@ academiabot/
 │   ├── requirements.txt
 │   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness;
 │   │                            #   dept_scorer.py scores a department list against a department CSV
+│   │                            #   verifier.py and minicheck.py: does the saved page support the claim (week 6)
 │   ├── results/                 # Output CSVs, universities_us.json, LLM cache
 │   └── scripts/
 │       ├── wikidata_division_discover.py   # Entrypoint
@@ -338,6 +339,63 @@ provider, one sample) with its cited `source_url`. Each distinct URL is fetched 
   other_page, correct). It writes `check10_result.csv` with the machine's label beside each.
 
 Tests: `tests/test_page_checks.py`.
+
+## Verifier (Shuo, week 6)
+
+`python -m wikidata_discover.eval.verifier` (`wikidata_discover/eval/verifier.py`): does the
+saved page support the claim "Unit is part of Parent". Answers are supported, unsupported, or
+unclear, with a quote. The prompt (`VERIFY_PROMPT_TEMPLATE` in `llm_helpers.py`) follows the
+rules of `annotation-pilot/annotator_instructions.md`; the call is `LLMHelper.verify_piece`
+(purpose `verify`, temperature 0, JSON schema; Gemini with thinking off).
+
+- A page is decided without a model when it was not read: 404 or 410 is unsupported ("page not
+  found", as in the annotator rules); any other fetch outcome than `ok` (401, 403, 405, 429,
+  5xx, refused) or an empty text is unclear. `decided_by` says `page_status` then.
+- Other pages are split into fixed pieces of `PIECE_CHARS` (12,000) characters that overlap by
+  `PIECE_OVERLAP` (1,500). Each piece is its own call and cache entry (the piece hash, its place,
+  and the claim are in the key). Reading stops at the first supporting piece.
+- A quote must be on the saved page word for word (`quote_on_page`): only spaces, curly quotes,
+  dashes, and Unicode forms are evened out, and case is kept. A quote may join two places with
+  " ... " and start with "[title]". Otherwise the answer becomes unclear; `model_verdict` keeps
+  what the model said. A supported answer without a quote is unclear too.
+- The claim: the first supported piece; else the first unclear piece (or a piece with no
+  answer); else unsupported.
+- `--minicheck` also runs MiniCheck (`eval/minicheck.py`, `lytang/MiniCheck-Flan-T5-Large` on
+  the CPU, 400-word pieces that overlap by 50, highest probability, 0.5 or more is supported).
+  It needs `torch` (CPU wheel) and `transformers`, which `requirements.txt` leaves out (about
+  1 GB). Its first run downloads about 3 GB of weights. Unreadable pages get the same
+  page-status answer as the LLM verifier, collapsed to two classes.
+- Scoring: 3-way accuracy and confusion matrix per provider for the LLM verifier, and 2-way
+  (supported against the rest) for both. "Balanced" is the pairs as drawn (34, 33, 33);
+  "weighted" weights each provider's accuracy by its share of distinct saved pages in claims.csv
+  (week3, schools_on, depts_on). A pair's candidate is found again with the week 5 draw rule
+  (the first claim of each provider, claim text, and URL in claims.csv order).
+- Each pair gets one `checks` row of kind `verifier` per method (detail `method` llm or
+  minicheck; MiniCheck's probability is `score`). result: pass = supported, fail =
+  unsupported, unclear = unclear.
+- `--long-page-check` is the week's check 3: a 600,000-character page (more than gpt-4o's
+  128,000-token window) with the supporting sentence at 96% of the page.
+- Output in `results/verifier/<run_id>/`: `verdicts.csv`, `accuracy.csv`, `confusion.csv`,
+  `spot_check_10.csv` (10 supported quotes, seed 20261127, for check 2).
+- `google-genai` must stay below 3 (`requirements.txt`). On 2026-11-27 a `pip install
+  transformers` in the cloud session had pulled in 3.6.1, and every Gemini judge call failed
+  with "Thinking is not enabled for api version v1". Run `pip check` after adding packages.
+
+## Setup choice numbers (Shuo, week 6)
+
+- `judge --search-on CLAIMS_CSV` reruns the week 4 school judge test on the week 5 search-on
+  school lists (claims.csv rows of `schools_on`, units of type `school` only, because the week
+  5 prompt also lists offices, centers and programs). It also writes `groups.csv`. Each judge
+  check names the candidate of the group's first member, and its detail names the list runs.
+  The department judge test of week 4 already ran on search-on lists, so it was not rerun.
+- `python -m wikidata_discover.eval.setup_choice --departments DIR --schools DIR2 --out OUT`
+  writes `dept_generators.csv` (each provider's department lists, mean precision, recall, F1)
+  and `combos.csv` (each set of generators and each filter: none, 2 or more of them, each
+  judge's majority of 4 runs). For a smaller set of generators, its units keep the verdict the
+  judge gave on the full merged list, which is close to but not the same as judging that list.
+
+Tests: `tests/test_verifier.py`, `tests/test_setup_choice.py`, and the week 6 part of
+`tests/test_judge.py`.
 
 ## LLM integration details
 

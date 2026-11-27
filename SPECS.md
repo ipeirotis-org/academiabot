@@ -388,6 +388,14 @@ schools. The choice goes to Anya by Nov 26.
 sentence near the end, gives supported; a quote that is not in the saved page word for word
 gives unclear; a page that was read in full and never names the unit gives not supported.
 
+Built 2026-11-27 (`eval/verifier.py`, `eval/minicheck.py`, `eval/setup_choice.py`,
+`judge --search-on`; AGENTS.md, "Verifier" and "Setup choice numbers"). Pieces are 12,000
+characters and overlap by 1,500. A 404 or 410 page is not supported and a page that was
+not read (refused, 5xx, no text) is unclear, both without a model call, as in the annotator
+rules. Accuracy is given over all pairs and over the pairs whose page the model read, because
+the first number includes the pairs that the page status alone decides. The department judge
+test of week 4 already used search-on lists, so only the school judge test was rerun.
+
 ### Shuo, week 7 (Nov 27 to Dec 3)
 
 **One confidence per unit, and a review sheet.** Combine the checks into one confidence per

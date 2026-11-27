@@ -92,6 +92,45 @@ JUDGE_KEEP_SCHEMA = {
     "additionalProperties": False
 }
 
+# The verifier (Shuo's week 6): does one piece of a saved page support one claim?
+# The rules follow the annotator instructions (annotation-pilot/annotator_instructions.md).
+VERIFY_PROMPT_TEMPLATE = (
+    "You check whether a saved web page supports a claim. Judge only what the page text says, "
+    "not whether the claim is true, and do not use what you know about the university.\n\n"
+    "Claim: UNIT is part of PARENT.\n\n"
+    "Answer with one verdict:\n"
+    "- supported: the text names the unit and shows that it belongs to the parent. The tie can come from a "
+    "sentence, a heading over a list, a breadcrumb, the page title, or a page that is plainly the parent's "
+    "own list of its units.\n"
+    "- unsupported: the text shows an error or 'page not found', the unit is not named, nothing ties the unit "
+    "to the parent, or the text shows that the unit belongs to a different parent.\n"
+    "- unclear: the text names a unit that is probably the same but under a different name, shows only a "
+    "looser tie (manages, operates, affiliated with, partner), says the unit was renamed, merged or closed, "
+    "contradicts itself, or is only a login or 'checking your browser' screen.\n\n"
+    "Names count as the same despite capital letters, punctuation, '&' for 'and', a unit word left off when "
+    "the context gives it ('Accounting' under 'Academic Departments'), the university's or a donor's name "
+    "added or left off, or an abbreviation the page itself uses. A different unit word ('School' against "
+    "'College') or a different subject word is a different name.\n\n"
+    "quote: copy the shortest text from the page that decides the verdict, character for character. Do not "
+    "fix spelling, case, or spacing. If the evidence is in two places, join the two copies with ' ... '. "
+    "Leave quote empty when the unit is not on the page or the page is an error page.\n\n"
+    "PIECE_NOTE\n\nPage text:\n<<<\nPAGE_TEXT\n>>>"
+)
+
+VERIFY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": ["supported", "unsupported", "unclear"]},
+        "quote": {"type": "string"},
+        "reason": {"type": "string"},
+    },
+    "required": ["verdict", "quote", "reason"],
+    "additionalProperties": False,
+}
+VERIFY_PROMPT_HASH = None  # set below, after _prompt_hash is defined
+VERIFY_MAX_TOKENS = 1024
+VERIFY_VERDICTS = ("supported", "unsupported", "unclear")
+
 _EXTRACT_MAX_RETRIES = 2
 _CACHE_DIR = config.LLM_CACHE_DIR   # ACADEMIABOT_CACHE_DIR overrides it
 
@@ -243,6 +282,73 @@ def extract_cache_key(provider: str, univ_label: str, website: str, sample: Opti
 
 
 JUDGE_PROMPT_HASH = _prompt_hash(JUDGE_PROMPT_TEMPLATE, JUDGE_KEEP_SCHEMA)
+VERIFY_PROMPT_HASH = _prompt_hash(VERIFY_PROMPT_TEMPLATE, VERIFY_SCHEMA)
+
+
+def verify_prompt(unit: str, parent: str, piece: str, piece_no: int = 1, pieces: int = 1) -> str:
+    """The verifier prompt for one piece of a saved page. Pure."""
+    note = ("The page text below is the whole page." if pieces == 1 else
+            f"The page is long, so it is split into {pieces} overlapping pieces. This is piece {piece_no} of "
+            f"{pieces}. Judge this piece only: if this piece does not name the unit, answer unsupported.")
+    return (VERIFY_PROMPT_TEMPLATE.replace("UNIT", unit).replace("PARENT", parent)
+            .replace("PIECE_NOTE", note).replace("PAGE_TEXT", piece))
+
+
+def verify_cache_key(provider: str, unit: str, parent: str, piece: str, piece_no: int, pieces: int) -> str:
+    """Cache key of one verifier call: provider, model, the verify prompt, the claim, the
+    hash of the piece text, the piece's place, and the output budget. Gemini's key also
+    says thinking is off."""
+    model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
+    piece_hash = hashlib.sha256(piece.encode()).hexdigest()[:16]
+    extra = f"parent={parent}|piece={piece_hash}|{piece_no}/{pieces}|max_tokens={VERIFY_MAX_TOKENS}"
+    if provider == "gemini":
+        extra += "|thinking_budget=0"
+    return _cache_key(unit, provider, model, purpose="verify", prompt_hash=VERIFY_PROMPT_HASH, extra=extra)
+
+
+def parse_verify_answer(raw_text: Optional[str]) -> Dict[str, str]:
+    """{verdict, quote, reason} from a verifier's raw text (the JSON may be wrapped in
+    markdown). Raises ValueError when the answer is empty, not JSON, or the verdict is
+    not one of VERIFY_VERDICTS."""
+    if not raw_text:
+        raise ValueError("Empty response text")
+    match = re.search(r"\{[\s\S]*\}", raw_text)
+    payload = _parse_json_text(match.group(0) if match else raw_text)
+    if not isinstance(payload, dict) or payload.get("verdict") not in VERIFY_VERDICTS:
+        raise ValueError("verifier answer: no valid verdict")
+    quote, reason = payload.get("quote") or "", payload.get("reason") or ""
+    if not isinstance(quote, str) or not isinstance(reason, str):
+        raise ValueError("verifier answer: quote and reason must be text")
+    return {"verdict": payload["verdict"], "quote": quote, "reason": reason}
+
+
+def _verify_request(provider: str, model: str, prompt: str):
+    """Send one verifier prompt with the JSON schema. Returns (raw SDK response, answer text)."""
+    if provider == "openai":
+        resp = _get_openai_client().with_options(**_client_options()).responses.create(
+            model=model, input=[{"role": "user", "content": prompt}], temperature=0,
+            text={"format": {"type": "json_schema", "name": "verify", "schema": VERIFY_SCHEMA, "strict": True}},
+            max_output_tokens=VERIFY_MAX_TOKENS, store=False)
+        return resp, (resp.output_text if resp.output else None)
+    if provider == "anthropic":
+        resp = _get_anthropic_client().with_options(**_client_options()).messages.create(
+            model=model, max_tokens=VERIFY_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt + "\n\nReturn only a JSON object with keys verdict, quote, reason."}])
+        text = "".join(getattr(b, "text", "") or "" for b in (resp.content or []) if getattr(b, "type", "") == "text")
+        return resp, (text or None)
+    if provider == "gemini":
+        from google.genai import types as genai_types
+        resp = _get_gemini_client().models.generate_content(
+            model=model, contents=[genai_types.Content(parts=[genai_types.Part.from_text(text=prompt)])],
+            config=genai_types.GenerateContentConfig(
+                max_output_tokens=VERIFY_MAX_TOKENS, temperature=0,
+                response_mime_type="application/json",
+                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+                http_options=_gemini_http_options()))
+        return resp, (resp.text or None)
+    raise ValueError(f"Unknown verifier provider: {provider}")
+
+
 DEPT_JUDGE_PROMPT_HASH = _prompt_hash(DEPT_JUDGE_PROMPT_TEMPLATE, JUDGE_KEEP_SCHEMA)
 JUDGE_LEVELS = {"school": (JUDGE_PROMPT_TEMPLATE, "UNIVERSITY", JUDGE_PROMPT_HASH),
                 "department": (DEPT_JUDGE_PROMPT_TEMPLATE, "SCHOOL", DEPT_JUDGE_PROMPT_HASH)}
@@ -1025,6 +1131,47 @@ class LLMHelper:
             last_judge_call_id = call_id
             return kept
         return None
+
+    @staticmethod
+    def verify_piece(provider: str, unit: str, parent: str, piece: str, piece_no: int = 1,
+                     pieces: int = 1) -> Tuple[Optional[Dict[str, str]], Optional[str]]:
+        """One verifier call (Shuo's week 6) on one piece of a saved page. Returns
+        ({verdict, quote, reason}, llm_call_id), or (None, None) when no attempt gave a
+        valid answer (nothing is cached). The quote is not checked here: the caller
+        checks it against the saved page."""
+        model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL,
+                 "gemini": config.GEMINI_MODEL}[provider]
+        key = verify_cache_key(provider, unit, parent, piece, piece_no, pieces)
+        prompt = verify_prompt(unit, parent, piece, piece_no, pieces)
+        request = {"max_output_tokens": VERIFY_MAX_TOKENS, "tools": [], "temperature": 0,
+                   "piece": piece_no, "pieces": pieces}
+        if provider == "gemini":
+            request["thinking_budget"] = 0
+        call = {"provider": provider, "model": model, "purpose": "verify",
+                "prompt": {"text": prompt, "unit": unit, "parent": parent}, "cache_key": key,
+                "prompt_hash": VERIFY_PROMPT_HASH, "request_config": request}
+        cached = _load_cache(key)
+        if isinstance(cached, dict) and cached.get("verdict") in VERIFY_VERDICTS:
+            return dict(cached), _record_cache_hit(call, key)
+        for attempt in range(1, _EXTRACT_MAX_RETRIES + 1):
+            if not enough_time_for_llm_call():
+                logger.warning("verify_piece: deadline too close, not calling for %s", unit)
+                break
+            call_id, t0 = None, time.time()
+            try:
+                resp, raw_text = _verify_request(provider, model, prompt)
+                call_id = _record_response(call, resp, raw_text, attempt, t0)
+                answer = parse_verify_answer(raw_text)
+            except Exception as e:  # noqa: BLE001
+                if call_id is None:
+                    _record_error(call, e, attempt, t0)
+                logger.warning("verify_piece (%s) attempt %d/%d for %s failed: %s",
+                               provider, attempt, _EXTRACT_MAX_RETRIES, unit, e)
+                continue
+            _save_cache(key, answer)
+            _save_cache_meta(key, call_id)
+            return answer, call_id
+        return None, None
 
     @staticmethod
     def choose_match(candidate: str, univ_label: str, children: List[Tuple[str, str]]) -> Optional[Tuple[str, str]]:

@@ -419,3 +419,39 @@ def test_a_failed_week3_lookup_still_writes_the_runs_row(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         jd.main(["--judges", "openai", "--out", str(tmp_path / "out")])
     assert finished == ["failed"]
+
+
+# ─────────────────────────  Week 6: the judge test on the search-on lists  ─────────────────────────
+
+def _claim(qid, provider, sample, name, unit_type="school", cid=None, run="subunits-r1"):
+    return {"setting": "schools_on", "university_qid": qid, "provider": provider, "sample": str(sample),
+            "name": name, "unit_type": unit_type, "url": "https://x.edu", "website": "",
+            "candidate_id": cid or f"{provider}{sample}-{name}", "run_id": run}
+
+
+def test_search_on_proposals_keep_schools_and_mark_answered_runs():
+    from wikidata_discover.eval.judge import search_on_proposals
+    u = [{"qid": "Q1", "name": "Test University", "schools": ["School of Law"], "set": "eval", "website": ""}]
+    claims = [_claim("Q1", "openai", 1, "School of Law"), _claim("Q1", "openai", 1, "Career Office", "office"),
+              _claim("Q1", "gemini", 2, "Health Center", "center"),
+              _claim("Q2", "openai", 1, "Other School"),
+              dict(_claim("Q1", "anthropic", 1, "School of Law"), setting="week3")]
+    props, runs = search_on_proposals(claims, u, ["openai", "anthropic", "gemini"], 3)
+    assert [p["name"] for p in props["Q1"]] == ["School of Law"]
+    answered = {(r["provider"], r["sample"]) for r in runs["Q1"] if r["answered"]}
+    assert answered == {("openai", 1), ("gemini", 2)}     # gemini 2 answered, with no school
+    assert len(runs["Q1"]) == 9
+
+
+def test_search_on_groups_link_each_group_to_its_first_candidate():
+    from wikidata_discover.eval.judge import search_on_groups
+    u = [{"qid": "Q1", "name": "Test University", "schools": ["School of Law", "School of Medicine"],
+          "set": "eval", "website": ""}]
+    claims = [_claim("Q1", "openai", 1, "School of Law", cid="c1"), _claim("Q1", "gemini", 1, "School of Law", cid="c2"),
+              _claim("Q1", "gemini", 1, "School of Magic", cid="c3")]
+    groups, links, runs = search_on_groups(claims, u, ["openai", "anthropic", "gemini"], 3)
+    by_name = {g["name"]: g for g in groups}
+    assert by_name["School of Law"]["status"] == "correct" and by_name["School of Law"]["n_providers"] == 2
+    assert by_name["School of Magic"]["status"] == "wrong"
+    assert links[by_name["School of Law"]["group_id"]]["candidate_id"] == "c1"
+    assert {r["run_id"] for r in runs if r["answered"]} == {"subunits-r1"}

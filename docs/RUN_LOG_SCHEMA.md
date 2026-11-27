@@ -44,7 +44,7 @@ row, and a failed attempt keeps its row with `error`.
 | university_qid | STRING | University the call was about |
 | provider | STRING | `openai`, `anthropic`, or `gemini` |
 | model | STRING | Model name, for example `gpt-4o` |
-| purpose | STRING | `extract` (list the units), `match` (pick the Wikidata item), or `judge` (review the union of lists) |
+| purpose | STRING | `extract` (list the units), `match` (pick the Wikidata item), `judge` (review the union of lists), or `verify` (does one piece of a saved page support a claim; Shuo's week 6) |
 | attempt | INTEGER | Attempt number for this request (1, 2, 3). Empty on a cache hit |
 | request_config | STRING, JSON | Tools (for example `web_search_preview`), extraction mode, sample number, output limit |
 | cache_key | STRING | Name of the cache file for this request |
