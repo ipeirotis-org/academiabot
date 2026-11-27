@@ -79,12 +79,25 @@ def no_item_unit(label: str, website: str, parent_qid: str, fetch=fetch_unit) ->
             "is_university": False, "is_system": False}
 
 
+def _name_slug(label: Optional[str]) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (label or "").lower()).strip("-")[:60] or "unit"
+
+
 def unit_stem(unit: Dict[str, Any]) -> str:
-    """The file name part for a unit: its QID, or "noitem-" and its name in lower case
-    with every other character a hyphen when it has no item. Pure."""
+    """The file name part for a unit: its QID, or, when it has no item, "noitem-", its
+    parent's QID, and its name in lower case with every other character a hyphen
+    ("noitem-Q7208107-conservatory-of-performing-arts"). The parent keeps two schools of
+    the same name at two universities apart, so one never overwrites the other's files. Pure."""
     if unit.get("qid"):
         return unit["qid"]
-    return "noitem-" + (re.sub(r"[^a-z0-9]+", "-", (unit.get("label") or "").lower()).strip("-")[:60] or "unit")
+    parent = unit.get("parent_qid") or ""
+    return "noitem-" + (f"{parent}-" if parent else "") + _name_slug(unit.get("label"))
+
+
+def legacy_unit_stem(unit: Dict[str, Any]) -> str:
+    """The stem that files of a unit with no item had before 2026-11-27 ("noitem-" and the
+    name only), so files written then can still be read. Pure."""
+    return unit["qid"] if unit.get("qid") else "noitem-" + _name_slug(unit.get("label"))
 
 
 MAX_LEVELS_UP = 6

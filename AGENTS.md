@@ -281,8 +281,11 @@ Report: `results/judge/<run_id>/` (not in git).
 - A school with no Wikidata item has `school_qid` "none" in `dept_schools.csv`. Its lists come
   from `subunits --no-item NAME WEBSITE PARENT_QID` (`subunits.no_item_unit`: name and website
   as given, parent from Wikidata, qid None, so the cache key holds the name and website). Its
-  files are named `noitem-<name>` (`subunits.unit_stem`), and its candidates rows have an empty
-  parent_qid. First use: Point Park's Conservatory of Performing Arts (2026-11-17).
+  files are named `noitem-<parent QID>-<name>` (`subunits.unit_stem`), and its candidates rows have an empty
+  parent_qid. First use: Point Park's Conservatory of Performing Arts (2026-11-17). Since 2026-11-27
+  (review of pull request 28) the parent QID is in the name, so two schools with the same name at two
+  universities never share a file. The judge finds a `dept_schools.csv` row's files by its `parent_qid`
+  column, else `university_qid`, and reads an older `noitem-<name>` file when no new file exists.
 - `--no-run-log` makes no LLM calls and rescores from the cache. A judge cache file without a valid
   `keep` list counts as not answered and is never sent to the provider. `--compare DIR_A DIR_B`
   compares the report files, including `departments/`.
