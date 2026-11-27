@@ -211,6 +211,16 @@ def test_page_weights_count_each_providers_distinct_pages():
     assert v.page_weights(claims) == {"openai": 1 / 3, "anthropic": 1 / 3, "gemini": 1 / 3}
 
 
+def test_page_weights_use_the_url_when_the_report_has_no_evidence_ids():
+    """Review of pull request 29: a week 5 report made with --no-run-log has no evidence ids."""
+    claims = [{"provider": "openai", "evidence_id": "", "url": "https://a.edu/x", "setting": "week3"},
+              {"provider": "openai", "evidence_id": "", "url": "https://a.edu/x", "setting": "depts_on"},
+              {"provider": "anthropic", "evidence_id": "", "url": "https://a.edu/y", "setting": "week3"},
+              {"provider": "anthropic", "evidence_id": "", "url": "https://a.edu/z", "setting": "schools_on"},
+              {"provider": "gemini", "evidence_id": "", "url": "https://a.edu/w", "setting": "us_tier1"}]
+    assert v.page_weights(claims) == {"openai": 1 / 3, "anthropic": 2 / 3, "gemini": 0.0}
+
+
 def test_spot_check_draws_ten_supported_quotes_the_same_way_each_time():
     rows = [{"pair_id": str(i), "provider": "openai", "claim": "A is part of B", "text_file": "t",
              "llm": "supported" if i % 2 else "unsupported", "llm_quote": f"q{i}"} for i in range(40)]

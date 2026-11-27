@@ -58,14 +58,29 @@ def judge_keeps(verdicts: Sequence[dict], majority: int = MAJORITY) -> Dict[str,
     return out
 
 
+def truth_options(g: dict) -> List[str]:
+    """The true units a group can match. groups.csv keeps only the one it matched in the
+    full list (truth_name): a correct group, or a duplicate of an already matched unit.
+    A `truth_options` column (";" between names) wins when present. Pure."""
+    if g.get("truth_options"):
+        return _split(g["truth_options"])
+    if g.get("truth_name") and (g["status"] == "correct" or g.get("wrong_kind") == "duplicate"):
+        return [g["truth_name"]]
+    return []
+
+
 def _score(kept: Sequence[dict], true_count: int) -> dict:
-    correct = [g for g in kept if g["status"] == "correct"]
-    found = {(g["university_qid"], g["truth_name"]) for g in correct}
-    p = len(correct) / len(kept) if kept else None
-    r = len(found) / true_count if true_count else None
+    """The kept groups are matched to the true units again (agreement.matched_count), so a
+    kept duplicate counts as correct when the group first matched to its unit was dropped,
+    as in the judge's own precision_recall.csv. Pure."""
+    from wikidata_discover.eval.agreement import matched_count
+    n = matched_count([{"university_qid": g["university_qid"], "status": g["status"],
+                        "truth_options": truth_options(g)} for g in kept])
+    p = n / len(kept) if kept else None
+    r = n / true_count if true_count else None
     f1 = 2 * p * r / (p + r) if p is not None and r is not None and p + r > 0 else (0.0 if kept else None)
     rnd = lambda x: "" if x is None else round(x, 4)  # noqa: E731
-    return {"kept": len(kept), "correct": len(correct), "true_found": len(found), "true_total": true_count,
+    return {"kept": len(kept), "correct": n, "true_found": n, "true_total": true_count,
             "precision": rnd(p), "recall": rnd(r), "f1": rnd(f1)}
 
 

@@ -375,7 +375,8 @@ rules of `annotation-pilot/annotator_instructions.md`; the call is `LLMHelper.ve
 - Scoring: 3-way accuracy and confusion matrix per provider for the LLM verifier, and 2-way
   (supported against the rest) for both. "Balanced" is the pairs as drawn (34, 33, 33);
   "weighted" weights each provider's accuracy by its share of distinct saved pages in claims.csv
-  (week3, schools_on, depts_on). A pair's candidate is found again with the week 5 draw rule
+  (week3, schools_on, depts_on); a report made with `--no-run-log` has no evidence ids, and there
+  a page is its cited URL (review of pull request 29). A pair's candidate is found again with the week 5 draw rule
   (the first claim of each provider, claim text, and URL in claims.csv order).
 - Each pair gets one `checks` row of kind `verifier` per method (detail `method` llm or
   minicheck; MiniCheck's probability is `score`). result: pass = supported, fail =
@@ -403,6 +404,11 @@ rules of `annotation-pilot/annotator_instructions.md`; the call is `LLMHelper.ve
   and `combos.csv` (each set of generators and each filter: none, 2 or more of them, each
   judge's majority of 4 runs). For a smaller set of generators, its units keep the verdict the
   judge gave on the full merged list, which is close to but not the same as judging that list.
+  Each kept subset is matched to the true units again (`matched_count`, review of pull request 29),
+  so a kept duplicate counts as correct when its unit's first group was dropped. groups.csv has
+  only `truth_name`, so a duplicate's one option is the unit it duplicates. This changed only
+  rows of the small school set and of `all` (one duplicate, Q7896431); no department row and no
+  eval school row changed.
 - Shuo's choice (2026-11-27), for Anya's week 8 `--extract`: departments are listed by one
   provider, Anthropic, with search on and no judge. Run 3 samples (`--sample 1..3`) and merge
   them: the 3 lists merged scored precision 1.00, recall 0.95, F1 0.97 on the 39 departments of

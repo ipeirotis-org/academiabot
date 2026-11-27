@@ -220,11 +220,13 @@ def weighted(per_provider: Dict[str, Optional[float]], weights: Dict[str, float]
 
 
 def page_weights(claims: Sequence[dict]) -> Dict[str, float]:
-    """Each provider's share of all saved pages: distinct (provider, evidence id) among the
+    """Each provider's share of all saved pages: distinct (provider, page) among the
     week3, schools_on and depts_on claims (the sets the 100 pairs were drawn from). A page
-    that two providers cite counts once for each. Pure."""
-    seen = {(c["provider"], c["evidence_id"]) for c in claims
-            if c.get("setting") in ("week3", "schools_on", "depts_on") and c.get("evidence_id")}
+    is its evidence id. A week 5 report made with --no-run-log has no evidence ids at all;
+    there a page is its cited URL. A page that two providers cite counts once for each. Pure."""
+    rows = [c for c in claims if c.get("setting") in ("week3", "schools_on", "depts_on")]
+    key = "evidence_id" if any(c.get("evidence_id") for c in rows) else "url"
+    seen = {(c["provider"], c[key]) for c in rows if c.get(key)}
     counts = {p: sum(1 for q, _ in seen if q == p) for p in PROVIDERS}
     total = sum(counts.values())
     return {p: (counts[p] / total if total else 0.0) for p in PROVIDERS}
