@@ -716,6 +716,10 @@ def write_report(out_dir: Path, rows: List[dict], week3_dir: Optional[Path]) -> 
     tables["s1"] = s1_page_pass(rows, week3_dir)
     if tables["s1"]:
         write_csv(out_dir / "s1_page_pass.csv", tables["s1"])
+    elif (out_dir / "s1_page_pass.csv").exists():
+        # no week 3 report this time: an old S1 file would not match the new checks
+        (out_dir / "s1_page_pass.csv").unlink()
+        console.print("[yellow]Removed the old s1_page_pass.csv: give --week3-report to make it again.[/yellow]")
     return tables
 
 

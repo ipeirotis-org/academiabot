@@ -349,3 +349,10 @@ def test_s1_page_pass_skips_a_broken_cache_file(tmp_path, monkeypatch):
         ["university_qid", "provider", "sample", "cache_file_exists", "missing_from_cache"])
     pc.s1_page_pass([], tmp_path)
     assert seen == [[("openai", 1)]]
+
+
+def test_a_rescore_without_the_week3_report_removes_an_old_s1_file(tmp_path):
+    from wikidata_discover.eval import page_checks as pc
+    (tmp_path / "s1_page_pass.csv").write_text("old\n")
+    pc.write_report(tmp_path, [], None)
+    assert not (tmp_path / "s1_page_pass.csv").exists()
