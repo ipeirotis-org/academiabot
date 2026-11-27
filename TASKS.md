@@ -628,6 +628,13 @@ the 6 schools (one list alone: 0.98, 0.92 on average). Every judge lowered recal
 
 ### Shuo, week 7 (Nov 27 to Dec 3): one confidence per unit, and a review sheet
 
+**Status on 2026-11-27.** Built on branch `claude/shuo-week7` (on top of `claude/shuo-week6`).
+Checks run `node-checks-20261127T221235Z-52ca8d` on Anya's NYU file (603 units, 3,017 checks,
+336 verifier calls): 279 units have high confidence, 271 medium, and 53 low. Most medium units
+have a page that refused the fetcher (nyu.edu answers 405). The first-pass sheets are in the
+project files, `week7-review/` (603 rows each, the same order). Checks 1 to 3 are tests in
+`tests/test_review.py`, and they pass.
+
 **Goal.** One confidence per unit, and a sheet that people can review fast and blind.
 
 **Ask the agent to build:**

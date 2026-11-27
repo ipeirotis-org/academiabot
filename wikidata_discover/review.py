@@ -153,8 +153,13 @@ def shown_row(node: dict, hierarchy: dict, n_parents: int, n_pages: int) -> Dict
 
 def check_cells(checks: Sequence[dict], node: dict) -> Dict[str, str]:
     """The checks and the confidence of the node's current version, as cells. Pure."""
-    mine = conf.current_checks(checks, node)
-    level, reasons = conf.confidence(mine, [p["parent_id"] for p in conf.parents(node)])
+    order = [p["parent_id"] for p in conf.parents(node)]
+    # A fixed order (parent links as in the file, then the text), so the same checks always
+    # give the same cells and the same shown_hash, whatever order BigQuery returns them in.
+    mine = sorted(conf.current_checks(checks, node),
+                  key=lambda c: (order.index(c.get("parent_id")) if c.get("parent_id") in order else -1,
+                                 str(c.get("kind")), str(c.get("result")), str(c.get("detail"))))
+    level, reasons = conf.confidence(mine, order)
     cells = {"confidence": level, "confidence_reasons": "; ".join(reasons)}
     for kind in conf.PAGE_KINDS + ("agreement",):
         parts = []

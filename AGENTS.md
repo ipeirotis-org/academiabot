@@ -29,6 +29,8 @@ academiabot/
 │   ├── eval/                    # Ground truth for 12 universities + run_eval.py harness;
 │   │                            #   dept_scorer.py scores a department list against a department CSV
 │   │                            #   verifier.py and minicheck.py: does the saved page support the claim (week 6)
+│   │                            #   confidence.py: checks and one confidence per node of a hierarchy file (week 7)
+│   ├── review.py                # Review sheets (blind and shown passes), review load, the reviews table (week 7)
 │   ├── results/                 # Output CSVs, universities_us.json, LLM cache
 │   └── scripts/
 │       ├── wikidata_division_discover.py   # Entrypoint
@@ -408,6 +410,69 @@ rules of `annotation-pilot/annotator_instructions.md`; the call is `LLMHelper.ve
 Tests: `tests/test_verifier.py`, `tests/test_setup_choice.py`, and the week 6 part of
 `tests/test_judge.py`.
 
+## Confidence and review sheet (Shuo, week 7)
+
+Built 2026-11-27 on branch `claude/shuo-week7` (on top of `claude/shuo-week6`). Input: a
+hierarchy file (Anya's week 5 format, `hierarchy-file-week5`). For NYU that is run
+`discover-20261118T192056Z-01d646`, a copy of which is in the project files at
+`annotation-pilot/anya_data/Q49210_discover-20261118T192056Z-01d646.json` (604 nodes, so 603
+units without the university). Anya's `hierarchy_file.py` is on branch `anya-week-5-6` (pull
+request 27, not merged), so the week 7 code reads the JSON file and does not import it.
+
+- `eval/confidence.py HIERARCHY.json` runs the checks on each node and records them as
+  `checks` rows with `node_id` and `node_version`: the four week 5 page checks on the node's
+  saved source page (evidence fact `unit`), and the week 6 verifier (gpt-4o) once per parent
+  link, with `parent_id`. The page text comes from the evidence row and the bucket; the page
+  is never fetched again. Agreement is a check only when the run asked 2 or more providers.
+  Anya's NYU run asked Anthropic only, so it has no agreement checks. The week 3 and week 4
+  agreement and judge checks were made on other runs' candidates, so no NYU node has one.
+- `node_version` is computed from the node's fields with the same rule as Anya's
+  `hierarchy_file.node_version` (`VERSION_FIELDS`). A test checks that it gives the stored
+  value on the fixture. The code uses the computed value, so a hand edit to a node without a
+  new version still makes old checks and verdicts stop counting.
+- Confidence (`confidence()`), from checks on the current version only: high when the four
+  page checks pass and the verifier says supported for every parent link (and agreement
+  passes, when there is one); low when the page is dead or missing (`page_status` fail), is
+  an error page (`soft_404` fail), or the verifier says unsupported; medium otherwise. A
+  node with no checks on its version is low.
+- `review sheet HIERARCHY.json --pass blind|shown` writes an xlsx (or .csv) sheet, one row per
+  node except the university. The blind order is `random.Random(20261127).shuffle` of the
+  node ids sorted, so every reviewer gets the same order and `--limit N` gives the same first
+  N rows. The shown sheet adds the confidence and each check, sorted low, medium, high (more
+  problems first), ties in the blind order. `--unreviewed [--reviewer X]` keeps units with
+  no current verdict; `--reviewed-by X` keeps units X judged blind on the current version.
+- Each parent link's source is the unit's source page (the hierarchy file has no separate
+  parent evidence). The pages to confirm are the unit's page and the country's page when the
+  country source is a URL, so a row has at most 2 `url_checked` columns for NYU.
+- `shown_hash` hashes every shown cell and the meta columns. `review load` refuses a row whose
+  shown cells were changed, an accept without yes for every page or with a `fix_` value, a
+  fix without yes or no per page, a fixed parent link without `fix_parent_<k>_source`, a fixed
+  country without `fix_country_source`, and a URL field that is not http(s). One bad row
+  stops the whole load unless `--skip-invalid`.
+- Pass order per reviewer and version: a shown verdict needs a blind verdict first, and a
+  blind verdict is refused after the reviewer gave a shown verdict on that version.
+- `reviews` (BigQuery table created 2026-11-27, 19 columns, documented in
+  `docs/RUN_LOG_SCHEMA.md`): `run_id` is the hierarchy file's run, `load_run_id` and
+  `invocation_id` are the `review load`. Rows are only added. A row identical to a saved one
+  (reviewer, node, version, pass, verdict, corrections, url_checked, notes, shown_hash) is
+  skipped, so a sheet can be loaded twice. When BigQuery fails, the rows go to
+  `results/review/reviews_local.jsonl`, which `read_reviews` also reads.
+- `review status HIERARCHY.json` says which units have a blind verdict on their current
+  version. `review export --university QID --out FILE.csv` writes the saved reviews.
+- NYU checks run `node-checks-20261127T221235Z-52ca8d` (2026-11-27, gpt-4o): 3,017 checks,
+  336 verifier calls; 279 high, 271 medium, 53 low. The verifier read 321 claims; 284 were
+  decided by the page status alone. 26 of the 53 low units are snapshot units with no source
+  page. A copy of `confidence.csv` and `node_checks.csv` is in the project files at
+  `week7-review/checks_open_after_first_pass/`; reviewers must not open it before their first pass.
+- The shown sheet orders the checks by parent link, kind, and text, because BigQuery returns
+  rows in any order and the order changed `shown_hash` (2 of 603 rows before the fix).
+- The NYU first-pass sheets (603 rows, seed 20261127) are in the project files:
+  `week7-review/NYU_first_pass_shuo.xlsx` and `NYU_first_pass_panos.xlsx`.
+
+Tests: `tests/test_confidence.py`, `tests/test_review.py` (`test_check1_*` to `test_check3_*`
+are the three "You check it by" steps), fixture `tests/fixtures/hierarchy_nyu_sample.json`
+(10 nodes of the NYU file).
+
 ## LLM integration details
 
 - `extract_divisions_openai/anthropic/gemini()`: one per provider, same output shape. Only the OpenAI call
@@ -578,7 +643,7 @@ it's Y", "dive into", or "robust".
 Every run must be reproducible. The first four tables below are in dataset
 `academiabot` of project `wikidata-academia`, with large text in Cloud Storage and the GCS path
 kept in the row. The other three come later and are specified here so both tracks build to the
-same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3; now in `run_log.py`), `reviews` (Shuo, week 7).
+same shape: `nodes` (Anya, week 5), `checks` (Shuo, week 3; now in `run_log.py`), `reviews` (Shuo, week 7; now in `run_log.py`).
 
 How it works today (`wikidata_discover/run_log.py`; every column is explained in
 `docs/RUN_LOG_SCHEMA.md`, and a test fails when a column is missing there):

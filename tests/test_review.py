@@ -348,3 +348,12 @@ def test_reviews_table_schema_and_add_review():
         log.add_review({"run_id": "r", "node_version": "v", "pass": "blind", "verdict": "maybe"})
     with pytest.raises(ValueError):
         log.add_review({"run_id": "r", "node_version": "v", "pass": "later", "verdict": "accept"})
+
+
+def test_shown_cells_do_not_depend_on_the_order_of_the_checks():
+    """BigQuery returns rows in any order; the cells and shown_hash must not change."""
+    h = hierarchy()
+    checks = shown_checks(h)
+    a = {r["node_id"]: r["shown_hash"] for r in R.build_rows(h, "shown", checks)[0]}
+    b = {r["node_id"]: r["shown_hash"] for r in R.build_rows(h, "shown", list(reversed(checks)))[0]}
+    assert a == b

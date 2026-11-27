@@ -423,6 +423,15 @@ overwriting another reviewer's, and records the run and the node version it was 
 AGENTS.md), plus which pass it was and a hash of the whole row as shown, so a verdict always
 says exactly what the reviewer saw.
 
+Built 2026-11-27 (`eval/confidence.py`, `review.py`, the `reviews` table; AGENTS.md, "Confidence
+and review sheet"). The checks read the node's saved page and are recorded with its
+`node_version`. Agreement is a check only for a run with 2 or more providers; Anya's NYU run
+had one, and the week 3 and 4 checks belong to other runs' candidates, so NYU's confidence
+comes from the page checks and the verifier. Each parent link's source is the unit's source
+page, because the hierarchy file keeps no separate evidence for a parent link. A second-pass
+verdict needs a first-pass verdict by the same reviewer on the same version, and a
+first-pass verdict is refused after the reviewer saw the checks.
+
 ### Shuo, week 8 (Dec 4 to 10, together with week 9)
 
 **A Prolific task, ready to launch.** One parent link per item: the unit's name, one of its
