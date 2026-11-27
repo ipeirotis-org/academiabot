@@ -1,7 +1,7 @@
 """Run log: a record of every run in BigQuery, with large text in Cloud Storage.
 
-Five tables in dataset `academiabot` of project `wikidata-academia` (see "Run log" in
-AGENTS.md): runs, llm_calls, evidence, candidates, checks. Full prompts and raw responses go
+Six tables in dataset `academiabot` of project `wikidata-academia` (see "Run log" in
+AGENTS.md): runs, llm_calls, evidence, candidates, checks, reviews (week 7). Full prompts and raw responses go
 to gs://academiabot/runs/<run_id>/llm_calls/<llm_call_id>/ and the row keeps the path.
 
 When BigQuery or the bucket cannot be reached, the rows and texts are written as JSON
@@ -30,7 +30,7 @@ from wikidata_discover import config
 
 logger = logging.getLogger(__name__)
 
-TABLES = ("runs", "llm_calls", "evidence", "candidates", "checks")
+TABLES = ("runs", "llm_calls", "evidence", "candidates", "checks", "reviews")
 
 # Column name, BigQuery type, mode. JSON-shaped values (args, config, request_config)
 # are stored as JSON text in STRING columns.
@@ -91,6 +91,20 @@ SCHEMAS: Dict[str, List[tuple]] = {
         ("detail", "STRING", "NULLABLE"), ("llm_call_ids", "STRING", "REPEATED"),
         ("evidence_ids", "STRING", "REPEATED"), ("checked_at", "TIMESTAMP", "NULLABLE"),
     ],
+    # Week 7. One reviewer's verdict on one node version. run_id is the run of the hierarchy
+    # file that was shown; load_run_id and invocation_id are the `review load` that saved it.
+    "reviews": [
+        ("review_id", "STRING", "REQUIRED"), ("run_id", "STRING", "REQUIRED"),
+        ("invocation_id", "STRING", "REQUIRED"), ("load_run_id", "STRING", "NULLABLE"),
+        ("university_qid", "STRING", "NULLABLE"), ("node_id", "STRING", "NULLABLE"),
+        ("candidate_id", "STRING", "NULLABLE"), ("parent_id", "STRING", "NULLABLE"),
+        ("node_version", "STRING", "NULLABLE"), ("shown_hash", "STRING", "NULLABLE"),
+        ("reviewer", "STRING", "NULLABLE"), ("source", "STRING", "NULLABLE"),
+        ("pass", "STRING", "NULLABLE"), ("verdict", "STRING", "NULLABLE"),
+        ("corrections", "STRING", "NULLABLE"), ("url_checked", "STRING", "NULLABLE"),
+        ("notes", "STRING", "NULLABLE"), ("sheet_file", "STRING", "NULLABLE"),
+        ("reviewed_at", "TIMESTAMP", "NULLABLE"),
+    ],
 }
 
 # unaligned: not yet compared with Wikidata (Shuo's week 3 agreement runs, the week 4
@@ -98,6 +112,8 @@ SCHEMAS: Dict[str, List[tuple]] = {
 CANDIDATE_STATUSES = ("linked", "orphan", "missing", "unresolved", "unaligned")
 CHECK_KINDS = ("agreement", "judge", "page_status", "soft_404", "on_domain", "name_on_page", "verifier")
 CHECK_RESULTS = ("pass", "fail", "unclear")
+REVIEW_VERDICTS = ("accept", "reject", "fix")
+REVIEW_PASSES = ("blind", "shown")   # blind: checks and confidence hidden; shown: checks visible
 
 # Columns added after the tables were first created (week 3). setup_tables() adds them
 # to existing tables, and fills `legacy` with false on rows written before.
@@ -368,6 +384,19 @@ class RunLog:
                              "candidate_id": candidate_id, "node_id": node_id,
                              "checked_at": now_iso(), **fields})
         return check_id
+
+    def add_review(self, row: dict) -> str:
+        """Add one reviews row: one reviewer's verdict on one node version. Reviews are
+        append-only. The row keeps the run_id of the hierarchy file that was shown."""
+        if row.get("verdict") not in REVIEW_VERDICTS:
+            raise ValueError(f"verdict must be one of {REVIEW_VERDICTS}, got {row.get('verdict')!r}")
+        if row.get("pass") not in REVIEW_PASSES:
+            raise ValueError(f"pass must be one of {REVIEW_PASSES}, got {row.get('pass')!r}")
+        if not row.get("run_id") or not row.get("node_version"):
+            raise ValueError("a review names the run_id and node_version it was given")
+        review_id = row.get("review_id") or new_id()
+        self._add("reviews", {**row, "review_id": review_id, "load_run_id": self.run_id})
+        return review_id
 
     def add_evidence(self, *, url: str, http_status: Optional[int], content: Optional[bytes],
                      unit_names=(), final_url: Optional[str] = None, outcome: str = "ok",

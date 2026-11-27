@@ -1,0 +1,939 @@
+{
+ "format": "hierarchy-file-week5",
+ "invocation_id": "ef0b79228791",
+ "nodes": [
+  {
+   "aliases": [
+    "University of New York",
+    "NYU",
+    "N.Y.U.",
+    "NY University",
+    "University of the City of New York",
+    "New York Univ."
+   ],
+   "alignment": "root",
+   "alignment_candidates": [],
+   "alignment_reason": "the university",
+   "candidate_ids": [],
+   "children_lookup": "looked up",
+   "country": {
+    "label": "United States",
+    "qid": null,
+    "source": "wikidata:Q49210"
+   },
+   "description": "",
+   "evidence": [
+    {
+     "content_hash": "40be72cbccbe6c94909527f63b295480dafac1d1640af9599e6d77a547cb9523",
+     "evidence_id": "50f007871a89406d9aabd1f0184d4748",
+     "fact": "unit",
+     "name_on_page": "no",
+     "outcome": "http_error",
+     "text_hash": "bb8ec7165841b0d00590b9e4e5a49140785cf0b422962ed54f6957c2cd6f6d62",
+     "url": "https://nyu.edu"
+    }
+   ],
+   "evidence_ids": [
+    "50f007871a89406d9aabd1f0184d4748"
+   ],
+   "flags": [
+    "source page not saved: http_error"
+   ],
+   "in_scope": "yes",
+   "invocation_id": "ef0b79228791",
+   "level": 0,
+   "llm_call_ids": [],
+   "name": "New York University",
+   "node_id": "root",
+   "node_version": "91f8d29387a72e29",
+   "origin": "snapshot",
+   "parent_ids": [],
+   "parent_links": [],
+   "parents_shown": [],
+   "provider": null,
+   "qid": "Q49210",
+   "run_id": "discover-20261118T192056Z-01d646",
+   "source_url": "https://nyu.edu",
+   "type_source": "wikidata",
+   "unit_type": "university",
+   "website": "https://nyu.edu",
+   "wikidata_duplicates": []
+  },
+  {
+   "aliases": [
+    "New York University Graduate School of Arts and Science",
+    "GSAS",
+    "NYU School of Arts"
+   ],
+   "alignment": "uncertain",
+   "alignment_candidates": [
+    {
+     "chosen": true,
+     "found_by": "snapshot website",
+     "qid": "Q3339068"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "merge check"
+     ],
+     "qid": "Q3339068"
+    }
+   ],
+   "alignment_reason": "2 units of this tree were matched to the same item Q3339068 (Graduate School of Arts and Science; Graduate School of Arts & Science); a person decides",
+   "candidate_ids": [
+    "b32e53f356ec4ec78d3a72de28a3a2e5"
+   ],
+   "children_lookup": "looked up",
+   "country": {
+    "label": "United States",
+    "qid": null,
+    "source": "https://en.wikipedia.org/wiki/New_York_University_Graduate_School_of_Arts_and_Science"
+   },
+   "description": "school of New York University",
+   "evidence": [
+    {
+     "content_hash": "67fea17e0a357cc1d696ac33ec8f8b2c3be565d504024f501d689f9899fdf8de",
+     "evidence_id": "9a2c4a1243d64b6bbc1b958d82eeb53b",
+     "fact": "unit",
+     "name_on_page": "yes",
+     "outcome": "ok",
+     "text_hash": "c70355f50ff0a42fd7fb02a20ce4b479e8ae0098e4bba70017e52e115238f447",
+     "url": "https://allnyu.nyu.edu/"
+    },
+    {
+     "content_hash": "45e4b8f5d2748e7dbf8eb7b5d3ff6349ab635e053b58d37c0fe7da631a13a385",
+     "evidence_id": "6c10087bd113472294fa5b4573d8ede1",
+     "fact": "country",
+     "outcome": "ok",
+     "text_hash": "d0e772d6efe011d8018f859832f433803aba5c4dc61622c8f0c38fb2ddfe4cd3",
+     "url": "https://en.wikipedia.org/wiki/New_York_University_Graduate_School_of_Arts_and_Science"
+    }
+   ],
+   "evidence_ids": [
+    "9a2c4a1243d64b6bbc1b958d82eeb53b",
+    "6c10087bd113472294fa5b4573d8ede1"
+   ],
+   "flags": [
+    "same QID Q3339068 as another unit of this tree; QID removed until a person decides"
+   ],
+   "in_scope": "yes",
+   "invocation_id": "ef0b79228791",
+   "level": 1,
+   "llm_call_ids": [
+    "5e0ab989cbae4a8fb8d1cd3bf255b321"
+   ],
+   "name": "Graduate School of Arts and Science",
+   "node_id": "n00002",
+   "node_version": "42d88b93dbebbcc8",
+   "origin": "llm and snapshot",
+   "parent_ids": [
+    "root"
+   ],
+   "parent_links": [
+    {
+     "p749": "not applicable",
+     "parent_id": "root",
+     "parent_key": "root",
+     "parent_qid": "Q49210",
+     "qualifiers": {},
+     "rank": "preferred or normal"
+    }
+   ],
+   "parents_shown": [
+    {
+     "name": "New York University",
+     "node_id": "root",
+     "qid": "Q49210"
+    }
+   ],
+   "provider": "anthropic",
+   "qid": null,
+   "run_id": "discover-20261118T192056Z-01d646",
+   "source_url": "https://allnyu.nyu.edu/",
+   "type_source": "llm",
+   "unit_type": "school",
+   "website": "https://gsas.nyu.edu/",
+   "wikidata_duplicates": []
+  },
+  {
+   "aliases": [
+    "NYU Liberal Studies"
+   ],
+   "alignment": "uncertain",
+   "alignment_candidates": [
+    {
+     "chosen": true,
+     "found_by": "snapshot website",
+     "qid": "Q24204429"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "merge check"
+     ],
+     "qid": "Q24204429"
+    }
+   ],
+   "alignment_reason": "2 units of this tree were matched to the same item Q24204429 (Liberal Studies; Liberal Studies); a person decides",
+   "candidate_ids": [
+    "e66682509a4f428c978df5813ca4f592"
+   ],
+   "children_lookup": "looked up",
+   "country": {
+    "label": "United States",
+    "qid": null,
+    "source": "https://cas.nyu.edu/content/nyu-as/cas/academic-programs/bulletin/about/the-schools-colleges-programs-of-the-university.html"
+   },
+   "description": "school of New York University",
+   "evidence": [
+    {
+     "content_hash": "67fea17e0a357cc1d696ac33ec8f8b2c3be565d504024f501d689f9899fdf8de",
+     "evidence_id": "9a2c4a1243d64b6bbc1b958d82eeb53b",
+     "fact": "unit",
+     "name_on_page": "yes",
+     "outcome": "ok",
+     "text_hash": "c70355f50ff0a42fd7fb02a20ce4b479e8ae0098e4bba70017e52e115238f447",
+     "url": "https://allnyu.nyu.edu/"
+    },
+    {
+     "content_hash": "d9e9993ffec36155dcc2912772aafa26caaa123de70e65755f6f2439c385a6c5",
+     "evidence_id": "5ab8c44d43884864be6e2c8be5e18127",
+     "fact": "country",
+     "outcome": "http_error",
+     "text_hash": "bb8ec7165841b0d00590b9e4e5a49140785cf0b422962ed54f6957c2cd6f6d62",
+     "url": "https://cas.nyu.edu/content/nyu-as/cas/academic-programs/bulletin/about/the-schools-colleges-programs-of-the-university.html"
+    }
+   ],
+   "evidence_ids": [
+    "9a2c4a1243d64b6bbc1b958d82eeb53b",
+    "5ab8c44d43884864be6e2c8be5e18127"
+   ],
+   "flags": [
+    "same QID Q24204429 as another unit of this tree; QID removed until a person decides"
+   ],
+   "in_scope": "yes",
+   "invocation_id": "ef0b79228791",
+   "level": 1,
+   "llm_call_ids": [
+    "5e0ab989cbae4a8fb8d1cd3bf255b321"
+   ],
+   "name": "Liberal Studies",
+   "node_id": "n00003",
+   "node_version": "9cea38e4b2fad716",
+   "origin": "llm and snapshot",
+   "parent_ids": [
+    "root"
+   ],
+   "parent_links": [
+    {
+     "p749": "not applicable",
+     "parent_id": "root",
+     "parent_key": "root",
+     "parent_qid": "Q49210",
+     "qualifiers": {},
+     "rank": "preferred or normal"
+    }
+   ],
+   "parents_shown": [
+    {
+     "name": "New York University",
+     "node_id": "root",
+     "qid": "Q49210"
+    }
+   ],
+   "provider": "anthropic",
+   "qid": null,
+   "run_id": "discover-20261118T192056Z-01d646",
+   "source_url": "https://allnyu.nyu.edu/",
+   "type_source": "llm",
+   "unit_type": "school",
+   "website": "https://liberalstudies.nyu.edu/",
+   "wikidata_duplicates": []
+  },
+  {
+   "aliases": [
+    "New York University Department of Mathematics",
+    "CIMS",
+    "Courant Institute of Mathematical Sciences",
+    "Courant Institute of Mathematical Sciences, NYU",
+    "New York University Courant Institute of Mathematical Sciences",
+    "New York University Department of Computer Sciences",
+    "NYU Courant Institute",
+    "NYU Dept, of Computer Sciences",
+    "NYU Dept. of Mathematical Sciences"
+   ],
+   "alignment": "linked",
+   "alignment_candidates": [
+    {
+     "chosen": true,
+     "found_by": "snapshot website",
+     "qid": "Q946028"
+    }
+   ],
+   "alignment_reason": "has a QID and P749 to every parent",
+   "candidate_ids": [
+    "aea6eb7b62464ee4b34eda080046d7f1"
+   ],
+   "children_lookup": "looked up",
+   "country": {
+    "label": "United States",
+    "qid": null,
+    "source": "251 Mercer St, New York City, New York, 10012, USA"
+   },
+   "description": "school of New York University",
+   "evidence": [
+    {
+     "content_hash": "67fea17e0a357cc1d696ac33ec8f8b2c3be565d504024f501d689f9899fdf8de",
+     "evidence_id": "9a2c4a1243d64b6bbc1b958d82eeb53b",
+     "fact": "unit",
+     "name_on_page": "no",
+     "outcome": "ok",
+     "text_hash": "c70355f50ff0a42fd7fb02a20ce4b479e8ae0098e4bba70017e52e115238f447",
+     "url": "https://allnyu.nyu.edu/"
+    }
+   ],
+   "evidence_ids": [
+    "9a2c4a1243d64b6bbc1b958d82eeb53b"
+   ],
+   "flags": [],
+   "in_scope": "yes",
+   "invocation_id": "ef0b79228791",
+   "level": 1,
+   "llm_call_ids": [
+    "5e0ab989cbae4a8fb8d1cd3bf255b321"
+   ],
+   "name": "Courant Institute School of Mathematics, Computing, and Data Science",
+   "node_id": "n00005",
+   "node_version": "c56545101dd9d744",
+   "origin": "llm and snapshot",
+   "parent_ids": [
+    "root"
+   ],
+   "parent_links": [
+    {
+     "p749": "present",
+     "parent_id": "root",
+     "parent_key": "root",
+     "parent_qid": "Q49210",
+     "qualifiers": {},
+     "rank": "preferred or normal"
+    }
+   ],
+   "parents_shown": [
+    {
+     "name": "New York University",
+     "node_id": "root",
+     "qid": "Q49210"
+    }
+   ],
+   "provider": "anthropic",
+   "qid": "Q946028",
+   "run_id": "discover-20261118T192056Z-01d646",
+   "source_url": "https://allnyu.nyu.edu/",
+   "type_source": "llm",
+   "unit_type": "school",
+   "website": "https://cims.nyu.edu/",
+   "wikidata_duplicates": []
+  },
+  {
+   "aliases": [
+    "New York University Shanghai"
+   ],
+   "alignment": "linked",
+   "alignment_candidates": [
+    {
+     "chosen": true,
+     "found_by": "snapshot website",
+     "qid": "Q13652966"
+    }
+   ],
+   "alignment_reason": "has a QID and P749 to every parent",
+   "candidate_ids": [
+    "0998d8baab2143b584112656abbfa317"
+   ],
+   "children_lookup": "looked up",
+   "country": {
+    "label": "China",
+    "qid": null,
+    "source": "https://shanghai.nyu.edu/"
+   },
+   "description": "campus of New York University",
+   "evidence": [
+    {
+     "content_hash": "67fea17e0a357cc1d696ac33ec8f8b2c3be565d504024f501d689f9899fdf8de",
+     "evidence_id": "9a2c4a1243d64b6bbc1b958d82eeb53b",
+     "fact": "unit",
+     "name_on_page": "yes",
+     "outcome": "ok",
+     "text_hash": "c70355f50ff0a42fd7fb02a20ce4b479e8ae0098e4bba70017e52e115238f447",
+     "url": "https://allnyu.nyu.edu/"
+    },
+    {
+     "content_hash": "85d2c526debb3c6c93fcd9cfe4de6f99b2beaef1f724f50af8ba440b7f0955a0",
+     "evidence_id": "f5b03e835a0c44c481e7da54dbc0bdc5",
+     "fact": "country",
+     "outcome": "ok",
+     "text_hash": "23acf1ad33ce321bc604df98962c99707c3cae21f4f31197adfbf0ed237c1e35",
+     "url": "https://shanghai.nyu.edu/"
+    }
+   ],
+   "evidence_ids": [
+    "9a2c4a1243d64b6bbc1b958d82eeb53b",
+    "f5b03e835a0c44c481e7da54dbc0bdc5"
+   ],
+   "flags": [],
+   "in_scope": "yes",
+   "invocation_id": "ef0b79228791",
+   "level": 1,
+   "llm_call_ids": [
+    "5e0ab989cbae4a8fb8d1cd3bf255b321"
+   ],
+   "name": "NYU Shanghai",
+   "node_id": "n00022",
+   "node_version": "5a40d2264720dacc",
+   "origin": "llm and snapshot",
+   "parent_ids": [
+    "root",
+    "Q2034790/root"
+   ],
+   "parent_links": [
+    {
+     "p749": "present",
+     "parent_id": "root",
+     "parent_key": "root",
+     "parent_qid": "Q49210",
+     "qualifiers": {},
+     "rank": "normal"
+    },
+    {
+     "p749": "present",
+     "parent_id": "Q2034790/root",
+     "parent_key": "Q2034790/root",
+     "parent_qid": "Q2034790",
+     "qualifiers": {},
+     "rank": "normal"
+    }
+   ],
+   "parents_shown": [
+    {
+     "name": "New York University",
+     "node_id": "root",
+     "qid": "Q49210"
+    },
+    {
+     "name": "East China Normal University",
+     "node_id": "Q2034790/root",
+     "qid": "Q2034790"
+    }
+   ],
+   "provider": "anthropic",
+   "qid": "Q13652966",
+   "run_id": "discover-20261118T192056Z-01d646",
+   "source_url": "https://allnyu.nyu.edu/",
+   "type_source": "llm",
+   "unit_type": "campus",
+   "website": "https://shanghai.nyu.edu/",
+   "wikidata_duplicates": []
+  },
+  {
+   "aliases": [
+    "NYU Dept. of Anesthesiology"
+   ],
+   "alignment": "orphan",
+   "alignment_candidates": [
+    {
+     "chosen": true,
+     "found_by": "snapshot",
+     "qid": "Q101027481"
+    }
+   ],
+   "alignment_reason": "has a QID; P749 to Q49210 is missing",
+   "candidate_ids": [],
+   "children_lookup": "not looked up (a department; depth 2 looks below schools and campuses only)",
+   "country": {
+    "label": "United States",
+    "qid": "Q30",
+    "source": "wikidata:Q101027481 (P17)"
+   },
+   "description": "academic department of New York University",
+   "evidence": [],
+   "evidence_ids": [],
+   "flags": [
+    "no source page: no P856 on Wikidata, and the page search is not built yet"
+   ],
+   "in_scope": "yes",
+   "invocation_id": "ef0b79228791",
+   "level": 1,
+   "llm_call_ids": [],
+   "name": "New York University Department of Anesthesiology",
+   "node_id": "n00038",
+   "node_version": "dbad7e0969d09cb8",
+   "origin": "snapshot",
+   "parent_ids": [
+    "root"
+   ],
+   "parent_links": [
+    {
+     "p749": "missing",
+     "parent_id": "root",
+     "parent_key": "root",
+     "parent_qid": "Q49210",
+     "qualifiers": {},
+     "rank": "preferred or normal"
+    }
+   ],
+   "parents_shown": [
+    {
+     "name": "New York University",
+     "node_id": "root",
+     "qid": "Q49210"
+    }
+   ],
+   "provider": null,
+   "qid": "Q101027481",
+   "run_id": "discover-20261118T192056Z-01d646",
+   "source_url": null,
+   "type_source": "wikidata (label or P31 says department)",
+   "unit_type": "department",
+   "website": null,
+   "wikidata_duplicates": []
+  },
+  {
+   "aliases": [],
+   "alignment": "new",
+   "alignment_candidates": [
+    {
+     "chosen": false,
+     "found_by": [
+      "fulltext",
+      "other_names"
+     ],
+     "label": "University of Notre Dame Department of Africana Studies",
+     "qid": "Q105495987"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "fulltext",
+      "other_names"
+     ],
+     "label": "California State University Northridge Department of Africana Studies",
+     "qid": "Q110417985"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "fulltext",
+      "other_names"
+     ],
+     "label": "University of North Carolina at Charlotte Department of Africana Studies",
+     "qid": "Q100675947"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "fulltext",
+      "other_names"
+     ],
+     "label": "Rutgers University Department of Africana Studies",
+     "qid": "Q101027904"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "fulltext",
+      "other_names"
+     ],
+     "label": "University of Delaware Department of Africana Studies",
+     "qid": "Q139714403"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "fulltext",
+      "other_names"
+     ],
+     "label": "University of Pennsylvania Department of Africana Studies",
+     "qid": "Q104051206"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "fulltext"
+     ],
+     "label": "San Diego State University Department of Africana Studies",
+     "qid": "Q110808827"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "other_names"
+     ],
+     "label": "Chicago State University Department of Geography, Sociology, History, Africana Studies & Anthropology",
+     "qid": "Q101017019"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "other_names"
+     ],
+     "label": "Muhlenberg College Africana Studies Program",
+     "qid": "Q105978695"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "other_names"
+     ],
+     "label": "African studies",
+     "qid": "Q37542"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "other_names"
+     ],
+     "label": null,
+     "qid": "Q141064844"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "other_names"
+     ],
+     "label": "University of Connecticut Africana Studies Institute",
+     "qid": "Q134521504"
+    }
+   ],
+   "alignment_reason": "no item after every search (prefix, fulltext, university_name, other_names, website, tree); None of the Wikidata items match the Department of Africana Studies at New York University. All items are related to Africana Studies departments at other universities.",
+   "candidate_ids": [
+    "ac69c881ae5e4062af24853567538bdd"
+   ],
+   "children_lookup": "not looked up (depth 2)",
+   "country": {
+    "label": "United States",
+    "qid": null,
+    "source": "32 Waverly Pl, New York, NY 10003"
+   },
+   "description": "academic department of College of Arts and Science",
+   "evidence": [
+    {
+     "content_hash": "47e189006cb2b783ac0764effe6aaa9c9d8abaebd22fd022680aee97f8404f64",
+     "evidence_id": "b5c0b2667fd84632bf288649c0bba59b",
+     "fact": "unit",
+     "name_on_page": "no",
+     "outcome": "http_error",
+     "text_hash": "bb8ec7165841b0d00590b9e4e5a49140785cf0b422962ed54f6957c2cd6f6d62",
+     "url": "https://as.nyu.edu/academics/departments.html"
+    }
+   ],
+   "evidence_ids": [
+    "b5c0b2667fd84632bf288649c0bba59b"
+   ],
+   "flags": [
+    "source page not saved: http_error"
+   ],
+   "in_scope": "yes",
+   "invocation_id": "ef0b79228791",
+   "level": 2,
+   "llm_call_ids": [
+    "4f652b56476141c8914a16eca7317bb5",
+    "c1c4b4a78bcf4f4eb1208a4c396ee597"
+   ],
+   "name": "Department of Africana Studies",
+   "node_id": "n00182",
+   "node_version": "1e9726380826a583",
+   "origin": "llm",
+   "parent_ids": [
+    "n00001"
+   ],
+   "parent_links": [
+    {
+     "p749": "not applicable",
+     "parent_id": "n00001",
+     "parent_key": "n00001",
+     "parent_qid": null,
+     "qualifiers": {},
+     "rank": "preferred or normal"
+    }
+   ],
+   "parents_shown": [
+    {
+     "name": "College of Arts and Science",
+     "node_id": "n00001",
+     "qid": null
+    }
+   ],
+   "provider": "anthropic",
+   "qid": null,
+   "run_id": "discover-20261118T192056Z-01d646",
+   "source_url": "https://as.nyu.edu/academics/departments.html",
+   "type_source": "llm",
+   "unit_type": "department",
+   "website": "https://as.nyu.edu/departments/africanastudies.html",
+   "wikidata_duplicates": []
+  },
+  {
+   "aliases": [
+    "New York University Department of Anthropology",
+    "Anthropology Department, New York University",
+    "NYU Anthropology",
+    "NYU Dept. of Anthropology"
+   ],
+   "alignment": "uncertain",
+   "alignment_candidates": [
+    {
+     "chosen": true,
+     "found_by": "snapshot name",
+     "qid": "Q101027482"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "merge check"
+     ],
+     "qid": "Q101027482"
+    }
+   ],
+   "alignment_reason": "3 units of this tree were matched to the same item Q101027482 (Department of Anthropology; Department of Anthropology; Anthropology); a person decides",
+   "candidate_ids": [
+    "9b12622d5c844851998bcbdaf0676b9c"
+   ],
+   "children_lookup": "not looked up (depth 2)",
+   "country": {
+    "label": "United States",
+    "qid": null,
+    "source": "32 Waverly Pl, New York, NY 10003"
+   },
+   "description": "academic department of College of Arts and Science",
+   "evidence": [
+    {
+     "content_hash": "47e189006cb2b783ac0764effe6aaa9c9d8abaebd22fd022680aee97f8404f64",
+     "evidence_id": "b5c0b2667fd84632bf288649c0bba59b",
+     "fact": "unit",
+     "name_on_page": "no",
+     "outcome": "http_error",
+     "text_hash": "bb8ec7165841b0d00590b9e4e5a49140785cf0b422962ed54f6957c2cd6f6d62",
+     "url": "https://as.nyu.edu/academics/departments.html"
+    }
+   ],
+   "evidence_ids": [
+    "b5c0b2667fd84632bf288649c0bba59b"
+   ],
+   "flags": [
+    "same QID Q101027482 as another unit of this tree; QID removed until a person decides",
+    "source page not saved: http_error"
+   ],
+   "in_scope": "yes",
+   "invocation_id": "ef0b79228791",
+   "level": 2,
+   "llm_call_ids": [
+    "4f652b56476141c8914a16eca7317bb5"
+   ],
+   "name": "Department of Anthropology",
+   "node_id": "n00085",
+   "node_version": "40dd69fceb5cdcd7",
+   "origin": "llm and snapshot",
+   "parent_ids": [
+    "n00001"
+   ],
+   "parent_links": [
+    {
+     "p749": "not applicable",
+     "parent_id": "n00001",
+     "parent_key": "n00001",
+     "parent_qid": null,
+     "qualifiers": {},
+     "rank": "preferred or normal"
+    }
+   ],
+   "parents_shown": [
+    {
+     "name": "College of Arts and Science",
+     "node_id": "n00001",
+     "qid": null
+    }
+   ],
+   "provider": "anthropic",
+   "qid": null,
+   "run_id": "discover-20261118T192056Z-01d646",
+   "source_url": "https://as.nyu.edu/academics/departments.html",
+   "type_source": "llm",
+   "unit_type": "department",
+   "website": "https://as.nyu.edu/departments/anthropology.html",
+   "wikidata_duplicates": []
+  },
+  {
+   "aliases": [],
+   "alignment": "new",
+   "alignment_candidates": [
+    {
+     "chosen": false,
+     "found_by": [
+      "fulltext",
+      "other_names"
+     ],
+     "label": "Chauvenet Prize",
+     "qid": "Q1068479"
+    },
+    {
+     "chosen": false,
+     "found_by": [
+      "fulltext",
+      "other_names"
+     ],
+     "label": "Carl B. Allendoerfer Award",
+     "qid": "Q16852192"
+    }
+   ],
+   "alignment_reason": "no item after every search (prefix, fulltext, university_name, other_names, website, tree); The Wikidata items found are both awards related to expository writing in mathematics, not an academic program of a university. They do not match the unit, which is a program under the College of Arts and Science at New York University.",
+   "candidate_ids": [
+    "bcc5d7ee400e4706b7f52536ae811767"
+   ],
+   "children_lookup": "not looked up (depth 2)",
+   "country": {
+    "label": "United States",
+    "qid": null,
+    "source": "411 Lafayette Street, 4th Floor, New York, NY"
+   },
+   "description": "academic program of College of Arts and Science",
+   "evidence": [
+    {
+     "content_hash": "1ff6c3372a81876dfe1f631c0c898a3d307befc988797c62f3a0128103095cff",
+     "evidence_id": "68b8ea497f4042cfaea1f4126602b078",
+     "fact": "unit",
+     "name_on_page": "yes",
+     "outcome": "ok",
+     "text_hash": "1e6d5b5a7eeb359721950792954ba75c2a4a583ba21b9d4ac70153cda15cda0b",
+     "url": "https://bulletins.nyu.edu/undergraduate/arts-science/college-core-curriculum/"
+    }
+   ],
+   "evidence_ids": [
+    "68b8ea497f4042cfaea1f4126602b078"
+   ],
+   "flags": [],
+   "in_scope": "yes",
+   "invocation_id": "ef0b79228791",
+   "level": 2,
+   "llm_call_ids": [
+    "4f652b56476141c8914a16eca7317bb5",
+    "1907411b94844fe9a1a1c856a430bf19"
+   ],
+   "name": "Expository Writing Program",
+   "node_id": "n00224",
+   "node_version": "3087a7e3f92bc020",
+   "origin": "llm",
+   "parent_ids": [
+    "n00001"
+   ],
+   "parent_links": [
+    {
+     "p749": "not applicable",
+     "parent_id": "n00001",
+     "parent_key": "n00001",
+     "parent_qid": null,
+     "qualifiers": {},
+     "rank": "preferred or normal"
+    }
+   ],
+   "parents_shown": [
+    {
+     "name": "College of Arts and Science",
+     "node_id": "n00001",
+     "qid": null
+    }
+   ],
+   "provider": "anthropic",
+   "qid": null,
+   "run_id": "discover-20261118T192056Z-01d646",
+   "source_url": "https://bulletins.nyu.edu/undergraduate/arts-science/college-core-curriculum/",
+   "type_source": "llm",
+   "unit_type": "program",
+   "website": "https://cas.nyu.edu/ewp.html",
+   "wikidata_duplicates": []
+  },
+  {
+   "aliases": [],
+   "alignment": "new",
+   "alignment_candidates": [
+    {
+     "chosen": false,
+     "found_by": [
+      "fulltext"
+     ],
+     "label": null,
+     "qid": "Q120845474"
+    }
+   ],
+   "alignment_reason": "no item after every search (prefix, fulltext, university_name, other_names, website, tree); The Wikidata item Q120845474 lacks sufficient information to identify it as the 'Liberal Studies Core' program at New York University. It does not have any description, parent organization, or website details that match the unit in question.",
+   "candidate_ids": [
+    "db948eb3cb844539b0b884e52eeb8721"
+   ],
+   "children_lookup": "not looked up (depth 2)",
+   "country": {
+    "label": "United States",
+    "qid": null,
+    "source": "726 Broadway, New York, NY 10003"
+   },
+   "description": "academic program of Liberal Studies",
+   "evidence": [
+    {
+     "content_hash": "6bcd8220e9330cd018ab01ea3c4e613b7e40c0c30e1602d893d23591fabda5b0",
+     "evidence_id": "f2427e01a02c4ce3aa57e2eb4c7da75b",
+     "fact": "unit",
+     "name_on_page": "yes",
+     "outcome": "ok",
+     "text_hash": "d439ae9882a041c46f89f23cb4f87ca76fa2a751bc65a1079895539461c8dd20",
+     "url": "https://bulletins.nyu.edu/undergraduate/liberal-studies/"
+    }
+   ],
+   "evidence_ids": [
+    "f2427e01a02c4ce3aa57e2eb4c7da75b"
+   ],
+   "flags": [],
+   "in_scope": "yes",
+   "invocation_id": "ef0b79228791",
+   "level": 2,
+   "llm_call_ids": [
+    "bdbaa685fedc4235a1465b23f9c26fe6",
+    "b72fdf575a6944559ea67d3e5d71e2de"
+   ],
+   "name": "Liberal Studies Core",
+   "node_id": "n00283",
+   "node_version": "364f5908ae087bca",
+   "origin": "llm",
+   "parent_ids": [
+    "n00003"
+   ],
+   "parent_links": [
+    {
+     "p749": "not applicable",
+     "parent_id": "n00003",
+     "parent_key": "n00003",
+     "parent_qid": null,
+     "qualifiers": {},
+     "rank": "preferred or normal"
+    }
+   ],
+   "parents_shown": [
+    {
+     "name": "Liberal Studies",
+     "node_id": "n00003",
+     "qid": null
+    }
+   ],
+   "provider": "anthropic",
+   "qid": null,
+   "run_id": "discover-20261118T192056Z-01d646",
+   "source_url": "https://bulletins.nyu.edu/undergraduate/liberal-studies/",
+   "type_source": "llm",
+   "unit_type": "program",
+   "website": "https://liberalstudies.nyu.edu/about/core-program.html",
+   "wikidata_duplicates": []
+  }
+ ],
+ "run_id": "discover-20261118T192056Z-01d646",
+ "university_label": "New York University",
+ "university_qid": "Q49210"
+}

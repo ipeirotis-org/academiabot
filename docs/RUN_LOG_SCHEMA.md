@@ -136,6 +136,36 @@ unit's name on the page). Checks are append-only.
 | evidence_ids | STRING, list | Saved pages the check used |
 | checked_at | TIMESTAMP | Time of the check (UTC) |
 
+## reviews
+
+One row is one reviewer's verdict on one node version. Shuo built it in week 7
+(`wikidata_discover/review.py`). A reviewer fills a review sheet, and `review load` adds one
+row per filled sheet row. Reviews are append-only: a second verdict, by the same or another
+reviewer, is a new row and never changes an old one. A verdict counts only while the node's
+`node_version` is the same.
+
+| Column | Type | Meaning |
+|---|---|---|
+| review_id | STRING, required | Id of this verdict |
+| run_id | STRING, required | The run of the hierarchy file that the reviewer was shown |
+| invocation_id | STRING, required | The `review load` invocation that saved the row |
+| load_run_id | STRING | The run id of that `review load` (its `runs` row) |
+| university_qid | STRING | The university of the hierarchy file |
+| node_id | STRING | The unit reviewed |
+| candidate_id | STRING | The candidates row reviewed, for a verdict on a candidate. Empty for a node |
+| parent_id | STRING | The parent link judged, for a verdict on one link (Prolific, week 8). Empty for a verdict on the whole unit |
+| node_version | STRING | The node version on the sheet row |
+| shown_hash | STRING | Hash of every value the row showed (checks and confidence too, in the second pass) |
+| reviewer | STRING | The reviewer's name, as given to `review load --reviewer` |
+| source | STRING | `expert` (a project member) or `prolific` (a paid worker) |
+| pass | STRING | `blind` (first pass: checks and confidence hidden) or `shown` (second pass: checks visible) |
+| verdict | STRING | `accept`, `reject`, or `fix` |
+| corrections | STRING, JSON | For a fix: each corrected field and its new value (`name`, `qid`, `parent_1`, `parent_1_source`, ...) |
+| url_checked | STRING, JSON | One entry per evidence page on the row: the page, its fact (`unit`, `country`), and yes or no |
+| notes | STRING | The reviewer's notes |
+| sheet_file | STRING | The file name of the sheet and the SHA-256 of the file |
+| reviewed_at | TIMESTAMP | Time the row was loaded (UTC) |
+
 ## How the tables link
 
 - `run_id` and `invocation_id` connect every row to one `runs` row: who ran it, with
