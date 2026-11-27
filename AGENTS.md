@@ -323,8 +323,9 @@ provider, one sample) with its cited `source_url`. Each distinct URL is fetched 
   timeouts, TLS errors, connection resets, and redirect loops. On 2026-11-24, columbia.edu,
   umich.edu, and uth.edu answered 403 and nyu.edu 405 to the fetcher from the cloud session.
   The fetcher never poses as a browser. `soft_404` fails when the title or first 300
-  characters say "not found", a deep link lands on the home page, or the final URL path says
-  not-found/404/error. `on_domain` compares registrable domains (`site_domain`, a short
+  characters say "not found", a deep link lands on the home page, the final URL of a redirect says
+  not-found/404/error, or the page's own path says not-found/404. `--rescore` keeps the labels in
+  `pairs_100.csv` and `failures_20.csv`, and S1 page_pass skips a broken cache file (`missing_from_cache`). `on_domain` compares registrable domains (`site_domain`, a short
   two-level suffix list) with the university's P856 websites plus the ground-truth website.
   `name_on_page` passes on the exact name (1.0), a swapped form such as "Finance Department"
   (0.95), the core name of 2 words or more ("Social Work", 0.8), or a rapidfuzz partial_ratio
