@@ -1,0 +1,19 @@
+university_qid,university,name,variants,providers,n_runs,wrong_kind,your_verdict (real school / affiliate / not a school),notes
+Q49210,New York University,Graduate School of Arts and Science,Graduate School of Arts and Science,openai; anthropic; gemini,6,invented,real school,added to GROUND_TRUTH
+Q49210,New York University,Liberal Studies,Liberal Studies,openai; anthropic; gemini,7,invented,real school,added to GROUND_TRUTH
+Q49088,Columbia University,Teachers College,"Teachers College; Teachers College, Columbia University",anthropic; gemini,6,invented,affiliate,"not marked by Shuo; treated like Barnard (separate institution), not added"
+Q49088,Columbia University,Union Theological Seminary,Union Theological Seminary,anthropic; gemini,6,invented,not a school,"exists, but not a child school of Columbia"
+Q49088,Columbia University,Jewish Theological Seminary,Jewish Theological Seminary,anthropic; gemini,5,invented,not a school,"exists, but not a child school of Columbia"
+Q49088,Columbia University,Barnard College,Barnard College,anthropic; gemini,6,invented,affiliate,separate institution affiliated with Columbia
+Q41506,Stanford University,SLAC National Accelerator Laboratory,SLAC National Accelerator Laboratory,openai; gemini,3,invented,not a school,"exists, but not a child school of Stanford"
+Q41506,Stanford University,Hoover Institution,Hoover Institution,openai; gemini,3,invented,not a school,"exists, but not a child school of Stanford"
+Q168756,"University of California, Berkeley","College of Computing, Data Science, and Society","College of Computing, Data Science, and Society",openai; anthropic,5,invented,real school,"ground truth renamed from Division of Computing, Data Science, and Society"
+Q230492,University of Michigan,Horace H. Rackham School of Graduate Studies,Rackham School of Graduate Studies; Horace H. Rackham School of Graduate Studies,openai; anthropic; gemini,4,invented,real school,"same school as Rackham Graduate School, already in the ground truth; no new row"
+Q1068752,Howard University,Chadwick A. Boseman College of Fine Arts,Chadwick A. Boseman College of Fine Arts,openai; anthropic,6,invented,real school,ground truth renamed from College of Fine Arts
+Q161562,California Institute of Technology,Jet Propulsion Laboratory,Jet Propulsion Laboratory,openai; gemini,3,invented,not a school,"exists, but not a child school of Caltech"
+Q131252,University of Chicago,The College,College; The College,openai; anthropic; gemini,9,invented,not a school,Shuo verdict 2026-11-10
+Q579968,University of Missouri,School of Health Professions,School of Health Professions,openai; anthropic; gemini,7,invented,real school,added to GROUND_TRUTH
+Q579968,University of Missouri,School of Medicine,School of Medicine,openai; anthropic; gemini,9,invented,real school,added to GROUND_TRUTH
+Q579968,University of Missouri,Graduate School,Graduate School,anthropic; gemini,6,invented,real school,added to GROUND_TRUTH
+Q579968,University of Missouri,Harry S Truman School of Government and Public Affairs,Harry S Truman School of Government and Public Affairs,anthropic; gemini,5,invented,real school,added to GROUND_TRUTH
+Q579968,University of Missouri,School of Social Work,School of Social Work,anthropic; gemini,6,invented,real school,added to GROUND_TRUTH

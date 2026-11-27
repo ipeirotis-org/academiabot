@@ -1,7 +1,8 @@
 """Tests for the department loader and scorer (Shuo, week 2).
 
 The fixture is a copy of Shuo's ground truth for Stern, Courant and Steinhardt
-(wikidata_discover/eval/dept_ground_truth.csv). No department name appears under
+(the first 24 rows of wikidata_discover/eval/dept_ground_truth.csv; week 4 added 15 rows
+for 3 schools outside NYU). No department name appears under
 two schools there, so check 5 adds a made-up "Economics" row under Steinhardt.
 The five TestCheck classes are the "You check it by" steps in TASKS.md.
 """
@@ -55,9 +56,19 @@ def test_fixture_loads(truth):
     assert sum(1 for t in truth.rows if t.qid == ds.NEW) == 13
 
 
-def test_fixture_matches_the_ground_truth_file():
+NYU_SCHOOLS = {"Stern", "Courant", "Steinhardt"}
+
+
+def test_fixture_matches_the_nyu_rows_of_the_ground_truth_file():
     real = Path(ds.__file__).parent / "dept_ground_truth.csv"
-    assert ds.load_ground_truth(real).rows == ds.load_ground_truth(FIXTURE).rows
+    nyu = [t for t in ds.load_ground_truth(real).rows if t.parent in NYU_SCHOOLS]
+    assert nyu == ds.load_ground_truth(FIXTURE).rows
+
+
+def test_the_ground_truth_has_six_schools():
+    """Week 4: 3 NYU schools, and 3 schools outside NYU (15 rows, checked by Shuo 2026-11-17)."""
+    real = ds.load_ground_truth(Path(ds.__file__).parent / "dept_ground_truth.csv")
+    assert len({t.parent for t in real.rows}) == 6 and len(real.rows) == 39
 
 
 def test_ground_truth_scores_perfectly(truth):
