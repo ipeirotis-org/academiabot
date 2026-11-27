@@ -547,8 +547,10 @@ columns.
 Run `page-checks-20261124T070324Z-f5cad1`: 873 pages, 22,808 `checks` rows. New search-on
 school lists: 162 calls. The week 4 department lists already had search on and were reused.
 Check 1 passed on 2026-11-25: the checks sorted all 10 of your URLs as you did (6 correct,
-2 other page, 2 dead). The 100 pairs and the 20 failures are open. The sheets are in the
-project files, `week5-page-checks-v2/`.
+2 other page, 2 dead). Your 100 labels (2026-11-27): 46 supported, 25 not supported, 29
+unclear; 42 of the 44 pairs that pass all four checks are supported. Your 20 failures: 12
+made-up URL, 5 wrong page, 2 different name, 1 dead link. The sheets are in the project
+files, `week5-page-checks-v2/`. The midpoint report for Panos is open.
 
 **Goal.** Simple, mechanical checks on every saved page.
 
