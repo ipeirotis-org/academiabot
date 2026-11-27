@@ -24,7 +24,7 @@ import argparse
 import csv
 from itertools import combinations
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from wikidata_discover.eval.agreement import PROVIDERS, write_csv
 
@@ -85,14 +85,18 @@ def _score(kept: Sequence[dict], true_count: int) -> dict:
 
 
 def combos(groups: Sequence[dict], verdicts: Sequence[dict], true_counts: Dict[str, int], level: str,
-           judges: Sequence[str] = PROVIDERS) -> List[dict]:
+           judges: Sequence[str] = PROVIDERS, unit_sets: Optional[Dict[str, str]] = None) -> List[dict]:
     """One row per (set of universities or schools, generators, filter). Recall counts the
     true units found (a true unit found twice counts once). A judge filter keeps a unit when
     that judge kept it in 3 or more of its 4 runs. The 2+ filter needs 2 or more of the
-    chosen generators to name the unit, so it does not apply to one generator. Pure."""
+    chosen generators to name the unit, so it does not apply to one generator.
+    unit_sets ({university or school id: set}) puts every requested university or school
+    in its set, so one with no groups still adds its true units to that set's recall, as in
+    judge.precision_recall (review of pull request 29). Pure."""
     keeps = judge_keeps(verdicts)
-    sets = sorted({g["university_set"] for g in groups}) + ["all"]
     set_of = {g["university_qid"]: g["university_set"] for g in groups}
+    set_of.update(unit_sets or {})
+    sets = sorted(set(set_of.values())) + ["all"]
     rows = []
     for uset in sets:
         gs = [g for g in groups if uset == "all" or g["university_set"] == uset]
@@ -129,16 +133,21 @@ def dept_generators(list_scores: Sequence[dict]) -> List[dict]:
     return rows
 
 
-def dept_true_counts() -> Dict[str, int]:
+def dept_true_counts() -> Tuple[Dict[str, int], Dict[str, str]]:
+    """({school id: true departments}, {school id: set}) of every scored school."""
     from wikidata_discover.eval import dept_scorer as ds
     from wikidata_discover.eval.judge import DEPT_TRUTH, load_dept_schools
     truth = ds.load_ground_truth(DEPT_TRUTH)
-    return {s["id"]: sum(1 for t in truth.rows if t.parent == s["parent"]) for s in load_dept_schools()}
+    schools = load_dept_schools()
+    return ({s["id"]: sum(1 for t in truth.rows if t.parent == s["parent"]) for s in schools},
+            {s["id"]: s["set"] for s in schools})
 
 
-def school_true_counts() -> Dict[str, int]:
+def school_true_counts() -> Tuple[Dict[str, int], Dict[str, str]]:
+    """({university QID: true schools}, {university QID: set}) of every eval university."""
     from wikidata_discover.eval import agreement
-    return {u["qid"]: len(u["schools"]) for u in agreement.universities_to_run(None)}
+    us = agreement.universities_to_run(None)
+    return {u["qid"]: len(u["schools"]) for u in us}, {u["qid"]: u["set"] for u in us}
 
 
 COMBO_COLUMNS = ["level", "set", "generators", "filter", "kept", "correct", "true_found", "true_total",
@@ -154,8 +163,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     d, s = Path(a.departments), Path(a.schools)
-    rows = combos(read_csv(d / "groups.csv"), read_csv(d / "verdicts.csv"), dept_true_counts(), "department")
-    rows += combos(read_csv(s / "groups.csv"), read_csv(s / "verdicts.csv"), school_true_counts(), "school")
+    counts, sets = dept_true_counts()
+    rows = combos(read_csv(d / "groups.csv"), read_csv(d / "verdicts.csv"), counts, "department", unit_sets=sets)
+    counts, sets = school_true_counts()
+    rows += combos(read_csv(s / "groups.csv"), read_csv(s / "verdicts.csv"), counts, "school", unit_sets=sets)
     write_csv(out / "combos.csv", rows, COMBO_COLUMNS)
     write_csv(out / "dept_generators.csv", dept_generators(read_csv(d / "list_scores.csv")))
     print(f"Wrote {out / 'combos.csv'} and {out / 'dept_generators.csv'}")

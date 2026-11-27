@@ -297,12 +297,15 @@ def verify_prompt(unit: str, parent: str, piece: str, piece_no: int = 1, pieces:
 def verify_cache_key(provider: str, unit: str, parent: str, piece: str, piece_no: int, pieces: int) -> str:
     """Cache key of one verifier call: provider, model, the verify prompt, the claim, the
     hash of the piece text, the piece's place, and the output budget. Gemini's key also
-    says thinking is off."""
+    says thinking is off. Anthropic's key says temperature 0, because its first requests
+    left the temperature out (review of pull request 29), so an older answer is not reused."""
     model = {"openai": config.LLM_MODEL, "anthropic": config.ANTHROPIC_MODEL, "gemini": config.GEMINI_MODEL}[provider]
     piece_hash = hashlib.sha256(piece.encode()).hexdigest()[:16]
     extra = f"parent={parent}|piece={piece_hash}|{piece_no}/{pieces}|max_tokens={VERIFY_MAX_TOKENS}"
     if provider == "gemini":
         extra += "|thinking_budget=0"
+    if provider == "anthropic":
+        extra += "|temperature=0"
     return _cache_key(unit, provider, model, purpose="verify", prompt_hash=VERIFY_PROMPT_HASH, extra=extra)
 
 
@@ -332,7 +335,7 @@ def _verify_request(provider: str, model: str, prompt: str):
         return resp, (resp.output_text if resp.output else None)
     if provider == "anthropic":
         resp = _get_anthropic_client().with_options(**_client_options()).messages.create(
-            model=model, max_tokens=VERIFY_MAX_TOKENS,
+            model=model, max_tokens=VERIFY_MAX_TOKENS, temperature=0,
             messages=[{"role": "user", "content": prompt + "\n\nReturn only a JSON object with keys verdict, quote, reason."}])
         text = "".join(getattr(b, "text", "") or "" for b in (resp.content or []) if getattr(b, "type", "") == "text")
         return resp, (text or None)

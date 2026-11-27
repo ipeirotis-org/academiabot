@@ -384,7 +384,10 @@ rules of `annotation-pilot/annotator_instructions.md`; the call is `LLMHelper.ve
 - `--long-page-check` is the week's check 3: a 600,000-character page (more than gpt-4o's
   128,000-token window) with the supporting sentence at 96% of the page.
 - Output in `results/verifier/<run_id>/`: `verdicts.csv`, `accuracy.csv`, `confusion.csv`,
-  `spot_check_10.csv` (10 supported quotes, seed 20261127, for check 2).
+  `spot_check_10.csv` (10 supported quotes, seed 20261127, for check 2). `--rescore` keeps the
+  `quote_on_page` and `notes` of a row with the same pair and quote.
+- The Anthropic verifier call sends temperature 0, and its cache key says so (review of pull
+  request 29: the first version left the temperature out). The counted run used gpt-4o only.
 - `google-genai` must stay below 3 (`requirements.txt`). On 2026-11-27 a `pip install
   transformers` in the cloud session had pulled in 3.6.1, and every Gemini judge call failed
   with "Thinking is not enabled for api version v1". Run `pip check` after adding packages.
@@ -408,7 +411,9 @@ rules of `annotation-pilot/annotator_instructions.md`; the call is `LLMHelper.ve
   so a kept duplicate counts as correct when its unit's first group was dropped. groups.csv has
   only `truth_name`, so a duplicate's one option is the unit it duplicates. This changed only
   rows of the small school set and of `all` (one duplicate, Q7896431); no department row and no
-  eval school row changed.
+  eval school row changed. Every requested university or school counts in its set's recall,
+  also one with no groups (`unit_sets`, review of pull request 29); no row changed, because every
+  one had groups.
 - Shuo's choice (2026-11-27), for Anya's week 8 `--extract`: departments are listed by one
   provider, Anthropic, with search on and no judge. Run 3 samples (`--sample 1..3`) and merge
   them: the 3 lists merged scored precision 1.00, recall 0.95, F1 0.97 on the 39 departments of

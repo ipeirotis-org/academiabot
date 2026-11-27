@@ -228,6 +228,43 @@ def test_spot_check_draws_ten_supported_quotes_the_same_way_each_time():
     assert a == b and len(a) == 10 and all(int(r["pair_id"]) % 2 for r in a)
 
 
+def test_spot_check_keeps_a_persons_answers_on_rescore():
+    """Review of pull request 29: the same pair with the same quote keeps quote_on_page and notes."""
+    rows = [{"pair_id": str(i), "provider": "openai", "claim": "A is part of B", "text_file": "t",
+             "llm": "supported", "llm_quote": f"q{i}"} for i in range(3)]
+    earlier = [{"pair_id": "0", "quote": "q0", "quote_on_page": "yes", "notes": "title only"},
+               {"pair_id": "1", "quote": "old quote", "quote_on_page": "no", "notes": "x"}]
+    got = {r["pair_id"]: r for r in v.spot_check(rows, "llm", earlier=earlier)}
+    assert (got["0"]["quote_on_page"], got["0"]["notes"]) == ("yes", "title only")
+    assert (got["1"]["quote_on_page"], got["1"]["notes"]) == ("", "")   # the quote changed: ask again
+
+
+def test_anthropic_verify_call_sends_temperature_0(monkeypatch):
+    """Review of pull request 29: the Anthropic request had no temperature."""
+    sent = {}
+
+    class Msgs:
+        def create(self, **kw):
+            sent.update(kw)
+            return type("R", (), {"content": []})()
+
+    class Client:
+        messages = Msgs()
+
+        def with_options(self, **kw):
+            return self
+
+    monkeypatch.setattr(llm_helpers, "_get_anthropic_client", lambda: Client())
+    llm_helpers._verify_request("anthropic", "m", "prompt")
+    assert sent["temperature"] == 0
+    import hashlib
+    from wikidata_discover import config
+    old_extra = f"parent=P|piece={hashlib.sha256(b'x').hexdigest()[:16]}|1/1|max_tokens={llm_helpers.VERIFY_MAX_TOKENS}"
+    old_key = llm_helpers._cache_key("U", "anthropic", config.ANTHROPIC_MODEL, purpose="verify",
+                                     prompt_hash=llm_helpers.VERIFY_PROMPT_HASH, extra=old_extra)
+    assert verify_cache_key("anthropic", "U", "P", "x", 1, 1) != old_key   # an answer without temperature 0 is not reused
+
+
 def test_load_pairs_reads_text_and_labels(tmp_path):
     (tmp_path / "pages").mkdir()
     (tmp_path / "pages" / "1.txt").write_text("hello")

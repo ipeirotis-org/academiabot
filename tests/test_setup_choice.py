@@ -53,6 +53,17 @@ def test_combos_match_each_kept_subset_again_so_a_kept_duplicate_counts():
     assert get[("all", "openai", "none")]["correct"] == 1   # g1 and g4 both name Accounting: one match
 
 
+def test_combos_count_a_requested_university_with_no_groups_in_its_set():
+    """Review of pull request 29: S2 gave no list, so its true unit still counts in its set."""
+    rows = sc.combos(GROUPS, _verdicts("anthropic", {"g1"}), {"S1": 3, "S2": 1}, "school",
+                     judges=["anthropic"], unit_sets={"S1": "nyu", "S2": "nyu"})
+    get = {(r["set"], r["generators"], r["filter"]): r for r in rows}
+    assert get[("nyu", "anthropic", "none")]["true_total"] == 4
+    assert get[("all", "anthropic", "none")]["true_total"] == 4
+    rows = sc.combos(GROUPS, [], {"S1": 3, "S9": 2}, "school", judges=[], unit_sets={"S9": "small"})
+    assert {(r["set"], r["true_total"]) for r in rows if r["generators"] == "openai"} == {("nyu", 3), ("small", 2), ("all", 5)}
+
+
 def test_truth_options_column_wins_over_truth_name():
     assert sc.truth_options({"truth_options": "A; B", "truth_name": "A", "status": "correct"}) == ["A", "B"]
     assert sc.truth_options({"truth_name": "", "status": "wrong", "wrong_kind": "invented"}) == []

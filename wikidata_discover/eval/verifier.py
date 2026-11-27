@@ -275,14 +275,20 @@ def _score_scope(rows: Sequence[dict], weights: Dict[str, float], methods: Seque
     return acc_rows, conf_rows
 
 
-def spot_check(rows: Sequence[dict], method: str, n: int = 10, seed: int = SPOT_SEED) -> List[dict]:
+def spot_check(rows: Sequence[dict], method: str, n: int = 10, seed: int = SPOT_SEED,
+               earlier: Sequence[dict] = ()) -> List[dict]:
     """`n` random pairs whose answer by `method` is supported with a quote, for a person to
-    check the quote against the saved page. Same seed, same draw. Pure."""
+    check the quote against the saved page. Same seed, same draw. `earlier` is the sheet
+    already on disk: a row with the same pair and quote keeps its quote_on_page and notes,
+    so --rescore never wipes a person's answers (review of pull request 29). Pure."""
+    kept = {(e.get("pair_id"), e.get("quote")): e for e in earlier}
     pool = sorted((r for r in rows if r.get(method) == "supported" and r.get(method + "_quote")),
                   key=lambda r: int(r["pair_id"]))
     picked = random.Random(seed).sample(pool, min(n, len(pool)))
     return [{"pair_id": r["pair_id"], "provider": r["provider"], "claim": r["claim"], "text_file": r["text_file"],
-             "quote": r[method + "_quote"], "quote_on_page": "", "notes": ""}
+             "quote": r[method + "_quote"],
+             "quote_on_page": kept.get((str(r["pair_id"]), r[method + "_quote"]), {}).get("quote_on_page", ""),
+             "notes": kept.get((str(r["pair_id"]), r[method + "_quote"]), {}).get("notes", "")}
             for r in sorted(picked, key=lambda r: int(r["pair_id"]))]
 
 
@@ -447,7 +453,9 @@ def run(args) -> Path:
         write_csv(out_dir / "verdicts.csv", rows, VERDICT_COLUMNS)
         write_csv(out_dir / "accuracy.csv", acc, ["scope", "method", "way", "provider", "pairs", "right", "accuracy", "weight"])
         write_csv(out_dir / "confusion.csv", conf, ["scope", "method", "way", "provider", "label", "answer", "pairs"])
-        write_csv(out_dir / "spot_check_10.csv", spot_check(pairs, "llm"),
+        sheet = out_dir / "spot_check_10.csv"
+        earlier = list(csv.DictReader(sheet.open(newline="", encoding="utf-8"))) if sheet.exists() else []
+        write_csv(sheet, spot_check(pairs, "llm", earlier=earlier),
                   ["pair_id", "provider", "claim", "text_file", "quote", "quote_on_page", "notes"])
         if log is not None and not args.rescore:
             console.print(f"{record_checks(log, pairs, args.provider, model)} checks rows")
