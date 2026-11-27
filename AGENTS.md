@@ -303,8 +303,8 @@ provider, one sample) with its cited `source_url`. Each distinct URL is fetched 
 (8 threads; evidence rows are written by the main thread only), and each claim gets 4
 `checks` rows: `page_status`, `soft_404`, `on_domain`, `name_on_page`.
 
-- Week 5 was started again from the beginning on 2026-11-24, on a local branch only (Shuo's
-  choice). The first attempt (run `page-checks-20261118T024852Z-0ea415`, closed pull request 26)
+- Week 5 was started again from the beginning on 2026-11-24, on branch `claude/shuo-week5`
+  (kept local until 2026-11-27, Shuo's choice). The first attempt (run `page-checks-20261118T024852Z-0ea415`, closed pull request 26)
   stays in BigQuery and is not counted.
 - Claim sets, reported apart: `week3` (run `agreement-20261109T204358Z-32c21a`; OpenAI had
   `web_search_preview`, not forced; Anthropic and Gemini no search), `schools_on` (week 5

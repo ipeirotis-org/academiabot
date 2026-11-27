@@ -543,7 +543,7 @@ columns.
 
 ### Shuo, week 5 (Nov 13 to 19): does the page exist and name the unit?
 
-**Status on 2026-11-24.** Started again and built on a local branch (`shuo-week5`, not pushed).
+**Status on 2026-11-24.** Started again and built on branch `claude/shuo-week5` (kept local until 2026-11-27).
 Run `page-checks-20261124T070324Z-f5cad1`: 873 pages, 22,808 `checks` rows. New search-on
 school lists: 162 calls. The week 4 department lists already had search on and were reused.
 Check 1 passed on 2026-11-25: the checks sorted all 10 of your URLs as you did (6 correct,
