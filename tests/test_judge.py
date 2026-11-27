@@ -385,9 +385,27 @@ def test_the_department_judge_has_its_own_prompt_and_key():
 
 
 def test_a_school_with_no_item_is_found_by_its_no_item_files(tmp_path):
-    school = {"school_qid": "none", "school_label": "Point Park University Conservatory of Performing Arts"}
-    assert jd.school_stem(school) == "noitem-point-park-university-conservatory-of-performing-arts"
+    school = {"school_qid": "none", "school_label": "Point Park University Conservatory of Performing Arts",
+              "university_qid": "Q7208107"}
+    assert jd.school_stem(school) == "noitem-Q7208107-point-park-university-conservatory-of-performing-arts"
     assert jd.school_stem({"school_qid": "Q770467", "school_label": "Stern"}) == "Q770467"
+
+
+def test_two_no_item_schools_with_one_name_read_their_own_lists(tmp_path):
+    a = {"school_qid": "none", "school_label": "School of Business", "university_qid": "Q1"}
+    b = {"school_qid": "none", "school_label": "School of Business", "university_qid": "Q2"}
+    assert jd.school_stem(a) != jd.school_stem(b)
+    for school, dept in ((a, "Accounting"), (b, "Marketing")):
+        jd.dept_list_path(tmp_path, jd.school_stem(school), "openai", 1).write_text(f"name\n{dept}\n")
+    assert [p["name"] for p in jd.read_dept_lists(tmp_path, {**a, "id": jd.school_stem(a)}, ["openai"], 1)[0]] == ["Accounting"]
+    assert [p["name"] for p in jd.read_dept_lists(tmp_path, {**b, "id": jd.school_stem(b)}, ["openai"], 1)[0]] == ["Marketing"]
+
+
+def test_a_no_item_list_written_before_the_parent_was_in_the_name_is_still_read(tmp_path):
+    school = {"school_qid": "none", "school_label": "Conservatory of Performing Arts", "university_qid": "Q7208107"}
+    (tmp_path / "noitem-conservatory-of-performing-arts_openai_s1_departments.csv").write_text("name\nDance\n")
+    props, runs = jd.read_dept_lists(tmp_path, {**school, "id": jd.school_stem(school)}, ["openai"], 1)
+    assert [p["name"] for p in props] == ["Dance"] and runs[0]["file_exists"]
 
 
 def test_a_failed_week3_lookup_still_writes_the_runs_row(monkeypatch, tmp_path):

@@ -671,6 +671,10 @@ def test_unit_stem_is_the_qid_or_a_name_for_a_unit_with_no_item():
     assert subunits.unit_stem({"qid": "Q770467", "label": "Stern"}) == "Q770467"
     assert subunits.unit_stem({"qid": None, "label": "Point Park University Conservatory of Performing Arts"}) == \
         "noitem-point-park-university-conservatory-of-performing-arts"
+    assert subunits.unit_stem({"qid": None, "label": "School of Business", "parent_qid": "Q1"}) != \
+        subunits.unit_stem({"qid": None, "label": "School of Business", "parent_qid": "Q2"})
+    assert subunits.legacy_unit_stem({"qid": None, "label": "School of Business", "parent_qid": "Q1"}) == \
+        "noitem-school-of-business"
 
 
 def test_a_unit_with_no_item_runs_under_its_parent(monkeypatch, tmp_path):
@@ -686,7 +690,7 @@ def test_a_unit_with_no_item_runs_under_its_parent(monkeypatch, tmp_path):
     s = subunits.subunits_for(None, log, out_dir=tmp_path, fetch=wikidata_tree(), fetch_pages=False, unit=unit)
     assert seen == [unit]
     assert s["university_qid"] == "Q49210"            # found by walking up from the parent
-    assert (tmp_path / "noitem-conservatory-of-performing-arts_anthropic.csv").exists()
+    assert (tmp_path / "noitem-Q770467-conservatory-of-performing-arts_anthropic.csv").exists()
     assert "Website: https://conservatory.example/" in lh.subunit_input(unit)
 
 

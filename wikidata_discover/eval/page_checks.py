@@ -80,6 +80,8 @@ NOT_FOUND = re.compile(
 
 
 NOT_FOUND_PATH = re.compile(r"(not[-_]?found|\b404\b|error)", re.I)
+# For a cited URL that did not redirect, "error" alone is too wide ("/error-correction-lab").
+NOT_FOUND_CITED_PATH = re.compile(r"(not[-_]?found|\b404\b)", re.I)
 
 
 # ─────────────────────────  SMALL PURE HELPERS  ─────────────────────────
@@ -106,7 +108,10 @@ def site_domain(url_or_host: str) -> str:
     s = (url_or_host or "").strip()
     if not s:
         return ""
-    host = urlsplit(s if "://" in s else "http://" + s).hostname or ""
+    try:
+        host = urlsplit(s if "://" in s else "http://" + s).hostname or ""
+    except ValueError:  # a malformed URL ("https://[broken") has no host
+        return ""
     host = host.lower().rstrip(".")
     parts = [p for p in host.split(".") if p]
     if len(parts) <= 2:
@@ -186,6 +191,8 @@ def name_check(name: str, text: str, threshold: int = 90) -> Tuple[str, float, s
     if len(norm.replace(" ", "")) >= 10:
         from rapidfuzz import fuzz
         hay = fetcher._norm_words(text)[:400000]
+        if len(hay) < len(norm):  # a page shorter than the name cannot hold the whole name
+            return "fail", 0.0, "page text shorter than the name"
         score = fuzz.partial_ratio(norm, hay)
         if score >= threshold:
             return "pass", round(score / 100, 3), f"close match ({score:.0f})"
@@ -202,6 +209,8 @@ def check_status(page: Optional[dict]) -> Tuple[str, str]:
     if page is None:
         return "fail", "no URL cited"
     outcome, status, detail = page["outcome"], page.get("status"), page.get("detail", "")
+    if outcome == "too_large" and status is not None and not 200 <= status < 300:
+        outcome = "http_error"  # an error page over 5 MB is still an error
     if outcome in ("ok", "too_large"):
         return "pass", f"HTTP {status}" + (" (over 5 MB, not read)" if outcome == "too_large" else "")
     if outcome == "http_error":
@@ -240,6 +249,8 @@ def check_soft_404(page: Optional[dict]) -> Tuple[str, str]:
     final = page.get("final_url") or ""
     if final and final != page["url"] and NOT_FOUND_PATH.search(urlsplit(final).path):
         return "fail", f"redirected to an error page {final}"
+    if NOT_FOUND_CITED_PATH.search(urlsplit(final or page["url"]).path):
+        return "fail", f"the page path is an error page {final or page['url']}"
     if _path_depth(page["url"]) >= 1 and _path_depth(page.get("final_url") or page["url"]) == 0 \
             and page.get("final_url") and page["final_url"].rstrip("/") != page["url"].rstrip("/"):
         return "fail", f"redirected to the home page {page['final_url']}"
@@ -648,7 +659,8 @@ def s1_page_pass(rows: List[dict], week3_dir: Optional[Path]) -> List[dict]:
             ugroups.append({**g, "member_index": [p["_i"] for p in uprops if p["group_id"] == g["group_id"]],
                             "truth_name": g.get("truth_name") or ""})
         answered = [(r["provider"], int(r["sample"])) for r in runs
-                    if r["university_qid"] == q and str(r.get("cache_file_exists")) == "True"]
+                    if r["university_qid"] == q and str(r.get("cache_file_exists")) == "True"
+                    and str(r.get("missing_from_cache", "")) != "True"]   # a broken cache file is no answer
         for e in agreement.s1_estimates(q, u["name"], u["set"], len(u["schools"]), ugroups, uprops,
                                         PROVIDERS, answered):
             if e["mode"] == "all":
@@ -661,6 +673,22 @@ def parent_labels() -> Dict[str, str]:
     labels = {u["qid"]: u["name"] for u in agreement.universities_to_run(None)}
     labels.update({s["school_qid"]: s["school_label"] for s in read_dept_schools()})
     return labels
+
+
+def keep_annotations(path: Path, rows: List[dict], columns: Sequence[str]) -> None:
+    """Copy a person's answers from an existing sheet at `path` into the new rows of the
+    same claim (provider, claim, URL), so a rescore never clears them. A column of the
+    old sheet that the person filled in wins over the blank new one."""
+    if not path.exists():
+        return
+    with path.open(newline="") as f:
+        old = {(r.get("provider"), r.get("claim"), r.get("url")): r for r in csv.DictReader(f)}
+    for r in rows:
+        o = old.get((r.get("provider"), r.get("claim"), r.get("url")))
+        if o:
+            for c in columns:
+                if (o.get(c) or "").strip():
+                    r[c] = o[c]
 
 
 def write_report(out_dir: Path, rows: List[dict], week3_dir: Optional[Path]) -> Dict[str, List[dict]]:
@@ -677,15 +705,21 @@ def write_report(out_dir: Path, rows: List[dict], week3_dir: Optional[Path]) -> 
         pages_index = {r["url"]: r["text_file"] for r in csv.DictReader((out_dir / "pages.csv").open(newline=""))}
     pairs = [{**r, "pair_id": i, "claim": claim_text(r), "text_file": pages_index.get(r["url"], ""),
               "label": "", "reason": "", "passage": "", "notes": ""} for i, r in enumerate(draw_pairs(rows), 1)]
+    keep_annotations(out_dir / "pairs_100.csv", pairs, ("label", "reason", "passage", "notes"))
     write_csv(out_dir / "pairs_100.csv", pairs, pair_cols)
     fail_cols = ["failure_id", "provider", "setting", "claim", "url", "final_url"] + \
                 [k for k in KINDS] + [f"{k}_detail" for k in KINDS] + ["text_file", "category", "notes"]
     fails = [{**r, "failure_id": i, "claim": claim_text(r), "text_file": pages_index.get(r["url"], ""),
               "category": "", "notes": ""} for i, r in enumerate(draw_failures(rows), 1)]
+    keep_annotations(out_dir / "failures_20.csv", fails, ("category", "notes"))
     write_csv(out_dir / "failures_20.csv", fails, fail_cols)
     tables["s1"] = s1_page_pass(rows, week3_dir)
     if tables["s1"]:
         write_csv(out_dir / "s1_page_pass.csv", tables["s1"])
+    elif (out_dir / "s1_page_pass.csv").exists():
+        # no week 3 report this time: an old S1 file would not match the new checks
+        (out_dir / "s1_page_pass.csv").unlink()
+        console.print("[yellow]Removed the old s1_page_pass.csv: give --week3-report to make it again.[/yellow]")
     return tables
 
 

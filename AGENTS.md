@@ -282,8 +282,11 @@ Report: `results/judge/<run_id>/` (not in git).
 - A school with no Wikidata item has `school_qid` "none" in `dept_schools.csv`. Its lists come
   from `subunits --no-item NAME WEBSITE PARENT_QID` (`subunits.no_item_unit`: name and website
   as given, parent from Wikidata, qid None, so the cache key holds the name and website). Its
-  files are named `noitem-<name>` (`subunits.unit_stem`), and its candidates rows have an empty
-  parent_qid. First use: Point Park's Conservatory of Performing Arts (2026-11-17).
+  files are named `noitem-<parent QID>-<name>` (`subunits.unit_stem`), and its candidates rows have an empty
+  parent_qid. First use: Point Park's Conservatory of Performing Arts (2026-11-17). Since 2026-11-27
+  (review of pull request 28) the parent QID is in the name, so two schools with the same name at two
+  universities never share a file. The judge finds a `dept_schools.csv` row's files by its `parent_qid`
+  column, else `university_qid`, and reads an older `noitem-<name>` file when no new file exists.
 - `--no-run-log` makes no LLM calls and rescores from the cache. A judge cache file without a valid
   `keep` list counts as not answered and is never sent to the provider. `--compare DIR_A DIR_B`
   compares the report files, including `departments/`.
@@ -321,8 +324,9 @@ provider, one sample) with its cited `source_url`. Each distinct URL is fetched 
   timeouts, TLS errors, connection resets, and redirect loops. On 2026-11-24, columbia.edu,
   umich.edu, and uth.edu answered 403 and nyu.edu 405 to the fetcher from the cloud session.
   The fetcher never poses as a browser. `soft_404` fails when the title or first 300
-  characters say "not found", a deep link lands on the home page, or the final URL path says
-  not-found/404/error. `on_domain` compares registrable domains (`site_domain`, a short
+  characters say "not found", a deep link lands on the home page, the final URL of a redirect says
+  not-found/404/error, or the page's own path says not-found/404. `--rescore` keeps the labels in
+  `pairs_100.csv` and `failures_20.csv`, and S1 page_pass skips a broken cache file (`missing_from_cache`). `on_domain` compares registrable domains (`site_domain`, a short
   two-level suffix list) with the university's P856 websites plus the ground-truth website.
   `name_on_page` passes on the exact name (1.0), a swapped form such as "Finance Department"
   (0.95), the core name of 2 words or more ("Social Work", 0.8), or a rapidfuzz partial_ratio
