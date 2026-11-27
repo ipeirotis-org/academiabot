@@ -474,9 +474,10 @@ departments (`wikidata_discover/eval/dept_ground_truth.csv`).
 
 ### Shuo, week 3 (finish Nov 6 to 12): parallel extraction
 
-**Status on 2026-11-04.** Three runs on the 12 evaluation universities are in BigQuery
-(685 `checks` rows). The 6 small universities are not in them yet. The code is not on
-GitHub yet (section 1).
+**Status on 2026-11-10.** The final run covers all 18 universities (run
+`agreement-20261109T204358Z-32c21a`, 299 `checks` rows). All 3 checks pass. For check 3,
+the agent recounted Caltech and Point Park from the raw lists (2026-11-11); every count
+matched. Your two own tasks are done.
 
 **Goal.** Find out whether independent LLMs agree, and whether agreement means a school is
 real.
@@ -511,6 +512,11 @@ real.
 
 ### Shuo, week 4 (Nov 6 to 12): the LLM judge, tested
 
+**Status on 2026-11-17.** The judge test ran on the 18 universities (run
+`judge-20261117T051126Z-9d8317`, 216 calls, 3,588 `checks` rows). The department test ran on
+the 6 department ground-truth schools (run `judge-20261117T060958Z-f1bf60`). Shuo's 15 new
+rows are in `eval/dept_ground_truth.csv`. Check 1 passed on NYU and on Caltech. The command is `python -m wikidata_discover.eval.judge` (AGENTS.md, "Judge runs").
+
 **Goal.** Find out whether an LLM judge helps, and how it is biased.
 
 **Ask the agent to build:**
@@ -536,6 +542,15 @@ columns.
 - [ ] **Hand to Panos:** the judge table, and the department ground truth for 6 schools.
 
 ### Shuo, week 5 (Nov 13 to 19): does the page exist and name the unit?
+
+**Status on 2026-11-24.** Started again and built on branch `claude/shuo-week5` (kept local until 2026-11-27).
+Run `page-checks-20261124T070324Z-f5cad1`: 873 pages, 22,808 `checks` rows. New search-on
+school lists: 162 calls. The week 4 department lists already had search on and were reused.
+Check 1 passed on 2026-11-25: the checks sorted all 10 of your URLs as you did (6 correct,
+2 other page, 2 dead). Your 100 labels (2026-11-27): 46 supported, 25 not supported, 29
+unclear; 42 of the 44 pairs that pass all four checks are supported. Your 20 failures: 12
+made-up URL, 5 wrong page, 2 different name, 1 dead link. The sheets are in the project
+files, `week5-page-checks-v2/`. The midpoint report for Panos is open.
 
 **Goal.** Simple, mechanical checks on every saved page.
 
