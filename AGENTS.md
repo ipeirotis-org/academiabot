@@ -399,12 +399,11 @@ rules of `annotation-pilot/annotator_instructions.md`; the call is `LLMHelper.ve
   and `combos.csv` (each set of generators and each filter: none, 2 or more of them, each
   judge's majority of 4 runs). For a smaller set of generators, its units keep the verdict the
   judge gave on the full merged list, which is close to but not the same as judging that list.
-- Shuo's choice (2026-11-27), for Anya's week 8 `--extract`: departments are listed by all 3
-  providers with search on, and the merged list keeps every name, with no judge (precision
-  0.95, recall 0.95, F1 0.95 on the 39 departments of the 6 ground-truth schools). SPECS.md
-  week 8 names "one provider, or two generators and a judge", so `--extract` also needs a
-  "three generators, no judge" option. Gemini cited a dead page for 56% of its week 5
-  department claims, so the review step must check those pages.
+- Shuo's choice (2026-11-27), for Anya's week 8 `--extract`: departments are listed by one
+  provider, Anthropic, with search on and no judge. Run 3 samples (`--sample 1..3`) and merge
+  them: the 3 lists merged scored precision 1.00, recall 0.95, F1 0.97 on the 39 departments of
+  the 6 ground-truth schools; one list alone averaged precision 0.98, recall 0.92. Shuo first
+  chose all 3 providers with no judge (0.95, 0.95), then changed to this on the same day.
 
 Tests: `tests/test_verifier.py`, `tests/test_setup_choice.py`, and the week 6 part of
 `tests/test_judge.py`.
