@@ -358,16 +358,36 @@ def load_dept_schools(path: Path = DEPT_SCHOOLS) -> List[dict]:
         rows = [{k: (v or "").strip() for k, v in r.items()} for r in csv.DictReader(f)]
     for r in rows:
         r["set"] = "nyu" if r["university"] == "New York University" else "other"
-        r["id"] = school_stem(r)      # the QID, or noitem-<name> for a school with no item
+        r["id"] = school_stem(r)      # the QID, or noitem-<parent QID>-<name> for a school with no item
     return rows
+
+
+def _school_unit(school: dict) -> dict:
+    """A dept_schools.csv row as the unit `subunits --no-item NAME WEBSITE PARENT_QID` makes:
+    the parent is `parent_qid` when the row has one, else the university."""
+    qid = school.get("school_qid") or ""
+    return {"qid": qid if qid.lower() not in ("", "none") else None, "label": school.get("school_label"),
+            "parent_qid": school.get("parent_qid") or school.get("university_qid") or None}
 
 
 def school_stem(school: dict) -> str:
     """The file name part of a school: its QID, or for a school with no item ("none")
-    the name that `subunits --no-item` gives its files."""
+    the name and parent that `subunits --no-item` gives its files."""
     from wikidata_discover.subunits import unit_stem
-    qid = school.get("school_qid") or ""
-    return unit_stem({"qid": qid if qid.lower() not in ("", "none") else None, "label": school.get("school_label")})
+    return unit_stem(_school_unit(school))
+
+
+def school_list_path(folder: Path, school: dict, provider: str, sample: int) -> Path:
+    """The department CSV of one school, provider, and sample. For a school with no item,
+    a file with the stem used before 2026-11-27 (name only) is read when no file with the
+    new stem (parent and name) exists."""
+    from wikidata_discover.subunits import legacy_unit_stem
+    path = dept_list_path(folder, school_stem(school), provider, sample)
+    if not path.exists():
+        old = dept_list_path(folder, legacy_unit_stem(_school_unit(school)), provider, sample)
+        if old.exists():
+            return old
+    return path
 
 
 def dept_list_path(folder: Path, stem: str, provider: str, sample: int) -> Path:
@@ -382,7 +402,7 @@ def read_dept_lists(folder: Path, school: dict, providers: Sequence[str],
     proposals, runs = [], []
     for p in providers:
         for s in range(1, samples + 1):
-            path = dept_list_path(folder, school_stem(school), p, s)
+            path = school_list_path(folder, school, p, s)
             names = []
             if path.exists():
                 with path.open() as f:
