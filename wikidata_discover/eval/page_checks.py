@@ -106,7 +106,10 @@ def site_domain(url_or_host: str) -> str:
     s = (url_or_host or "").strip()
     if not s:
         return ""
-    host = urlsplit(s if "://" in s else "http://" + s).hostname or ""
+    try:
+        host = urlsplit(s if "://" in s else "http://" + s).hostname or ""
+    except ValueError:  # a malformed URL ("https://[broken") has no host
+        return ""
     host = host.lower().rstrip(".")
     parts = [p for p in host.split(".") if p]
     if len(parts) <= 2:
@@ -186,6 +189,8 @@ def name_check(name: str, text: str, threshold: int = 90) -> Tuple[str, float, s
     if len(norm.replace(" ", "")) >= 10:
         from rapidfuzz import fuzz
         hay = fetcher._norm_words(text)[:400000]
+        if len(hay) < len(norm):  # a page shorter than the name cannot hold the whole name
+            return "fail", 0.0, "page text shorter than the name"
         score = fuzz.partial_ratio(norm, hay)
         if score >= threshold:
             return "pass", round(score / 100, 3), f"close match ({score:.0f})"
@@ -202,6 +207,8 @@ def check_status(page: Optional[dict]) -> Tuple[str, str]:
     if page is None:
         return "fail", "no URL cited"
     outcome, status, detail = page["outcome"], page.get("status"), page.get("detail", "")
+    if outcome == "too_large" and status is not None and not 200 <= status < 300:
+        outcome = "http_error"  # an error page over 5 MB is still an error
     if outcome in ("ok", "too_large"):
         return "pass", f"HTTP {status}" + (" (over 5 MB, not read)" if outcome == "too_large" else "")
     if outcome == "http_error":

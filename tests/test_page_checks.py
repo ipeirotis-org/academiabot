@@ -288,3 +288,29 @@ def test_check10_refuses_an_unknown_label(tmp_path):
     f.write_text("url,unit_name,university_qid,your_label\nhttps://u.edu,X,Q1,maybe\n")
     with pytest.raises(SystemExit):
         pc.run_check10(f, tmp_path, fetch=fake_fetch, run_query=lambda q: [])
+
+
+def test_malformed_url_gives_no_domain_and_four_results():
+    from wikidata_discover.eval import page_checks as pc
+    assert pc.site_domain("https://[broken") == ""
+    page = {"url": "https://[broken", "outcome": "refused", "status": None, "final_url": "",
+            "detail": "not a valid URL", "text": "", "name_check": ""}
+    res = pc.run_checks({"name": "School of Law", "url": "https://[broken"}, page, ["nyu.edu"])
+    assert set(res) == set(pc.KINDS)
+    assert res["page_status"][0] == "fail"
+
+
+def test_oversized_error_page_keeps_its_http_status():
+    from wikidata_discover.eval import page_checks as pc
+    big = lambda status: {"outcome": "too_large", "status": status, "detail": "over 5 MB"}  # noqa: E731
+    assert pc.check_status(big(404))[0] == "fail"
+    assert pc.check_status(big(403))[0] == "unclear"
+    assert pc.check_status(big(503))[0] == "unclear"
+    assert pc.check_status(big(200))[0] == "pass"
+
+
+def test_page_shorter_than_the_name_is_not_a_close_match():
+    from wikidata_discover.eval import page_checks as pc
+    assert pc.name_check("School of Business", "Business")[0] == "fail"
+    assert pc.name_check("School of Business", "School of")[0] == "fail"
+    assert pc.name_check("Department of Mathematics", "News from the Departmant of Mathematics today")[0] == "pass"
