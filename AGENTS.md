@@ -380,6 +380,9 @@ rules of `annotation-pilot/annotator_instructions.md`; the call is `LLMHelper.ve
 - `google-genai` must stay below 3 (`requirements.txt`). On 2026-11-27 a `pip install
   transformers` in the cloud session had pulled in 3.6.1, and every Gemini judge call failed
   with "Thinking is not enabled for api version v1". Run `pip check` after adding packages.
+  That first school judge run (`judge-20261127T064603Z-fa6074`) was stopped by hand: it has
+  `llm_calls` and `checks` rows for its first universities but no `runs` row. Do not count
+  it; the counted run is `judge-20261127T064809Z-b49180`.
 
 ## Setup choice numbers (Shuo, week 6)
 
