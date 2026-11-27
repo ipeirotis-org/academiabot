@@ -593,7 +593,9 @@ search-on lists is run `judge-20261127T064809Z-b49180` (216 calls, all answered)
 in the project files, `week6-verifier/`. Check 2 passed on 2026-11-27: all 10 quotes are on
 the page. 3 join pieces with " ... ", and 4 are only the unit's name. Your accuracy bar: two-way
 94 of 100 or more, and at most 1 of 25 "not supported" pairs called supported. The verifier
-passes (97, 1); MiniCheck does not (87). The setup choice is open.
+passes (97, 1); MiniCheck does not (87). Your department setup (2026-11-27): all 3 providers
+generate with search on, and every name is kept, with no judge (precision 0.95, recall 0.95
+on the 6 schools). Every judge lowered recall. Details: `week6-verifier/shuo_decisions.md`.
 
 **Goal.** An LLM reads the saved page and says whether it supports the claim.
 
