@@ -70,6 +70,36 @@ def fetch_unit(qid: str) -> Dict[str, Any]:
     return unit_from_bindings(qid, flatten(execute_sparql_bindings(UNIT_QUERY % {"q": qid})))
 
 
+def no_item_unit(label: str, website: str, parent_qid: str, fetch=fetch_unit) -> Dict[str, Any]:
+    """A unit that has no Wikidata item (Shuo's week 4: a small college's school): its name
+    and website as given, and its parent read from Wikidata. qid is None."""
+    parent = fetch(parent_qid)
+    return {"qid": None, "label": label, "website": website, "country": None,
+            "parent_qid": parent_qid, "parent_qids": [parent_qid], "parent_label": parent.get("label"),
+            "is_university": False, "is_system": False}
+
+
+def _name_slug(label: Optional[str]) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (label or "").lower()).strip("-")[:60] or "unit"
+
+
+def unit_stem(unit: Dict[str, Any]) -> str:
+    """The file name part for a unit: its QID, or, when it has no item, "noitem-", its
+    parent's QID, and its name in lower case with every other character a hyphen
+    ("noitem-Q7208107-conservatory-of-performing-arts"). The parent keeps two schools of
+    the same name at two universities apart, so one never overwrites the other's files. Pure."""
+    if unit.get("qid"):
+        return unit["qid"]
+    parent = unit.get("parent_qid") or ""
+    return "noitem-" + (f"{parent}-" if parent else "") + _name_slug(unit.get("label"))
+
+
+def legacy_unit_stem(unit: Dict[str, Any]) -> str:
+    """The stem that files of a unit with no item had before 2026-11-27 ("noitem-" and the
+    name only), so files written then can still be read. Pure."""
+    return unit["qid"] if unit.get("qid") else "noitem-" + _name_slug(unit.get("label"))
+
+
 MAX_LEVELS_UP = 6
 
 
@@ -194,7 +224,8 @@ def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
 
 def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path] = None,
                  fetch=fetch_unit, fetch_pages: bool = True, fetch_page=fetcher.fetch,
-                 pages: Optional[CitedPages] = None, university_qid: Optional[str] = None) -> Dict[str, Any]:
+                 pages: Optional[CitedPages] = None, university_qid: Optional[str] = None,
+                 unit: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Ask for one unit's sub-units, fetch and save each cited page once, write the two
     CSV files, and add a candidates row per sub-unit with its evidence id. `pages` is the
     run's CitedPages, so a page another QID of the run already fetched is reused; without
@@ -205,7 +236,7 @@ def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path
     from as university_qid; without it, find_university walks up Wikidata. Returns a short
     summary, with university_qid for the next level."""
     out_dir = out_dir or OUT_DIR
-    unit = fetch(qid)
+    unit = unit or fetch(qid)     # a unit with no item (no_item_unit) is given, with qid None
     if university_qid is None:
         university_qid = find_university(unit, fetch)
         if university_qid is None:
@@ -218,9 +249,10 @@ def subunits_for(qid: str, log: Optional[run_log.RunLog], out_dir: Optional[Path
         pages = CitedPages(log, fetch_page)
     evidence = pages.cite(units) if fetch_pages else {}
     rows = csv_rows(units, unit, provider, evidence)
-    full = out_dir / f"{qid}_{provider}.csv"
+    stem = f"{qid or unit_stem(unit)}_{provider}" + (f"_s{llm_helpers.SUBUNIT_SAMPLE}" if llm_helpers.SUBUNIT_SAMPLE is not None else "")
+    full = out_dir / f"{stem}.csv"
     write_csv(full, rows)
-    write_csv(out_dir / f"{qid}_{provider}_departments.csv", [r for r in rows if r["unit_type"] == "department"])
+    write_csv(out_dir / f"{stem}_departments.csv", [r for r in rows if r["unit_type"] == "department"])
     if log is not None:
         for u in units:
             log.add_candidate(run_id=log.run_id, invocation_id=log.invocation_id, parent_qid=qid,

@@ -77,3 +77,9 @@ wikidata_discover/results/reports/
 wikidata_discover/results/missing_divisions_*.csv
 wikidata_discover/results/quickstatements_*.qs
 wikidata_discover/results/dept_scores/
+wikidata_discover/results/agreement/
+wikidata_discover/results/judge/
+wikidata_discover/results/subunits/
+wikidata_discover/results/page_checks/
+wikidata_discover/results/verifier/
+wikidata_discover/results/setup_choice/

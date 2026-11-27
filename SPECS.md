@@ -281,9 +281,20 @@ The 6 small universities are drawn at random from the bottom third of `us-tier1`
 number of Wikidata sitelinks (Wikipedia articles about the university), with the seed
 recorded. The student builds their school-level ground truth.
 
-Status on 2026-11-04: three agreement runs on the 12 evaluation universities wrote 685
-`checks` rows (kind `agreement`) and 4,347 `candidates` rows (status `unaligned`). They ran
-from commits `3122988` and `ff51783`, which are not on GitHub. Push them first.
+Decisions made while building it (2026-10-23): each school a provider names in one sample is a
+`candidates` row with status `unaligned`, because this step does no Wikidata matching. An
+agreement check passes when 2 or more providers named the school. A second group that matches an
+already matched true school is a duplicate and counts as wrong (a repeated name counts once, as in
+week 2). Wrong groups are split into duplicate, non-academic, campus, and invented. S1 uses
+Chapman for pairs of providers and model M_t for three providers and for the samples of one
+provider. The small universities were drawn with seed 2026 from a saved sitelink snapshot; walking that
+order, the first 6 with at least one top-level academic unit are kept (3 without units skipped,
+2026-11-04).
+
+Status on 2026-11-10: done. The final run `agreement-20261109T204358Z-32c21a` covered all 18
+universities (162 calls, 1,863 `candidates` rows, 299 `checks` rows). Three earlier runs on the
+12 evaluation universities (2026-11-04) also wrote 685 `checks` and 4,347 `candidates` rows,
+with older grouping rules. Use the final run.
 
 **Tests:** a rerun gives identical numbers from the cache; the cache folder has 3 files per
 provider and university, not 1.
@@ -300,6 +311,19 @@ same on departments: each provider lists the departments of the six ground-truth
 own, through Anya's week 4 step with `--provider` (not the first-answer fallback, which gives
 one list), 3 runs each with sample numbers, so every possible generator has its own list to
 score and to judge.
+
+Order A is the list sorted A to Z (case ignored); order B is order A reversed. Each judge call's
+cache key holds the list in its order and the sample number. Each school verdict is a `checks`
+row (kind `judge`) on the candidate of its week 3 agreement check. A returned name is mapped
+back to the list exactly, then ignoring case and punctuation, then as a name variant.
+
+**Tests:** each (order, sample) is its own call and a rerun replays all four from the cache;
+order, sample, provider, and level (school or department) each change the judge cache key; a
+bad answer is retried and never cached; flip rates count same-order and cross-order pairs and
+leave out a run with no answer; self-preference compares own and other schools at the same
+correctness; precision and recall before and after a judge, and the majority of 4 runs; a
+judge that keeps a fake school on the hand-made list is reported; a subunits sample has its own
+cache key, and no sample keeps the old key.
 
 ### Shuo, week 5 (Nov 13 to 19)
 
@@ -321,6 +345,20 @@ three providers answered the same questions.
 
 nyu.edu answers status 405 to the fetcher on some pages (4 of the 16 pages saved in week 4),
 because the site refuses the fetcher's User-Agent (AGENTS.md). Such a page is not dead.
+
+Built 2026-11-24 (`eval/page_checks.py`; AGENTS.md, "Page checks"). Four kinds of `checks`
+rows per claim: `page_status`, `soft_404`, `on_domain`, `name_on_page`. Any 401, 403, 405,
+406, 429, 451, or 999 answer is unclear, never dead. Shares come with two 95% intervals: one
+per claim (Wilson) and one that resamples cited pages, because claims that cite one list
+page are not independent. Report the second.
+
+**Tests:** a 404 page is dead and a 403 or 405 page is unclear; a page whose title says "Page
+Not Found" fails the soft 404 check, and so does a deep link that lands on the home page; a
+page on Wikipedia is off the university's domain, and a redirect onto the domain is on it;
+"Finance Department" counts for "Department of Finance", and "Business" alone never counts for
+"School of Business"; each URL is fetched once and each claim gets 4 `checks` rows; the 100
+pairs are 34, 33, and 33 per provider, the same for the same seed; the 10-URL check sorts a
+dead, an other, and a correct page as given.
 
 ### Shuo, week 6 (Nov 20 to 26, Thanksgiving)
 
@@ -349,6 +387,14 @@ schools. The choice goes to Anya by Nov 26.
 **Tests:** one test page longer than the model can read at once, with the supporting
 sentence near the end, gives supported; a quote that is not in the saved page word for word
 gives unclear; a page that was read in full and never names the unit gives not supported.
+
+Built 2026-11-27 (`eval/verifier.py`, `eval/minicheck.py`, `eval/setup_choice.py`,
+`judge --search-on`; AGENTS.md, "Verifier" and "Setup choice numbers"). Pieces are 12,000
+characters and overlap by 1,500. A 404 or 410 page is not supported and a page that was
+not read (refused, 5xx, no text) is unclear, both without a model call, as in the annotator
+rules. Accuracy is given over all pairs and over the pairs whose page the model read, because
+the first number includes the pairs that the page status alone decides. The department judge
+test of week 4 already used search-on lists, so only the school judge test was rerun.
 
 ### Shuo, week 7 (Nov 27 to Dec 3)
 
