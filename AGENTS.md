@@ -356,8 +356,11 @@ rules of `annotation-pilot/annotator_instructions.md`; the call is `LLMHelper.ve
   and the claim are in the key). Reading stops at the first supporting piece.
 - A quote must be on the saved page word for word (`quote_on_page`): only spaces, curly quotes,
   dashes, and Unicode forms are evened out, and case is kept. A quote may join two places with
-  " ... " and start with "[title]". Otherwise the answer becomes unclear; `model_verdict` keeps
-  what the model said. A supported answer without a quote is unclear too.
+  " ... " and start with "[title]". Each piece is checked on its own: not their order, and not
+  that they are near each other (Shuo's check 2 found 3 such quotes in 10). Otherwise the
+  answer becomes unclear; `model_verdict` keeps what the model said. A supported answer without
+  a quote is unclear too. A quote can be only the unit's name (4 of Shuo's 10), with nothing
+  that ties it to the parent; the check does not catch that.
 - The claim: the first supported piece; else the first unclear piece (or a piece with no
   answer); else unsupported.
 - `--minicheck` also runs MiniCheck (`eval/minicheck.py`, `lytang/MiniCheck-Flan-T5-Large` on

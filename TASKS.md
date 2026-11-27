@@ -590,7 +590,10 @@ Verifier run `verifier-20261127T064418Z-3ca4f0` (gpt-4o, and MiniCheck): it agre
 and on 39 of 52. Check 3 passed: a 600,000-character page with the sentence near the end
 gave supported (run `verifier-20261127T064840Z-e5cd57`). The school judge test on the
 search-on lists is run `judge-20261127T064809Z-b49180` (216 calls, all answered). Results are
-in the project files, `week6-verifier/`. Check 2 (10 quotes) and your two choices are open.
+in the project files, `week6-verifier/`. Check 2 passed on 2026-11-27: all 10 quotes are on
+the page. 3 join pieces with " ... ", and 4 are only the unit's name. Your accuracy bar: two-way
+94 of 100 or more, and at most 1 of 25 "not supported" pairs called supported. The verifier
+passes (97, 1); MiniCheck does not (87). The setup choice is open.
 
 **Goal.** An LLM reads the saved page and says whether it supports the claim.
 
