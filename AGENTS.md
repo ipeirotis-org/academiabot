@@ -468,6 +468,8 @@ request 27, not merged), so the week 7 code reads the JSON file and does not imp
   rows in any order and the order changed `shown_hash` (2 of 603 rows before the fix).
 - The NYU first-pass sheets (603 rows, seed 20261127) are in the project files:
   `week7-review/NYU_first_pass_shuo.xlsx` and `NYU_first_pass_panos.xlsx`.
+  Shuo's choice (2026-11-28): Shuo and Panos each review rows 1 to 150 of the first pass.
+  The sheets were not cut; empty rows are ignored on load.
 
 Tests: `tests/test_confidence.py`, `tests/test_review.py` (`test_check1_*` to `test_check3_*`
 are the three "You check it by" steps), fixture `tests/fixtures/hierarchy_nyu_sample.json`
